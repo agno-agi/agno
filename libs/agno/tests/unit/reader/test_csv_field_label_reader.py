@@ -686,3 +686,109 @@ def test_read_csv_carriage_return_normalized():
     # CR and CRLF should be converted to spaces
     assert documents[0].content == "Name: Alice\nNotes: line1 line2"
     assert documents[1].content == "Name: Bob\nNotes: line1 line2"
+
+
+@pytest.fixture(params=["temporary", "spooled"], ids=["temporary-file", "spooled-file"])
+def temporary_field_labeled_csv_stream(request):
+    if request.param == "temporary":
+        stream = tempfile.TemporaryFile(mode="w+b")
+    else:
+        stream = tempfile.SpooledTemporaryFile(max_size=1024, mode="w+b")
+
+    stream.write(SAMPLE_CSV.encode("utf-8"))
+    stream.seek(0)
+    yield stream
+    stream.close()
+
+
+def _expected_stream_name(stream):
+    return stream.name.split(".")[0] if isinstance(stream.name, str) else "csv_file"
+
+
+def test_read_temporary_stream_with_non_string_name(temporary_field_labeled_csv_stream):
+    """Temporary streams with an absent or non-string name use a stable fallback."""
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(temporary_field_labeled_csv_stream)
+
+    expected_name = _expected_stream_name(temporary_field_labeled_csv_stream)
+    assert len(documents) == 3
+    assert [doc.name for doc in documents] == [expected_name] * 3
+    assert [doc.id for doc in documents] == [f"{expected_name}_row_{i + 1}" for i in range(3)]
+    assert documents[0].content == "Name: John\nAge: 30\nCity: New York"
+    assert documents[1].content == "Name: Jane\nAge: 25\nCity: San Francisco"
+    assert documents[2].content == "Name: Bob\nAge: 40\nCity: Chicago"
+    assert not temporary_field_labeled_csv_stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_temporary_stream_with_non_string_name(temporary_field_labeled_csv_stream):
+    """The async reader handles the same real temporary stream variants."""
+    reader = FieldLabeledCSVReader()
+    documents = await reader.async_read(temporary_field_labeled_csv_stream)
+
+    expected_name = _expected_stream_name(temporary_field_labeled_csv_stream)
+    assert len(documents) == 3
+    assert [doc.name for doc in documents] == [expected_name] * 3
+    assert [doc.id for doc in documents] == [f"{expected_name}_row_{i + 1}" for i in range(3)]
+    assert documents[0].content == "Name: John\nAge: 30\nCity: New York"
+    assert documents[1].content == "Name: Jane\nAge: 25\nCity: San Francisco"
+    assert documents[2].content == "Name: Bob\nAge: 40\nCity: Chicago"
+    assert not temporary_field_labeled_csv_stream.closed
+
+
+def test_read_non_string_stream_name_allows_name_override():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = None
+
+    documents = FieldLabeledCSVReader().read(stream)
+    assert len(documents) == 3
+    assert documents[0].name == "csv_file"
+    assert documents[0].id == "csv_file_row_1"
+
+    stream.seek(0)
+    overridden_documents = FieldLabeledCSVReader().read(stream, name="people")
+    assert len(overridden_documents) == 3
+    assert overridden_documents[0].name == "people"
+    assert overridden_documents[0].id == "people_row_1"
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_non_string_stream_name_allows_name_override():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = None
+
+    documents = await FieldLabeledCSVReader().async_read(stream)
+    assert len(documents) == 3
+    assert documents[0].name == "csv_file"
+    assert documents[0].id == "csv_file_row_1"
+
+    stream.seek(0)
+    overridden_documents = await FieldLabeledCSVReader().async_read(stream, name="people")
+    assert len(overridden_documents) == 3
+    assert overridden_documents[0].name == "people"
+    assert overridden_documents[0].id == "people_row_1"
+    assert not stream.closed
+
+
+@pytest.mark.asyncio
+async def test_async_read_named_stream_uses_name_stem():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = "people.csv"
+
+    documents = await FieldLabeledCSVReader().async_read(stream)
+    assert len(documents) == 3
+    assert documents[0].name == "people"
+    assert documents[0].id == "people_row_1"
+    assert not stream.closed
+
+
+def test_read_named_stream_uses_name_stem():
+    stream = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
+    stream.name = "people.csv"
+
+    documents = FieldLabeledCSVReader().read(stream)
+    assert len(documents) == 3
+    assert documents[0].name == "people"
+    assert documents[0].id == "people_row_1"
+    assert not stream.closed

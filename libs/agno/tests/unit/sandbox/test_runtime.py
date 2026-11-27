@@ -53,6 +53,126 @@ def test_runtime_writer_lock_is_exclusive(tmp_path):
                 pytest.fail("two writers")
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_native_decision_is_bound_to_live_execution(dispatch, monkeypatch, confirmed):
+    import time
+
+    from agno.agents._hitl import KEY
+    from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.requirement import RunRequirement
+    from agno.session import AgentSession
+
+    root, calls, request = dispatch
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    (root / "native").mkdir(exist_ok=True)
+    db = SqliteDb(db_file=str(root / "native" / "history.db"))
+    # The runtime's paused run, as its waiting native execution persisted it.
+    tool = ToolExecution(tool_call_id="tool", tool_name="Bash", tool_args={"command": "x"}, requires_confirmation=True)
+    paused = RunOutput(
+        run_id="r",
+        session_id="s",
+        agent_id="a",
+        status=RunStatus.paused,
+        requirements=[RunRequirement(tool_execution=tool)],
+        metadata={
+            KEY: {
+                "owner": "owner",
+                "pending": ["tool"],
+                "requests": {"tool": {"digest": "digest", "native": {}, "expires_at": int(time.time()) + 60}},
+                "decisions": {},
+            }
+        },
+    )
+    db.upsert_session(AgentSession(session_id="s", agent_id="a", runs=[paused]))
+    db.upsert_run(paused, session_id="s", run_index=0)
+    runtime._atomic(directory / "status.json", runtime._encode({"phase": "running", "pid": 123, "start": "start"}))
+    decision = {**request, "tool_call_id": "tool", "confirmed": confirmed, "digest": "digest", "owner": "owner"}
+    for field in ("run_id", "session_id", "agent_id"):
+        with pytest.raises(SandboxError, match="identity"):
+            runtime._resolve(root, {**decision, field: "other"})
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
+    with pytest.raises(SandboxError, match="does not answer"):
+        runtime._resolve(root, {**decision, "digest": "other"})
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "different-process")
+    with pytest.raises(SandboxError, match="no longer available"):
+        runtime._resolve(root, decision)
+    assert db.get_run("r").status == RunStatus.paused
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
+    assert runtime._resolve(root, decision)["accepted"]
+    assert runtime._resolve(root, decision)["accepted"], "A repeated delivery of the same decision is accepted"
+    with pytest.raises(SandboxError, match="decided differently"):
+        runtime._resolve(root, {**decision, "confirmed": not confirmed})
+    stored = db.get_run("r")
+    assert stored.status == RunStatus.running
+    assert stored.metadata[KEY]["decisions"]["tool"]["confirmed"] is confirmed
+    assert len(calls) == 1, "Decision delivery must never spawn a replacement process"
+    db.db_engine.dispose()
+
+
+def test_native_answers_are_bound_to_the_asked_questions(dispatch, monkeypatch):
+    import time
+
+    from agno.agents._hitl import KEY
+    from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.requirement import RunRequirement
+    from agno.session import AgentSession
+    from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
+
+    root, calls, request = dispatch
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    (root / "native").mkdir(exist_ok=True)
+    db = SqliteDb(db_file=str(root / "native" / "history.db"))
+    question = UserFeedbackQuestion(question="Which color?", options=[UserFeedbackOption(label="Blue")])
+    tool = ToolExecution(
+        tool_call_id="tool",
+        tool_name="AskUserQuestion",
+        tool_args={},
+        requires_user_input=True,
+        user_feedback_schema=[question],
+    )
+    paused = RunOutput(
+        run_id="r",
+        session_id="s",
+        agent_id="a",
+        status=RunStatus.paused,
+        requirements=[RunRequirement(tool_execution=tool)],
+        metadata={
+            KEY: {
+                "owner": "owner",
+                "pending": ["tool"],
+                "requests": {"tool": {"digest": "digest", "native": {}, "expires_at": int(time.time()) + 60}},
+                "decisions": {},
+            }
+        },
+    )
+    db.upsert_session(AgentSession(session_id="s", agent_id="a", runs=[paused]))
+    db.upsert_run(paused, session_id="s", run_index=0)
+    runtime._atomic(directory / "status.json", runtime._encode({"phase": "running", "pid": 123, "start": "start"}))
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "start")
+    decision = {**request, "tool_call_id": "tool", "digest": "digest", "owner": "owner"}
+    with pytest.raises(SandboxError, match="does not answer"):
+        runtime._resolve(root, {**decision, "confirmed": True})
+    with pytest.raises(ValueError, match="lists of selections"):
+        runtime._resolve(root, {**decision, "answers": "Blue"})
+    with pytest.raises(SandboxError, match="does not answer"):
+        runtime._resolve(root, {**decision, "answers": [["Blue"], ["extra"]]})
+    assert runtime._resolve(root, {**decision, "answers": [["Blue"]]})["accepted"]
+    stored = db.get_run("r")
+    assert stored.status == RunStatus.running
+    assert stored.metadata[KEY]["decisions"]["tool"]["answers"] == [["Blue"]]
+    assert stored.requirements[0].user_feedback_schema[0].selected_options == ["Blue"]
+    assert len(calls) == 1
+    db.db_engine.dispose()
+
+
 def test_execution_journal_replays_without_service_completion(dispatch):
     root, calls, request = dispatch
     runtime._start(root, request)
@@ -143,6 +263,18 @@ class Provider:
 
     async def astop(self, computer):
         self.stopped = True
+
+
+@pytest.mark.asyncio
+async def test_old_runtime_is_refused_before_starting_a_confirming_harness():
+    provider = Provider()
+    client = SandboxRuntimeClient(provider)
+    with pytest.raises(SandboxError, match="Rebuild the sandbox image"):
+        await client.astart(
+            HANDLE, execution_id="e", run_id="r", sdk="claude", input="work", config={"_native_hitl": True}
+        )
+    assert len(provider.requests) == 1
+    assert "input" not in provider.requests[0], "Old runtime received a start request"
 
 
 @pytest.mark.asyncio
@@ -909,3 +1041,125 @@ def test_text_only_fixture_turn_never_touches_attachment_staging(dispatch, tmp_p
     runtime._worker(runtime._job(root, "e"))
     assert runtime._poll(root, "e", 0)["result"]["type"] == "execution_finished"
     assert (tmp_path / "workspace/fixture-effects.txt").read_text() == "a:b\n"
+
+
+def _cgroup(tmp_path, monkeypatch, kills, limit="2147483648"):
+    folder = tmp_path / "cgroup"
+    folder.mkdir(exist_ok=True)
+    monkeypatch.setattr(runtime, "_CGROUP", folder, raising=False)
+    if kills is not None:
+        (folder / "memory.events").write_text(f"low 0\nhigh 0\nmax 12\noom 3\noom_kill {kills}\noom_group_kill 0\n")
+    (folder / "memory.max").write_text(limit + "\n")
+    return folder
+
+
+def test_failed_turn_says_when_the_kernel_killed_a_process_for_memory(dispatch, tmp_path, monkeypatch):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=2)
+
+    async def killed(directory, request, waits=None):
+        # The kernel kills the harness's command while the turn runs; the harness only sees the signal.
+        (folder / "memory.events").write_text("oom 4\noom_kill 3\n")
+        raise RuntimeError("Command failed with exit code -9 (exit code: -9)")
+
+    monkeypatch.setattr(runtime, "_execute", killed)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["type"] == "execution_error"
+    assert result["error"].startswith("Command failed with exit code -9 (exit code: -9)")
+    assert "reached its 2048 MB memory limit" in result["error"]
+    assert "killed 1 process (out of memory)" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [(2, 2), (None, 5), (2, None)],
+    ids=["no kill during the turn", "counter unreadable before", "counter unreadable after"],
+)
+def test_failed_turn_without_a_memory_kill_keeps_its_error(dispatch, tmp_path, monkeypatch, before, after):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=before)
+
+    async def failed(directory, request, waits=None):
+        if after is None:
+            (folder / "memory.events").unlink()
+        else:
+            (folder / "memory.events").write_text(f"oom 3\noom_kill {after}\n")
+        raise RuntimeError("Command failed with exit code 1")
+
+    monkeypatch.setattr(runtime, "_execute", failed)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    assert runtime._poll(root, "e", 0)["result"]["error"] == "Command failed with exit code 1"
+
+
+@pytest.mark.parametrize(
+    "limit, own_limit_hits, expected, absent",
+    [
+        (
+            "2147483648",
+            3,
+            "The sandbox reached its 2048 MB memory limit during this turn and the kernel killed 2",
+            "host",
+        ),
+        # The limit cannot be read as a number, so the note names none.
+        ("unreadable", 3, "The sandbox reached its memory limit during this turn and the kernel killed 2", "host"),
+        # The kernel also kills a sandbox's processes when the host runs out of memory. The sandbox's
+        # own counter did not move, so its limit is not blamed: raising it would make the host worse.
+        ("2147483648", 0, "The sandbox had not reached its own memory limit, so memory ran out outside it", "2048 MB"),
+    ],
+    ids=["the sandbox reached its limit", "limit unreadable", "the host ran out of memory"],
+)
+def test_disappeared_worker_says_when_the_kernel_killed_processes_for_memory(
+    dispatch, tmp_path, monkeypatch, limit, own_limit_hits, expected, absent
+):
+    root, _, request = dispatch
+    _cgroup(tmp_path, monkeypatch, kills=2, limit=limit)
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    # The cgroup's counters read "oom 3, oom_kill 2" now; the worker started the turn with these.
+    started_with = {"oom_kill": 0, "oom": 3 - own_limit_hits}
+    status = {"phase": "running", "pid": 123, "start": "old", "memory_events": started_with}
+    runtime._atomic(directory / "status.json", runtime._encode(status))
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "new")
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["type"] == "execution_unknown"
+    assert result["error"].startswith("Runtime worker disappeared; reconcile effects before retrying")
+    assert expected in result["error"] and "killed 2 processes" in result["error"]
+    assert absent not in result["error"]
+
+
+def test_worker_records_the_memory_kill_count_it_started_with(dispatch, tmp_path, monkeypatch):
+    root, _, request = dispatch
+    _cgroup(tmp_path, monkeypatch, kills=7)
+    seen = {}
+
+    async def read_status(directory, request, waits=None):
+        seen.update(json.loads((directory / "status.json").read_bytes()))
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(runtime, "_execute", read_status)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    assert seen["phase"] == "running" and seen["memory_events"] == {"oom_kill": 7, "oom": 3}
+
+
+@pytest.mark.parametrize("status, noted", [("ERROR", True), ("COMPLETED", False)])
+def test_errored_run_of_a_finished_execution_carries_the_memory_note(dispatch, tmp_path, monkeypatch, status, noted):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=0)
+
+    async def finished(directory, request, waits=None):
+        # A harness whose command the kernel killed ends its own run with the error.
+        (folder / "memory.events").write_text("oom 4\noom_kill 1\n")
+        return {"type": "execution_finished", "run": {"status": status, "content": "exit code -9"}, "session": {}}
+
+    monkeypatch.setattr(runtime, "_execute", finished)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["run"]["content"] == "exit code -9"
+    assert ("memory_note" in result) is noted
+    if noted:
+        assert result["memory_note"].startswith("The sandbox reached its 2048 MB memory limit during this turn")

@@ -1,6 +1,6 @@
 """Run diagnostics for an AgentOS with an OS manager. No model calls.
 
-Prints the report that Platform Manager reads through its run_diagnostics
+Prints the report that Super Agent reads through its run_diagnostics
 tool. A missing OPENAI_API_KEY is reported as a failure, but does not stop
 the checks from running.
 

@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import math
@@ -567,7 +568,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content(
         request: Request,
         limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number", ge=0),
+        page: Optional[int] = Query(default=1, description="Page number", ge=1),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use"),
@@ -1755,7 +1756,12 @@ async def process_content(
             else:
                 log_debug(f"Could not resolve reader with id: {reader_id}")
         if chunker and content.reader:
-            # Set the chunker name on the reader - let the reader handle it internally
+            # The reader belongs to the knowledge base - either a custom reader from
+            # `Knowledge(readers=...)` or a default one it has already resolved - so
+            # writing this upload's chunker onto it would leak into every later upload
+            # that uses the same reader. Give this run its own shallow copy; the
+            # chunking strategy is replaced on the copy, never on the shared reader.
+            content.reader = copy.copy(content.reader)
             content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
             log_debug(f"Set chunking strategy: {chunker}")
 

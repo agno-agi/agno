@@ -300,6 +300,10 @@ class RunCompletedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunPausedEvent(BaseAgentRunEvent):
+    # An external agent's (Claude Code, Codex) native permission request or question: owner, digest and
+    # native context, carried from a sandbox runtime to the host so the paused run can record it.
+    external_agent_request: Optional[Dict[str, Any]] = None
+    content: Optional[Any] = None
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
     requirements: Optional[List[RunRequirement]] = None
@@ -317,6 +321,8 @@ class RunPausedEvent(BaseAgentRunEvent):
 
 @dataclass
 class RunContinuedEvent(BaseAgentRunEvent):
+    # The external agent's permission request or question this continuation answered.
+    external_agent_request_id: Optional[str] = None
     event: str = RunEvent.run_continued.value
 
 
@@ -955,8 +961,7 @@ class RunOutput:
             input_obj = RunInput.from_dict(input_data)
 
         metrics = data.pop("metrics", None)
-        if metrics:
-            metrics = RunMetrics.from_dict(metrics)
+        metrics = RunMetrics.from_dict(metrics) if metrics else None
 
         compaction = data.pop("compaction", None)
         if compaction:

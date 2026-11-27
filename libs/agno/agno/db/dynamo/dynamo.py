@@ -2,7 +2,11 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -10,45 +14,94 @@ if TYPE_CHECKING:
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
+    aggregate_metrics_key,
+    aggregate_metrics_period_user_id,
     apply_pagination,
     apply_sorting,
+    batch_get_with_retry,
     batch_write_with_retry,
+    build_component_metrics_run,
     build_query_filter_expression,
     build_topic_filter_expression,
-    calculate_date_metrics,
+    component_metrics_record_id,
     create_table_if_not_exists,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
     deserialize_metrics_date,
+    deserialize_metrics_row,
     deserialize_session_result,
     execute_query_with_pagination,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
+    heartbeat_metrics_refresh_update,
     merge_with_existing_session,
     prepare_session_data,
+    query_all_items,
+    reopen_metrics_day,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
+    reopen_metrics_row,
+    serialize_aggregate_metrics_row,
+    serialize_component_metrics_row,
     serialize_eval_record,
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
+from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_ROWS_FIELDS,
+    METRICS_BY_OWNER_FIELDS,
+    METRICS_COMPONENT_TYPES,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_WRITE_RETRIES,
+    add_metrics_month_totals,
+    aggregate_metrics_row_to_store,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
+    build_metrics_by_owner_from_rows,
+    build_metrics_from_aggregate_metrics,
     build_single_run_row,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
+    deserialize_metrics_refresh_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
+    get_metrics_fingerprint,
+    get_metrics_legacy_runs,
+    get_metrics_reopen_session_ids,
+    get_months_to_calculate_metrics_for,
+    list_metrics_totals_models,
+    merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
-    metrics_starting_date_from_records,
+    metrics_day_completed,
+    metrics_day_ranges,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
+    metrics_rows_fields,
+    metrics_versions,
+    resolve_metrics_fields,
+    total_metrics_rows,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -59,6 +112,9 @@ except ImportError:
 
 # DynamoDB batch_write_item has a hard limit of 25 items per request
 DYNAMO_BATCH_SIZE_LIMIT = 25
+
+# DynamoDB batch_get_item has a hard limit of 100 keys per request
+DYNAMO_BATCH_GET_SIZE_LIMIT = 100
 
 
 class DynamoDb(BaseDb):
@@ -72,6 +128,9 @@ class DynamoDb(BaseDb):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -89,6 +148,9 @@ class DynamoDb(BaseDb):
             session_table: The name of the session table.
             memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
+            component_metrics_table: The name of the table to store the metrics of each agent, team and workflow.
+            aggregate_metrics_table: The name of the table to store the metrics of each user.
+            metrics_refreshes_table: The name of the metrics refreshes table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
             traces_table: The name of the traces table.
@@ -105,11 +167,17 @@ class DynamoDb(BaseDb):
             runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            component_metrics_table=component_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
+            metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
+
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         if db_client is not None:
             self.client = db_client
@@ -130,6 +198,13 @@ class DynamoDb(BaseDb):
 
             session = boto3.Session(**session_kwargs)
             self.client = session.client("dynamodb")
+
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
+        # Whether a session holds legacy runs, None until a read of every session found out
+        self._metrics_legacy_runs: Optional[bool] = None
 
     def table_exists(self, table_name: str) -> bool:
         """Check if a DynamoDB table exists.
@@ -152,7 +227,9 @@ class DynamoDb(BaseDb):
             ("sessions", self.session_table_name),
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
-            ("metrics", self.metrics_table_name),
+            ("component_metrics", self.component_metrics_table_name),
+            ("aggregate_metrics", self.aggregate_metrics_table_name),
+            ("metrics_refreshes", self.metrics_refreshes_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
         ]
@@ -162,13 +239,18 @@ class DynamoDb(BaseDb):
                 schema = get_table_schema_definition(table_type)
                 schema["TableName"] = table_name
                 create_table_if_not_exists(self.client, table_name, schema)
+                # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+                if table_type == "sessions":
+                    latest_schema_version = MigrationManager(self).latest_schema_version
+                    self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
         Get table name and ensure the table exists, creating it if needed.
 
         Args:
-            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge", "traces", "spans")
+            table_type: Type of table ("sessions", "memories", "metrics", "component_metrics", "aggregate_metrics",
+                "metrics_refreshes", "evals", "knowledge", "traces", "spans")
 
         Returns:
             str: The table name
@@ -186,6 +268,12 @@ class DynamoDb(BaseDb):
             table_name = self.memory_table_name
         elif table_type == "metrics":
             table_name = self.metrics_table_name
+        elif table_type == "component_metrics":
+            table_name = self.component_metrics_table_name
+        elif table_type == "aggregate_metrics":
+            table_name = self.aggregate_metrics_table_name
+        elif table_type == "metrics_refreshes":
+            table_name = self.metrics_refreshes_table_name
         elif table_type == "evals":
             table_name = self.eval_table_name
         elif table_type == "knowledge":
@@ -204,6 +292,10 @@ class DynamoDb(BaseDb):
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
+            # Store the schema version for the created sessions table, which holds no legacy runs for metrics
+            if table_type == "sessions":
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
 
         return table_name
 
@@ -338,6 +430,9 @@ class DynamoDb(BaseDb):
                     existing = deserialize_from_dynamodb_item(existing_item)
                     if "run_index" in existing:
                         row["run_index"] = existing["run_index"]
+                    # The stored created_at, which a resumed run keeps
+                    if existing.get("created_at") is not None:
+                        row["created_at"] = existing["created_at"]
             except self.client.exceptions.ResourceNotFoundException:
                 pass
 
@@ -346,6 +441,7 @@ class DynamoDb(BaseDb):
                 payload["run_data"] = json.dumps(payload["run_data"])
             item = serialize_to_dynamo_item(payload)
             self.client.put_item(TableName=table_name, Item=item)
+            self._reopen_metrics_days([row["created_at"]])
         except Exception as e:
             log_error(f"Exception upserting run into runs table: {str(e)}")
             raise e
@@ -1088,10 +1184,16 @@ class DynamoDb(BaseDb):
                 put_kwargs["ConditionExpression"] = "attribute_not_exists(session_id) OR attribute_not_exists(#uid)"
             put_kwargs["ExpressionAttributeNames"] = expr_names
 
+            reopen_session_ids = get_metrics_reopen_session_ids(
+                [deserialize_from_dynamodb_item(existing_item)] if existing_item else [], [serialized_session]
+            )
             try:
                 self.client.put_item(**put_kwargs)
             except self.client.exceptions.ConditionalCheckFailedException:
                 return None
+            if session.session_id in reopen_session_ids:
+                # The stored created_at, which keeps the session on the day it was created
+                self._reopen_metrics_days([serialized_session.get("created_at")])
 
             # Runs are persisted separately via upsert_run by the caller (agent loop).
             # Attach the in-memory runs to the returned dict so callers see them.
@@ -1323,7 +1425,6 @@ class DynamoDb(BaseDb):
             user_id: The ID of the user to get the memories for.
             agent_id: The ID of the agent to get the memories for.
             team_id: The ID of the team to get the memories for.
-            workflow_id: The ID of the workflow to get the memories for.
             topics: The topics to filter the memories by.
             search_content: The content to search for in the memories.
             limit: The maximum number of memories to return.
@@ -1634,342 +1735,1228 @@ class DynamoDb(BaseDb):
 
     # --- Metrics ---
 
-    def calculate_metrics(self) -> Optional[Any]:
-        """Calculate metrics for all dates without complete metrics.
+    def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds
+        it. A day it could not reopen is retried by the next write.
+
+        Args:
+            created_ats: The stored created_at of each run or session the write changed.
+        """
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
+        try:
+            for day in days:
+                reopen_metrics_day(self.client, self.aggregate_metrics_table_name, day)
+            self._metrics_days_not_reopened.difference_update(days)
+        except self.client.exceptions.ResourceNotFoundException:
+            # No day was calculated yet, so there is nothing to reopen
+            self._metrics_days_not_reopened.clear()
+        except Exception as e:
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
+
+    def _get_metrics_refresh_row(self, refreshes_table_name: str) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the item of the metrics refreshes table, and the locked_at at or before which its lock is stale, by the
+        process clock."""
+        stale_lock_threshold = int(time.time()) - METRICS_LOCK_SECONDS
+        try:
+            item = self.client.get_item(
+                TableName=refreshes_table_name,
+                Key={"id": {"S": METRICS_REFRESH_ID}},
+                ConsistentRead=True,
+            ).get("Item")
+        except self.client.exceptions.ResourceNotFoundException:
+            item = None
+        if not item:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return deserialize_metrics_refresh_row(deserialize_from_dynamodb_item(item)), stale_lock_threshold
+
+    def _claim_metrics_refresh(self, refreshes_table_name: str, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the item of the metrics refreshes table, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_table_name: The metrics refreshes table.
+            worker_id: The id of this calculation, which heartbeats and releases the claim.
 
         Returns:
-            Optional[Any]: The calculated metrics or None if no metrics table.
+            Optional[Dict[str, Any]]: The claimed item, with when the last calculation finished and its fingerprint.
+                None when another process holds it.
+        """
+        now = int(time.time())
+        try:
+            # One conditional write, so two processes never both find the item free
+            response = self.client.update_item(
+                TableName=refreshes_table_name,
+                Key={"id": {"S": METRICS_REFRESH_ID}},
+                UpdateExpression="SET #locked_by = :worker_id, #locked_at = :now, #started_at = :now, "
+                "#status = :running REMOVE #error",
+                # A stale lock is taken over: the process that held it stopped
+                ConditionExpression="attribute_not_exists(#locked_by) OR #locked_at <= :stale_lock_threshold",
+                ExpressionAttributeNames={
+                    "#locked_by": "locked_by",
+                    "#locked_at": "locked_at",
+                    "#started_at": "started_at",
+                    "#status": "status",
+                    "#error": "error",
+                },
+                ExpressionAttributeValues={
+                    ":worker_id": {"S": worker_id},
+                    ":now": {"N": str(now)},
+                    ":running": {"S": "running"},
+                    ":stale_lock_threshold": {"N": str(now - METRICS_LOCK_SECONDS)},
+                },
+                ReturnValues="ALL_NEW",
+            )
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return None
+        return deserialize_metrics_refresh_row(deserialize_from_dynamodb_item(response["Attributes"]))
+
+    def _heartbeat_metrics_refresh(self, refreshes_table_name: str, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        try:
+            self.client.update_item(**heartbeat_metrics_refresh_update(refreshes_table_name, worker_id))
+            return True
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return False
+
+    def _release_metrics_refresh(
+        self,
+        refreshes_table_name: str,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the item of the metrics refreshes table: completed, with the fingerprint, without an error, failed
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table_name: The metrics refreshes table.
+            worker_id: The id of the calculation that claimed the item. None writes the item only while no process
+                holds it, and creates it before any refresh.
+            error: The error the calculation failed with. None when it completed.
+            fingerprint: The fingerprint of yesterday and today, stored once it completed.
+            stopped: Whether the calculation stopped before it finished.
+            claimed_fingerprint: The fingerprint of the claimed item. A rebuild that marked another one since keeps
+                its mark.
+        """
+        names = {"#locked_by": "locked_by", "#locked_at": "locked_at", "#status": "status", "#error": "error"}
+        values: Dict[str, Any] = {}
+        if worker_id is None:
+            lock_condition = "attribute_not_exists(#locked_by)"
+        else:
+            values[":worker_id"] = {"S": worker_id}
+            lock_condition = "#locked_by = :worker_id"
+        try:
+            if stopped:
+                # The days it did not reach stay open for the next calculation; a first one that stopped has none to
+                # show
+                names["#finished_at"] = "finished_at"
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression="SET #status = :completed REMOVE #locked_by, #locked_at, #error",
+                        ConditionExpression=f"{lock_condition} AND attribute_exists(#finished_at)",
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues={**values, ":completed": {"S": "completed"}},
+                    )
+                    return
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    names.pop("#finished_at")
+                    error = METRICS_STOPPED_ERROR
+            if error is None:
+                names.update({"#finished_at": "finished_at", "#fingerprint": "fingerprint"})
+                values.update({":completed": {"S": "completed"}, ":finished_at": {"N": str(int(time.time()))}})
+                update_expression = "SET #status = :completed, #finished_at = :finished_at"
+                remove_parts = ["#locked_by", "#locked_at", "#error"]
+                # A fingerprint of nothing is no attribute, as a NULL column
+                if fingerprint is None:
+                    remove_parts.append("#fingerprint")
+                else:
+                    update_expression += ", #fingerprint = :fingerprint"
+                    values[":fingerprint"] = {"S": json.dumps(fingerprint)}
+                update_expression += " REMOVE " + ", ".join(remove_parts)
+                # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+                # yesterday and today. No fingerprint is no attribute, which a claim of None compares equal to
+                fingerprint_condition = "attribute_not_exists(#fingerprint)"
+                claimed_values: Dict[str, Any] = {}
+                if claimed_fingerprint is not None:
+                    fingerprint_condition = "#fingerprint = :claimed_fingerprint"
+                    claimed_values[":claimed_fingerprint"] = {"S": json.dumps(claimed_fingerprint)}
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression=update_expression,
+                        ConditionExpression=f"{lock_condition} AND {fingerprint_condition}",
+                        ExpressionAttributeNames=names,
+                        ExpressionAttributeValues={**values, **claimed_values},
+                    )
+                    return
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    names.pop("#fingerprint")
+                    values.pop(":fingerprint", None)
+                    update_expression = (
+                        "SET #status = :completed, #finished_at = :finished_at REMOVE #locked_by, #locked_at, #error"
+                    )
+            else:
+                values.update({":failed": {"S": "failed"}, ":error": {"S": error}})
+                update_expression = "SET #status = :failed, #error = :error REMOVE #locked_by, #locked_at"
+                if worker_id is None:
+                    # Before any refresh there is no item to update, and the update creates it
+                    names["#started_at"] = "started_at"
+                    values[":now"] = {"N": str(int(time.time()))}
+                    update_expression = (
+                        "SET #status = :failed, #error = :error, #started_at = if_not_exists(#started_at, :now) "
+                        "REMOVE #locked_by, #locked_at"
+                    )
+            try:
+                self.client.update_item(
+                    TableName=refreshes_table_name,
+                    Key={"id": {"S": METRICS_REFRESH_ID}},
+                    UpdateExpression=update_expression,
+                    ConditionExpression=lock_condition,
+                    ExpressionAttributeNames=names,
+                    ExpressionAttributeValues=values,
+                )
+            except self.client.exceptions.ConditionalCheckFailedException:
+                # Another process took the refresh over after this one's lock went stale
+                pass
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
+
+    def _query_metrics_sources(
+        self,
+        table_name: str,
+        index_name: str,
+        key_name: str,
+        key_values: List[str],
+        attributes: List[str],
+        start_timestamp: int,
+        end_timestamp: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get the sessions or runs created in the given time range, with only the given attributes, each run reduced
+        with build_component_metrics_run before the next page is read.
+
+        Args:
+            table_name: The sessions or runs table.
+            index_name: The index keyed by key_name and created_at.
+            key_name: The hash key of the index.
+            key_values: Every value of the hash key to read.
+            attributes: The attributes to read.
+            start_timestamp: The start of the range, included.
+            end_timestamp: The end of the range, not included. ``None`` reads every later record.
+
+        Returns:
+            List[Dict[str, Any]]: The records.
+        """
+        names = {f"#{name}": name for name in [key_name, "created_at"] + attributes}
+        key_condition = f"#{key_name} = :key AND #created_at >= :start_ts"
+        values: Dict[str, Any] = {":start_ts": {"N": str(start_timestamp)}}
+        if end_timestamp is not None:
+            key_condition = f"#{key_name} = :key AND #created_at BETWEEN :start_ts AND :end_ts"
+            # BETWEEN includes its end, and the range does not
+            values[":end_ts"] = {"N": str(end_timestamp - 1)}
+
+        records: List[Dict[str, Any]] = []
+        for key_value in key_values:
+            query_kwargs: Dict[str, Any] = {
+                "TableName": table_name,
+                "IndexName": index_name,
+                "KeyConditionExpression": key_condition,
+                "ExpressionAttributeNames": names,
+                "ExpressionAttributeValues": {**values, ":key": {"S": key_value}},
+                "ProjectionExpression": ", ".join(f"#{name}" for name in attributes),
+            }
+            # A page at a time: run_data is stored as one string, read whole, so each run is reduced to what component
+            # metrics count before the next page is read
+            while True:
+                response = self.client.query(**query_kwargs)
+                for item in response.get("Items", []):
+                    record = deserialize_from_dynamodb_item(item)
+                    records.append(build_component_metrics_run(record) if "run_data" in record else record)
+                if "LastEvaluatedKey" not in response:
+                    break
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return records
+
+    def _get_aggregate_metrics_items(
+        self,
+        aggregate_metrics_table_name: str,
+        aggregation_period: str,
+        user_id: Optional[str],
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        completed: Optional[bool] = None,
+        attributes: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get the aggregate metrics rows of one period in the given date range, oldest first.
+
+        Args:
+            aggregate_metrics_table_name: The aggregate metrics table.
+            aggregation_period: "daily" or "monthly".
+            user_id: The rows of this user, ``""`` the everyone rows, ``None`` the rows of every user and the everyone
+                rows, which are read from the period's index a moment after a write.
+            starting_date: The first day to read. ``None`` reads from the first one.
+            ending_date: The last day to read. ``None`` reads to the last one.
+            completed: Only the rows completed, or only the everyone rows not completed, which are read from the index
+                of the open rows a moment after a write. ``None`` reads both.
+            attributes: Only these attributes of each row. ``None`` reads every one.
+
+        Returns:
+            List[Dict[str, Any]]: The rows.
+        """
+        names = {"#key": "aggregation_period" if user_id is None else "period_user_id", "#date": "date"}
+        values: Dict[str, Any] = {
+            ":key": {
+                "S": aggregation_period
+                if user_id is None
+                else aggregate_metrics_period_user_id(aggregation_period, user_id)
+            }
+        }
+        key_condition = "#key = :key AND #date BETWEEN :start_date AND :end_date"
+        values[":start_date"] = {"S": (starting_date or date.min).isoformat()}
+        values[":end_date"] = {"S": (ending_date or date.max).isoformat()}
+        query_kwargs: Dict[str, Any] = {
+            "TableName": aggregate_metrics_table_name,
+            "KeyConditionExpression": key_condition,
+            "ExpressionAttributeNames": names,
+            "ExpressionAttributeValues": values,
+        }
+        if completed is False:
+            # Only an open everyone row has open_period, so finding the open rows never reads a completed one
+            names["#key"] = "open_period"
+            values[":key"] = {"S": aggregation_period}
+            query_kwargs["IndexName"] = "open_period-date-index"
+        elif user_id is None:
+            query_kwargs["IndexName"] = "aggregation_period-date-index"
+        else:
+            query_kwargs["ConsistentRead"] = True
+        if completed:
+            query_kwargs["FilterExpression"] = "#completed = :completed"
+            names["#completed"] = "completed"
+            values[":completed"] = {"BOOL": completed}
+        if attributes is not None:
+            names.update({f"#{name}": name for name in attributes})
+            query_kwargs["ProjectionExpression"] = ", ".join(f"#{name}" for name in attributes)
+        return [deserialize_metrics_row(item) for item in query_all_items(self.client, query_kwargs)]
+
+    def _get_component_metrics_rows(
+        self, table_name: str, day: date, user_id: Optional[str] = None, attributes: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the component metrics rows of one day: of every user, or of no user for ``""``, with only the given
+        attributes of each when there are any."""
+        query_kwargs: Dict[str, Any] = {
+            "TableName": table_name,
+            "KeyConditionExpression": "#date = :date",
+            "ExpressionAttributeNames": {"#date": "date"},
+            "ExpressionAttributeValues": {":date": {"S": day.isoformat()}},
+            "ConsistentRead": True,
+        }
+        if user_id == "":
+            query_kwargs["FilterExpression"] = "#user_id = :user_id"
+            query_kwargs["ExpressionAttributeNames"]["#user_id"] = "user_id"
+            query_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": ""}
+        if attributes is not None:
+            query_kwargs["ExpressionAttributeNames"].update({f"#{name}": name for name in attributes})
+            query_kwargs["ProjectionExpression"] = ", ".join(f"#{name}" for name in attributes)
+        return [deserialize_metrics_row(item) for item in query_all_items(self.client, query_kwargs)]
+
+    def _get_metrics_fingerprint(
+        self, sessions_table_name: str, runs_table_name: str, yesterday: date
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged.
+
+        DynamoDB has no SUM, so the update time of every session and run of the two days is read, through the indexes
+        the calculation reads them with. A read is charged for the whole record, not only its update time."""
+        start_timestamp = int(datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        sessions = self._query_metrics_sources(
+            sessions_table_name,
+            "session_type-created_at-index",
+            "session_type",
+            list(METRICS_COMPONENT_TYPES),
+            ["created_at", "updated_at"],
+            start_timestamp,
+        )
+        runs = self._query_metrics_sources(
+            runs_table_name,
+            "status-created_at-index",
+            "status",
+            [status.value for status in RunStatus],
+            ["created_at", "updated_at"],
+            start_timestamp,
+        )
+        return get_metrics_fingerprint(sessions, runs, yesterday)
+
+    def _get_metrics_data_days(
+        self,
+        table_name: str,
+        index_name: str,
+        key_name: str,
+        key_values: List[str],
+        today: date,
+        starting_date: Optional[date] = None,
+    ) -> Set[date]:
+        """Get every day up to today, from starting_date on, with a session or run, through the index keyed by
+        key_name and created_at.
+
+        Each day found is one query for the first record after it, so a first calculation never reads every record.
+        """
+        days: Set[date] = set()
+        for key_value in key_values:
+            start_timestamp = (
+                int(datetime.combine(starting_date, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+                if starting_date is not None
+                else 0
+            )
+            while True:
+                items = self.client.query(
+                    TableName=table_name,
+                    IndexName=index_name,
+                    KeyConditionExpression="#key = :key AND #created_at >= :start_ts",
+                    ExpressionAttributeNames={"#key": key_name, "#created_at": "created_at"},
+                    ExpressionAttributeValues={":key": {"S": key_value}, ":start_ts": {"N": str(start_timestamp)}},
+                    ProjectionExpression="#created_at",
+                    Limit=1,
+                ).get("Items", [])
+                if not items:
+                    break
+                day = datetime.fromtimestamp(
+                    deserialize_from_dynamodb_item(items[0])["created_at"], tz=timezone.utc
+                ).date()
+                if day > today:
+                    break
+                days.add(day)
+                start_timestamp = int(
+                    datetime.combine(day + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+        return days
+
+    def _get_metrics_dates_to_calculate(
+        self,
+        aggregate_metrics_table_name: str,
+        sessions_table_name: str,
+        runs_table_name: str,
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
+
+        Args:
+            aggregate_metrics_table_name: The aggregate metrics table.
+            sessions_table_name: The sessions table.
+            runs_table_name: The runs table.
+            refresh_row: The item of the metrics refreshes table, from _claim_metrics_refresh.
+            rebuild_from: The first day of a rebuild.
+
+        Returns:
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the item of
+                the metrics refreshes table.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        fingerprint = self._get_metrics_fingerprint(sessions_table_name, runs_table_name, yesterday)
+        first_calculation = refresh_row["finished_at"] is None
+        # Yesterday and today, when their sessions or runs changed since the last calculation
+        if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+            dates_to_process.update([yesterday, today])
+
+        # Every earlier day still open: not yet completed, or reopened by a write since
+        dates_to_process.update(
+            row["date"]
+            for row in self._get_aggregate_metrics_items(
+                aggregate_metrics_table_name,
+                "daily",
+                "",
+                ending_date=yesterday - timedelta(days=1),
+                completed=False,
+                attributes=["date"],
+            )
+        )
+        # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while
+        # it was yesterday or today
+        if not first_calculation:
+            dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+        # Until a first calculation has finished, every day with a session or a run not yet completed; with
+        # rebuild_from, every day with one from that date on
+        if first_calculation or rebuild_from is not None:
+            completed_days: Set[date] = set()
+            if first_calculation:
+                completed_days = {
+                    row["date"]
+                    for row in self._get_aggregate_metrics_items(
+                        aggregate_metrics_table_name, "daily", "", completed=True, attributes=["date"]
+                    )
+                }
+            # Only days with data, so one session dated long ago never builds every empty day since
+            starting_date = rebuild_from if not first_calculation else None
+            data_days = self._get_metrics_data_days(
+                sessions_table_name,
+                "session_type-created_at-index",
+                "session_type",
+                list(METRICS_COMPONENT_TYPES),
+                today,
+                starting_date,
+            ) | self._get_metrics_data_days(
+                runs_table_name,
+                "status-created_at-index",
+                "status",
+                [status.value for status in RunStatus],
+                today,
+                starting_date,
+            )
+            for data_date in data_days:
+                # A rebuild takes every day with data from its first day, completed or not
+                rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                if rebuilt or (first_calculation and data_date not in completed_days):
+                    dates_to_process.add(data_date)
+
+        return sorted(dates_to_process), fingerprint
+
+    def _get_open_metrics_months(self, aggregate_metrics_table_name: str) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        return [
+            row["date"]
+            for row in self._get_aggregate_metrics_items(
+                aggregate_metrics_table_name,
+                "monthly",
+                "",
+                ending_date=current_month - timedelta(days=1),
+                completed=False,
+                attributes=["date"],
+            )
+        ]
+
+    def _get_metrics_runs(
+        self, runs_table_name: str, run_ids: List[str], attributes: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Get the stored runs of the given ids, with only the given attributes."""
+        runs: List[Dict[str, Any]] = []
+        for i in range(0, len(run_ids), DYNAMO_BATCH_GET_SIZE_LIMIT):
+            batch = run_ids[i : i + DYNAMO_BATCH_GET_SIZE_LIMIT]
+            request_items: Dict[str, Any] = {
+                runs_table_name: {
+                    "Keys": [{"run_id": {"S": run_id}} for run_id in batch],
+                    "ExpressionAttributeNames": {f"#{name}": name for name in attributes},
+                    "ProjectionExpression": ", ".join(f"#{name}" for name in attributes),
+                }
+            }
+            runs.extend(
+                deserialize_from_dynamodb_item(item)
+                for item in batch_get_with_retry(self.client, request_items).get(runs_table_name, [])
+            )
+        return runs
+
+    def _get_metrics_legacy_runs(
+        self,
+        sessions_table_name: str,
+        runs_table_name: str,
+        start_timestamp: int,
+        end_timestamp: int,
+    ) -> Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+        """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
+
+        Args:
+            sessions_table_name: The sessions table.
+            runs_table_name: The runs table. A run it also holds is read from there.
+            start_timestamp: The start of the range, included.
+            end_timestamp: The end of the range, not included.
+
+        Returns:
+            Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
+                were created on, and by their id.
+        """
+        legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+        legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        counted_runs: Set[Tuple[Any, str]] = set()
+        for session_type in METRICS_COMPONENT_TYPES:
+            # A session holds runs created after it started and before it was last written
+            query_kwargs: Dict[str, Any] = {
+                "TableName": sessions_table_name,
+                "IndexName": "session_type-created_at-index",
+                "KeyConditionExpression": "#session_type = :session_type AND #created_at < :end_ts",
+                "FilterExpression": "attribute_exists(#runs) AND "
+                "(#updated_at >= :start_ts OR attribute_not_exists(#updated_at))",
+                "ExpressionAttributeNames": {
+                    "#session_type": "session_type",
+                    "#created_at": "created_at",
+                    "#updated_at": "updated_at",
+                    "#session_id": "session_id",
+                    "#user_id": "user_id",
+                    "#runs": "runs",
+                },
+                "ExpressionAttributeValues": {
+                    ":session_type": {"S": session_type},
+                    ":start_ts": {"N": str(start_timestamp)},
+                    ":end_ts": {"N": str(end_timestamp)},
+                },
+                "ProjectionExpression": "#session_id, #user_id, #created_at, #updated_at, #runs",
+            }
+            # A page of sessions at a time: the legacy runs field is stored as one string, read whole, so the legacy
+            # runs of each page are reduced to what component metrics count, and checked against the runs table,
+            # before the next page is read
+            while True:
+                response = self.client.query(**query_kwargs)
+                sessions = [
+                    session
+                    for session in (deserialize_from_dynamodb_item(item) for item in response.get("Items", []))
+                    if (session.get("updated_at") or session.get("created_at") or 0) >= start_timestamp
+                ]
+                legacy_runs = [
+                    build_component_metrics_run(legacy_run)
+                    for legacy_run in get_metrics_legacy_runs(sessions)
+                    if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
+                ]
+                # The runs table wins on a run in both, as merge_runs_table_with_legacy_blob does
+                migrated_run_ids = {
+                    run["run_id"]
+                    for run in self._get_metrics_runs(
+                        runs_table_name, sorted({legacy_run["run_id"] for legacy_run in legacy_runs}), ["run_id"]
+                    )
+                }
+                for legacy_run in legacy_runs:
+                    # A run kept twice in one session's legacy runs is counted once
+                    if (
+                        legacy_run["run_id"] in migrated_run_ids
+                        or (legacy_run["session_id"], legacy_run["run_id"]) in counted_runs
+                    ):
+                        continue
+                    counted_runs.add((legacy_run["session_id"], legacy_run["run_id"]))
+                    legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
+                    legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
+                    legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
+                if "LastEvaluatedKey" not in response:
+                    break
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        return legacy_runs_by_day, legacy_runs_by_id
+
+    def _get_metrics_parent_runs(self, runs_table_name: str, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            parent_runs.extend(
+                self._get_metrics_runs(
+                    runs_table_name,
+                    parent_run_ids,
+                    ["run_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id"],
+                )
+            )
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    def _write_aggregate_metrics_rows(
+        self,
+        aggregate_metrics_table_name: str,
+        aggregate_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+        refreshes_table_name: str,
+        worker_id: str,
+        row_writes: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> bool:
+        """Write a period's rows: the given component metrics writes, then the user rows of the aggregate metrics table,
+        then the everyone row, from build_aggregate_metrics_rows. False when another process took the refresh over.
+
+        DynamoDB writes 25 items at most at once, so the everyone row is written last, conditional on the version it
+        is completed by: it is completed only while it still has the version read before the period's rows.
+
+        Args:
+            aggregate_metrics_table_name: The aggregate metrics table.
+            aggregate_metrics_rows: The period's rows, the everyone row first.
+            rows_changed: Whether a component metrics row of the period was written or deleted.
+            read_version: The version of the everyone row read before the period's rows were rebuilt.
+            refreshes_table_name: The metrics refreshes table.
+            worker_id: The id of this calculation, which holds the refresh.
+            row_writes: The batch_write_item requests of the component metrics rows to write first, by table.
+        """
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
+        # Read through the period's index, a moment behind a write: every row it compares was written by an earlier
+        # calculation, as one calculation writes a period once
+        stored_rows = self._get_aggregate_metrics_items(
+            aggregate_metrics_table_name, period, None, period_date, period_date
+        )
+        stored_by_user = {row["user_id"]: row for row in stored_rows}
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
+        )
+        writes = {table_name: list(requests) for table_name, requests in (row_writes or {}).items()}
+        writes.setdefault(aggregate_metrics_table_name, []).extend(
+            [
+                {"DeleteRequest": {"Key": aggregate_metrics_key(period, period_date, user_id)}}
+                for user_id in stale_user_ids
+            ]
+            + [
+                {
+                    "PutRequest": {
+                        "Item": serialize_aggregate_metrics_row(
+                            aggregate_metrics_row_to_store(row, stored_by_user.get(row["user_id"]), None)
+                        )
+                    }
+                }
+                for row in changed_rows
+            ]
+        )
+
+        everyone_key = aggregate_metrics_key(period, period_date, "")
+        expected_version = read_version
+        # Heartbeated before the period's writes, so a process whose lock went stale writes none of them; a lock lost
+        # between the batch requests reopens the period below
+        if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
+            return False
+        # Rows of more than one request move the everyone row's version first, so a request that fails later never
+        # leaves them under the version read before them; rows of one request keep it until the everyone row's write
+        requests_count = sum(-(-len(requests) // DYNAMO_BATCH_SIZE_LIMIT) for requests in writes.values())
+        if requests_count > 1 and "" in stored_by_user:
+            self.client.update_item(
+                TableName=aggregate_metrics_table_name,
+                Key=everyone_key,
+                UpdateExpression="ADD #version :one",
+                ExpressionAttributeNames={"#version": "version"},
+                ExpressionAttributeValues={":one": {"N": "1"}},
+            )
+            expected_version = read_version + 1 if read_version is not None else None
+        for table_name, requests in writes.items():
+            for i in range(0, len(requests), DYNAMO_BATCH_SIZE_LIMIT):
+                batch_write_with_retry(self.client, {table_name: requests[i : i + DYNAMO_BATCH_SIZE_LIMIT]})
+
+        if everyone_row is None:
+            if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
+                # The rows took several batch requests: a lock lost between them would leave stale rows completed
+                reopen_metrics_row(self.client, aggregate_metrics_table_name, period_date, period)
+                return False
+            return True
+        # Written last, and completed only while its version is still the one the rows were written under. A reopen
+        # written between its read and its write fails the condition, and the row is read again, as
+        # batch_write_with_retry retries
+        for attempt in range(METRICS_WRITE_RETRIES + 1):
+            stored_item = self.client.get_item(
+                TableName=aggregate_metrics_table_name, Key=everyone_key, ConsistentRead=True
+            ).get("Item")
+            stored_row = deserialize_metrics_row(stored_item) if stored_item else None
+            put_kwargs: Dict[str, Any] = {
+                "TableName": aggregate_metrics_table_name,
+                "Item": serialize_aggregate_metrics_row(
+                    aggregate_metrics_row_to_store(everyone_row, stored_row, expected_version)
+                ),
+            }
+            # Conditional on the version it is completed by, so a reopen written since keeps the period open
+            if stored_row is None:
+                put_kwargs["ConditionExpression"] = "attribute_not_exists(period_user_id)"
+            else:
+                put_kwargs["ConditionExpression"] = "#version = :version"
+                put_kwargs["ExpressionAttributeNames"] = {"#version": "version"}
+                put_kwargs["ExpressionAttributeValues"] = {":version": {"N": str(stored_row["version"])}}
+            # Written with the heartbeat, so it is never written after another process took the refresh over
+            try:
+                self.client.transact_write_items(
+                    TransactItems=[
+                        {"Update": heartbeat_metrics_refresh_update(refreshes_table_name, worker_id)},
+                        {"Put": put_kwargs},
+                    ]
+                )
+                break
+            except self.client.exceptions.TransactionCanceledException as e:
+                reasons = e.response.get("CancellationReasons") or []
+                if reasons and reasons[0].get("Code") == "ConditionalCheckFailed":
+                    # The rows took several batch requests: a lock lost between them would leave stale rows completed
+                    reopen_metrics_row(self.client, aggregate_metrics_table_name, period_date, period)
+                    return False
+                if attempt == METRICS_WRITE_RETRIES:
+                    raise
+        return True
+
+    def _calculate_date_metrics(
+        self,
+        table_name: str,
+        aggregate_metrics_table_name: str,
+        sessions_table_name: str,
+        runs_table_name: str,
+        date_to_process: date,
+        legacy_runs: List[Dict[str, Any]],
+        legacy_runs_by_id: Dict[str, Dict[str, Any]],
+        refreshes_table_name: str,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and aggregate metrics rows. False when the refresh was taken over or stopped."""
+        start_timestamp = int(
+            datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        # Read before the day's runs, so a run written while they are read moves it
+        everyone_item = self.client.get_item(
+            TableName=aggregate_metrics_table_name,
+            Key=aggregate_metrics_key("daily", date_to_process, ""),
+            ProjectionExpression="#version",
+            ExpressionAttributeNames={"#version": "version"},
+            ConsistentRead=True,
+        ).get("Item")
+        read_version = deserialize_from_dynamodb_item(everyone_item).get("version") if everyone_item else None
+
+        # The day's sessions and runs are read through the indexes keyed by their type and status and created_at,
+        # one query per type and status
+        sessions = self._query_metrics_sources(
+            sessions_table_name,
+            "session_type-created_at-index",
+            "session_type",
+            list(METRICS_COMPONENT_TYPES),
+            ["session_id", "session_type", "user_id", "agent_id", "team_id", "workflow_id", "metadata", "session_data"],
+            start_timestamp,
+            end_timestamp,
+        )
+        # A manual compaction's usage, which no run carries, is read from the session's data
+        sessions = [
+            {**session, "compaction_metrics": (session.get("session_data") or {}).get("compaction_metrics")}
+            for session in sessions
+        ]
+        runs = self._query_metrics_sources(
+            runs_table_name,
+            "status-created_at-index",
+            "status",
+            [status.value for status in RunStatus],
+            [
+                "run_id",
+                "session_id",
+                "run_type",
+                "agent_id",
+                "team_id",
+                "workflow_id",
+                "user_id",
+                "parent_run_id",
+                "status",
+                "run_data",
+            ],
+            start_timestamp,
+            end_timestamp,
+        )
+        # Checked once the runs are read too, so a stop never waits for the rest of a large day
+        if should_stop is not None and should_stop():
+            return False
+
+        # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and is
+        # counted from there
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
+
+        # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+        run_ids = sorted(metrics_nested_run_ids(runs))
+        stored_run_ids: Set[str] = {
+            run["run_id"] for run in self._get_metrics_runs(runs_table_name, run_ids, ["run_id"])
+        }
+        # A nested run also stored in a legacy runs field of the rebuild, as a team stored its members' runs, is
+        # counted from that run
+        stored_run_ids.update(run_id for run_id in run_ids if run_id in legacy_runs_by_id)
+
+        # A run started by a run of another day, such as a member run after midnight, names that run's agent, team or
+        # workflow as its parent, read from the legacy runs of the rebuild or the runs table
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
+        parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+
+        # A remote member's run after midnight is named by its team's run of the day before
+        team_runs = self._query_metrics_sources(
+            runs_table_name,
+            "session_id-created_at-index",
+            "session_id",
+            sorted(metrics_remote_member_team_session_ids(runs)),
+            ["run_id", "session_id", "run_type", "agent_id", "team_id", "workflow_id", "parent_run_id", "run_data"],
+            start_timestamp - 86400,
+            start_timestamp,
+        )
+        parent_runs.extend(team_runs)
+        parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+        parent_runs.extend(self._get_metrics_parent_runs(runs_table_name, parent_run_ids))
+
+        records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+        stored_rows = self._get_component_metrics_rows(table_name, date_to_process)
+
+        changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+        requests: List[Dict[str, Any]] = []
+        for user_id, component_type, component_id, parent_component_id, root_component_id in stale_keys:
+            row_id = component_metrics_record_id(
+                {
+                    "user_id": user_id,
+                    "component_type": component_type,
+                    "component_id": component_id,
+                    "parent_component_id": parent_component_id,
+                    "root_component_id": root_component_id,
+                }
+            )
+            requests.append(
+                {"DeleteRequest": {"Key": {"date": {"S": date_to_process.isoformat()}, "id": {"S": row_id}}}}
+            )
+        # A stored row keeps its created_at, as an upsert does
+        created_at_by_id = {row["id"]: row["created_at"] for row in stored_rows}
+        for row in changed_rows:
+            created_at = created_at_by_id.get(component_metrics_record_id(row), row["created_at"])
+            requests.append(
+                {"PutRequest": {"Item": serialize_component_metrics_row({**row, "created_at": created_at})}}
+            )
+
+        if not self._write_aggregate_metrics_rows(
+            aggregate_metrics_table_name,
+            build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+            rows_changed=bool(changed_rows or stale_keys),
+            read_version=read_version,
+            refreshes_table_name=refreshes_table_name,
+            worker_id=worker_id,
+            row_writes={table_name: requests},
+        ):
+            return False
+        if changed_rows or stale_keys:
+            # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+            reopen_metrics_month(self.client, aggregate_metrics_table_name, date_to_process.replace(day=1))
+        return True
+
+    def _calculate_month_metrics(
+        self,
+        table_name: str,
+        aggregate_metrics_table_name: str,
+        month_start: date,
+        refreshes_table_name: str,
+        worker_id: str,
+    ) -> bool:
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days.
+        False when another process took the refresh over."""
+        everyone_item = self.client.get_item(
+            TableName=aggregate_metrics_table_name,
+            Key=aggregate_metrics_key("monthly", month_start, ""),
+            ProjectionExpression="#version",
+            ExpressionAttributeNames={"#version": "version"},
+            ConsistentRead=True,
+        ).get("Item")
+        read_version = deserialize_from_dynamodb_item(everyone_item).get("version") if everyone_item else None
+
+        # Day by day, so a month of many rows is added up a day at a time instead of held whole
+        per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+        day = month_start
+        while day <= metrics_month_end(month_start):
+            add_metrics_month_totals(per_owner, self._get_component_metrics_rows(table_name, day))
+            day += timedelta(days=1)
+
+        # Added up per owner and component over the month, so a user of several days is one user of the month
+        return self._write_aggregate_metrics_rows(
+            aggregate_metrics_table_name,
+            build_aggregate_metrics_month_rows(month_start, per_owner),
+            rows_changed=False,
+            read_version=read_version,
+            refreshes_table_name=refreshes_table_name,
+            worker_id=worker_id,
+        )
+
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process or replica it runs in: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from: Also rebuild every day from this date to today, as after a release that changed how metrics
+                are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
         """
-        if not self.metrics_table_name:
-            return None
-
         try:
-            from agno.utils.log import log_info
-
-            # Get starting date for metrics calculation
-            starting_date = self._get_metrics_calculation_starting_date()
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
+            calculated_dates = self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
                 return None
-
-            # Get dates that need metrics calculation
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            # Get timestamp range for session data
-            start_timestamp = int(
-                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
-            )
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-
-            # Get all sessions for the date range
-            sessions = self._get_all_sessions_for_metrics_calculation(
-                start_timestamp=start_timestamp, end_timestamp=end_timestamp
-            )
-
-            # Process session data for metrics calculation
-
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions,
-                dates_to_process=dates_to_process,
-                start_timestamp=start_timestamp,
-            )
-
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
-                return None
-
-            # Calculate metrics for each date
-            results = []
-            metrics_records = []
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
-
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
-                    continue
-
-                # One record per user_id, plus the empty-string bucket for unowned sessions
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
-
-            # Store metrics in DynamoDB
-            if metrics_records:
-                results = self._bulk_upsert_metrics(metrics_records)
-
-            log_debug("Updated metrics calculations")
-
-            return results
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
             log_error(f"Failed to calculate metrics: {str(e)}")
             raise e
 
-    def _get_metrics_calculation_starting_date(self) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed:
-        1. If there are metrics records, return the date of the first day without a complete metrics record.
-        2. If there are no metrics records, return the date of the first recorded session.
-        3. If there are no metrics records and no sessions records, return None.
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop: Checked before each day and month, and once a day's runs are read. Once it returns True, the
+                calculation releases the refresh and stops; the next one continues from the first day still open.
+            rebuild_from: Also rebuild every day from this date to today.
 
         Returns:
-            Optional[date]: The starting date for which metrics calculation is needed.
-        """
-        try:
-            metrics_table_name = self._get_table("metrics")
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
 
-            # 1. Check for existing metrics records
-            response = self.client.scan(
-                TableName=metrics_table_name,
-                ProjectionExpression="#date, completed",
-                ExpressionAttributeNames={"#date": "date"},
-                Limit=1000,  # Get reasonable number of records to find incomplete ones
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        table_name = self._get_table("component_metrics", create_table_if_not_found=True)
+        aggregate_metrics_table_name = self._get_table("aggregate_metrics", create_table_if_not_found=True)
+        refreshes_table_name = self._get_table("metrics_refreshes", create_table_if_not_found=True)
+        sessions_table_name = self.session_table_name
+        if (
+            table_name is None
+            or aggregate_metrics_table_name is None
+            or refreshes_table_name is None
+            or not self.table_exists(sessions_table_name)
+        ):
+            log_debug("No session data found. Won't calculate metrics.")
+            return []
+        runs_table_name = self._get_table("runs", create_table_if_not_found=True)
+        if runs_table_name is None:
+            return []
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                reopen_metrics_days_from(self.client, aggregate_metrics_table_name, rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                try:
+                    self.client.update_item(
+                        TableName=refreshes_table_name,
+                        Key={"id": {"S": METRICS_REFRESH_ID}},
+                        UpdateExpression="SET #fingerprint = :rebuild",
+                        # Before any refresh there is no item to mark, and an update would create one
+                        ConditionExpression="attribute_exists(#id)",
+                        ExpressionAttributeNames={"#id": "id", "#fingerprint": "fingerprint"},
+                        ExpressionAttributeValues={":rebuild": {"S": json.dumps(["rebuild", uuid4().hex])}},
+                    )
+                except self.client.exceptions.ConditionalCheckFailedException:
+                    pass
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    refreshes_table_name,
+                    None,
+                    error=database_error_message(e),
+                )
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = self._claim_metrics_refresh(refreshes_table_name, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
+                aggregate_metrics_table_name, sessions_table_name, runs_table_name, refresh_row, rebuild_from
             )
 
-            metrics_items = response.get("Items", [])
-
-            # Handle pagination to get all metrics records
-            while "LastEvaluatedKey" in response:
-                response = self.client.scan(
-                    TableName=metrics_table_name,
-                    ProjectionExpression="#date, completed",
-                    ExpressionAttributeNames={"#date": "date"},
-                    ExclusiveStartKey=response["LastEvaluatedKey"],
-                    Limit=1000,
+            legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+            legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+            if rebuild_from is not None:
+                # Every session is read again, for the legacy runs a process of an earlier release saved since
+                self._metrics_legacy_runs = None
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs. A
+            # store created by 3.0 or 3.1 stamps no version, so they are read only while a read of every session found
+            # some
+            if (
+                dates_to_process
+                and self._metrics_legacy_runs is not False
+                and packaging_version.parse(self.get_latest_schema_version(self.session_table_name) or "2.0.0")
+                < packaging_version.parse("3.0.0")
+            ):
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
                 )
-                metrics_items.extend(response.get("Items", []))
-
-            if metrics_items:
-                resume_date = metrics_starting_date_from_records(
-                    [deserialize_from_dynamodb_item(item) for item in metrics_items]
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
                 )
-                if resume_date is not None:
-                    return resume_date
-
-            # 2. No metrics records. Return the date of the first recorded session.
-            sessions_table_name = self._get_table("sessions")
-
-            earliest_session_date = None
-            for session_type in ["agent", "team", "workflow"]:
-                response = self.client.query(
-                    TableName=sessions_table_name,
-                    IndexName="session_type-created_at-index",
-                    KeyConditionExpression="session_type = :session_type",
-                    ExpressionAttributeValues={":session_type": {"S": session_type}},
-                    ScanIndexForward=True,  # Ascending order to get earliest
-                    Limit=1,
+                if self._metrics_legacy_runs is None:
+                    # The first read reads every session, so one that finds no legacy runs finds none anywhere
+                    start_timestamp, end_timestamp = 0, max(end_timestamp, int(time.time()) + 1)
+                legacy_runs_by_day, legacy_runs_by_id = self._get_metrics_legacy_runs(
+                    sessions_table_name, runs_table_name, start_timestamp, end_timestamp
+                )
+                if not self._heartbeat_metrics_refresh(refreshes_table_name, worker_id):
+                    return None
+                if self._metrics_legacy_runs is None:
+                    self._metrics_legacy_runs = bool(legacy_runs_by_id)
+                # A legacy run is dated on its own day, which may hold no session or run of the tables
+                today = datetime.now(timezone.utc).date()
+                dates_to_process = sorted(
+                    set(dates_to_process)
+                    | {
+                        day
+                        for day in legacy_runs_by_day
+                        if day <= today
+                        and (refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from))
+                    }
                 )
 
-                items = response.get("Items", [])
-                if items:
-                    first_session = deserialize_from_dynamodb_item(items[0])
-                    first_session_timestamp = first_session.get("created_at")
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table_name, worker_id, stopped=True)
+                    return None
+                if not self._calculate_date_metrics(
+                    table_name,
+                    aggregate_metrics_table_name,
+                    sessions_table_name,
+                    runs_table_name,
+                    date_to_process,
+                    legacy_runs_by_day.get(date_to_process, []),
+                    legacy_runs_by_id,
+                    refreshes_table_name,
+                    worker_id,
+                    should_stop,
+                ):
+                    if should_stop is not None and should_stop():
+                        self._release_metrics_refresh(refreshes_table_name, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
 
-                    if first_session_timestamp:
-                        session_date = datetime.fromtimestamp(first_session_timestamp, tz=timezone.utc).date()
-                        if earliest_session_date is None or session_date < earliest_session_date:
-                            earliest_session_date = session_date
-
-            # 3. Return the earliest session date or None if no sessions exist
-            return earliest_session_date
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(self._get_open_metrics_months(aggregate_metrics_table_name))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table_name, worker_id, stopped=True)
+                    return None
+                if not self._calculate_month_metrics(
+                    table_name, aggregate_metrics_table_name, month_start, refreshes_table_name, worker_id
+                ):
+                    return None
 
         except Exception as e:
-            log_error(f"Failed to get metrics calculation starting date: {str(e)}")
-            raise e
+            self._release_metrics_refresh(refreshes_table_name, worker_id, error=database_error_message(e))
+            raise
 
-    def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: int, end_timestamp: int
-    ) -> List[Dict[str, Any]]:
-        """Get all sessions within a timestamp range for metrics calculation.
+        self._release_metrics_refresh(
+            refreshes_table_name, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
 
-        Args:
-            start_timestamp: Start timestamp (inclusive)
-            end_timestamp: End timestamp (exclusive)
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
+            return []
 
-        Returns:
-            List[Dict[str, Any]]: List of session data dictionaries
-        """
+        return calculated_dates
+
+    def _get_metrics_counted_days(self, starting_date: Optional[date], ending_date: Optional[date]) -> List[date]:
+        """Get the days in the given date range whose everyone row counts any session or run, oldest first. A day
+        that counts nothing has no component metrics rows. A day whose only run is a regenerated one has its tokens
+        but no count."""
+        return [
+            row["date"]
+            for row in self._get_aggregate_metrics_items(
+                self.aggregate_metrics_table_name,
+                "daily",
+                "",
+                starting_date,
+                ending_date,
+                attributes=["date", *AGGREGATE_METRICS_COUNT_COLUMNS, "total_tokens"],
+            )
+            if any(row.get(column) for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            or (row.get("total_tokens") or 0) > 0
+        ]
+
+    def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        table_name = self.component_metrics_table_name
         try:
-            table_name = self._get_table("sessions")
-            all_sessions = []
+            # Each day is read from its rows: only the days whose everyone row counts anything
+            rows: List[Dict[str, Any]] = []
+            for day in self._get_metrics_counted_days(starting_date, ending_date):
+                rows.extend(self._get_component_metrics_rows(table_name, day, user_id, list(METRICS_BY_OWNER_FIELDS)))
+        except self.client.exceptions.ResourceNotFoundException:
+            return [], None
+        if not rows:
+            return [], None
 
-            # Query sessions by different types within the time range
-            for session_type in ["agent", "team", "workflow"]:
-                response = self.client.query(
-                    TableName=table_name,
-                    IndexName="session_type-created_at-index",
-                    KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
-                    ExpressionAttributeValues={
-                        ":session_type": {"S": session_type},
-                        ":start_ts": {"N": str(start_timestamp)},
-                        ":end_ts": {"N": str(end_timestamp)},
-                    },
-                )
+        latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
+        return build_metrics_by_owner_from_rows(rows), latest_updated_at
 
-                items = response.get("Items", [])
-
-                # Handle pagination
-                while "LastEvaluatedKey" in response:
-                    response = self.client.query(
-                        TableName=table_name,
-                        IndexName="session_type-created_at-index",
-                        KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
-                        ExpressionAttributeValues={
-                            ":session_type": {"S": session_type},
-                            ":start_ts": {"N": str(start_timestamp)},
-                            ":end_ts": {"N": str(end_timestamp)},
-                        },
-                        ExclusiveStartKey=response["LastEvaluatedKey"],
-                    )
-                    items.extend(response.get("Items", []))
-
-                # Deserialize sessions
-                for item in items:
-                    session_data = deserialize_from_dynamodb_item(item)
-                    if session_data:
-                        all_sessions.append(session_data)
-
-            # Attach runs from the runs table, merged with legacy blob
-            if all_sessions:
-                try:
-                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in all_sessions])
-                    for s in all_sessions:
-                        s["runs"] = merge_runs_table_with_legacy_blob(
-                            runs_by_session.get(s["session_id"], []), s.get("runs")
-                        )
-                except Exception as e:
-                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
-
-            return all_sessions
-
-        except Exception as e:
-            log_error(f"Failed to get sessions for metrics calculation: {str(e)}")
-            raise e
-
-    def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Bulk upsert metrics records into DynamoDB with proper deduplication.
-
-        Args:
-            metrics_records: List of metrics records to upsert
-
-        Returns:
-            List[Dict[str, Any]]: List of upserted records
-        """
+    def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
         try:
-            table_name = self._get_table("metrics")
-            if table_name is None:
-                return []
+            # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+            rows = self._get_aggregate_metrics_items(
+                self.aggregate_metrics_table_name,
+                "daily",
+                user_id,
+                starting_date,
+                ending_date,
+                attributes=list(AGGREGATE_METRICS_ROWS_FIELDS),
+            )
+        except self.client.exceptions.ResourceNotFoundException:
+            return [], None
+        if user_id is None:
+            rows = [row for row in rows if row["user_id"] != ""]
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        rows = [
+            row
+            for row in rows
+            if any(row[column] for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count")
+            or row["total_tokens"] > 0
+        ]
+        rows.sort(key=lambda row: (row["date"], row["user_id"]))
+        latest_updated_at = max((row["updated_at"] for row in rows if row.get("updated_at") is not None), default=None)
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
 
-            results = []
+    def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
 
-            # Process each record individually to handle proper upsert
-            for record in metrics_records:
-                upserted_record = self._upsert_single_metrics_record(table_name, record)
-                if upserted_record:
-                    results.append(upserted_record)
+        unowned_metrics, unowned_updated_at = self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
 
-            return results
-
-        except Exception as e:
-            log_error(f"Failed to bulk upsert metrics: {str(e)}")
-            raise e
-
-    def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Upsert a single metrics record.
-
-        Do not dedupe via the ``date-aggregation_period-index`` GSI: it lacks ``user_id``,
-        so a Query collapses every per-user record for a date into one.
-
-        Args:
-            table_name: The DynamoDB table name
-            record: The metrics record to upsert
-
-        Returns:
-            Optional[Dict[str, Any]]: The upserted record or None if failed
-        """
-        try:
-            if not record.get("id"):
-                log_error("Metrics record missing id field")
-                return None
-
-            record["updated_at"] = int(time.time())
-
-            prepared_record = self._prepare_metrics_record_for_dynamo(record)
-            item = self._serialize_metrics_to_dynamo_item(prepared_record)
-
-            # The id is deterministic per (date, user_id, period), so put_item is itself the upsert
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return record
-
-        except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {str(e)}")
-            raise e
-
-    def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare a metrics record for DynamoDB serialization by converting all data types properly.
-
-        Args:
-            record: The metrics record to prepare
-
-        Returns:
-            Dict[str, Any]: The prepared record ready for DynamoDB serialization
-        """
-
-        def convert_value(value):
-            """Recursively convert values to DynamoDB-compatible types."""
-            if value is None:
-                return None
-            elif isinstance(value, bool):
-                return value
-            elif isinstance(value, (int, float)):
-                return value
-            elif isinstance(value, str):
-                return value
-            elif hasattr(value, "isoformat"):  # date/datetime objects
-                return value.isoformat()
-            elif isinstance(value, dict):
-                return {k: convert_value(v) for k, v in value.items()}
-            elif isinstance(value, list):
-                return [convert_value(item) for item in value]
-            else:
-                return str(value)
-
-        return {key: convert_value(value) for key, value in record.items()}
-
-    def _serialize_metrics_to_dynamo_item(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Serialize metrics data to DynamoDB item format with proper boolean handling.
-
-        Args:
-            data: The metrics data to serialize
-
-        Returns:
-            Dict[str, Any]: DynamoDB-ready item
-        """
-        import json
-
-        item: Dict[str, Any] = {}
-        for key, value in data.items():
-            if value is not None:
-                if isinstance(value, bool):
-                    item[key] = {"BOOL": value}
-                elif isinstance(value, (int, float)):
-                    item[key] = {"N": str(value)}
-                elif isinstance(value, str):
-                    item[key] = {"S": str(value)}
-                elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(value)}
-                else:
-                    item[key] = {"S": str(value)}
-        return item
+    def _metrics_calculated(self, refreshes_table_name: str) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics tables over agno_metrics."""
+        refresh_row = self._get_metrics_refresh_row(refreshes_table_name)[0]
+        return refresh_row is not None and refresh_row["finished_at"] is not None
 
     def get_metrics(
         self,
@@ -1980,6 +2967,10 @@ class DynamoDb(BaseDb):
         """
         Get metrics from the database.
 
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics table until then. A read never calculates them: checking whether the sessions
+        and runs changed reads every one of the last two days, so calculate_metrics does.
+
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
@@ -1987,16 +2978,19 @@ class DynamoDb(BaseDb):
                 including the unowned one.
 
         Returns:
-            Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
+            Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the timestamp of the latest
+                update.
 
         Raises:
             Exception: If any error occurs while getting the metrics.
         """
 
         try:
-            table_name = self._get_table("metrics")
-            if table_name is None:
-                return ([], None)
+            if self._metrics_calculated(self.metrics_refreshes_table_name):
+                return self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            # Read without creating the table: it is no longer written
+            table_name = self.metrics_table_name
 
             # Build query parameters
             scan_kwargs: Dict[str, Any] = {"TableName": table_name}
@@ -2051,10 +3045,264 @@ class DynamoDb(BaseDb):
             if metrics_data:
                 latest_updated_at = max(metric.get("updated_at") or 0 for metric in metrics_data)
 
+            if metrics_data and not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
             return metrics_data, latest_updated_at
+
+        except self.client.exceptions.ResourceNotFoundException:
+            return [], None
+        except Exception as e:
+            log_error(f"Failed to get metrics: {str(e)}")
+            raise e
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics table until then.
+
+        Args:
+            starting_date: The starting date to filter metrics by.
+            ending_date: The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if self._metrics_calculated(self.metrics_refreshes_table_name):
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
             log_error(f"Failed to get metrics: {str(e)}")
+            raise e
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes table.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            return metrics_refresh_status(*self._get_metrics_refresh_row(self.metrics_refreshes_table_name))
+
+        except Exception as e:
+            log_error(f"Failed to get metrics refresh status: {str(e)}")
+            raise e
+
+    def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date: The first day to total.
+            ending_date: The last day to total.
+            user_id: Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with no user.
+            fields: The columns to total.
+            use_month_rows: Total a calendar month inside the date range from its month aggregate metrics row, as one
+                date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_table_name = self.aggregate_metrics_table_name
+        try:
+            # The component metrics table keeps day rows only, so the runs with no user are read day by day
+            full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+            month_starts: List[date] = []
+            if full_months:
+                # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since
+                # or not yet built, is read from its days
+                month_starts = [
+                    row["date"]
+                    for row in self._get_aggregate_metrics_items(
+                        aggregate_metrics_table_name,
+                        "monthly",
+                        "",
+                        full_months[0],
+                        full_months[-1],
+                        completed=True,
+                        attributes=["date"],
+                    )
+                ]
+            day_ranges = metrics_day_ranges(starting_date, ending_date, month_starts)
+            days = [
+                first_day + timedelta(days=offset)
+                for first_day, last_day in day_ranges
+                for offset in range((last_day - first_day).days + 1)
+            ]
+
+            rows: List[Dict[str, Any]] = []
+            if user_id == "":
+                # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user
+                # have no aggregate metrics row of their own, so they are read from their component rows
+                counted_days = set(self._get_metrics_counted_days(starting_date, ending_date))
+                for day in days:
+                    if day in counted_days:
+                        rows.extend(
+                            self._get_component_metrics_rows(
+                                self.component_metrics_table_name, day, "", metrics_rows_fields(fields)
+                            )
+                        )
+            else:
+                # The days of a completed month are read from its month row, so each run of days around them is read
+                # on its own
+                for first_day, last_day in day_ranges:
+                    rows.extend(
+                        self._get_aggregate_metrics_items(
+                            aggregate_metrics_table_name,
+                            "daily",
+                            user_id or "",
+                            first_day,
+                            last_day,
+                            attributes=metrics_rows_fields(fields),
+                        )
+                    )
+                if month_starts:
+                    rows.extend(
+                        self._get_aggregate_metrics_items(
+                            aggregate_metrics_table_name,
+                            "monthly",
+                            user_id or "",
+                            month_starts[0],
+                            month_starts[-1],
+                            attributes=metrics_rows_fields(fields),
+                        )
+                    )
+        except self.client.exceptions.ResourceNotFoundException:
+            return [], None
+        return total_metrics_rows(rows, starting_date, ending_date, fields, month_starts)
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date: The first day to total.
+            ending_date: The last day to total.
+            user_id: Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with no user.
+            fields: The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Failed to get component metrics: {str(e)}")
+            raise e
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date: The first day to total.
+            ending_date: The last day to total.
+            user_id: Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with no user.
+            fields: The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Failed to get metrics totals: {str(e)}")
+            raise e
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Args:
+            starting_date: The first day of the date range.
+            ending_date: The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if not self._metrics_calculated(self.metrics_refreshes_table_name):
+                return None
+
+            # The everyone rows of each period are keyed by the period alone, one consistent query each
+            rows: List[Dict[str, Any]] = []
+            for aggregation_period in ["daily", "monthly"]:
+                rows.extend(
+                    self._get_aggregate_metrics_items(
+                        self.aggregate_metrics_table_name,
+                        aggregation_period,
+                        "",
+                        starting_date,
+                        ending_date,
+                        attributes=["aggregation_period", "date", "version"],
+                    )
+                )
+            return metrics_versions([SimpleNamespace(**row) for row in rows])
+
+        except self.client.exceptions.ResourceNotFoundException:
+            return None
+        except Exception as e:
+            log_error(f"Failed to get metrics versions: {str(e)}")
             raise e
 
     # --- Knowledge methods ---

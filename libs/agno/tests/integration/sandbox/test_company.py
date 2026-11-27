@@ -121,14 +121,14 @@ async def service(request, tmp_path):
 
 
 async def draft(client):
-    product = (await client.post("/company/products", json={"name": "Repository"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Change"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Repository"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Change"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
     response = await client.post(
         "/company/tasks",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "project_id": project["id"],
             "title": "Inspect README",
             "brief": "Read README from the repository",
@@ -148,7 +148,7 @@ async def accept(client, task, executor="engineer"):
 async def source(client, task, reference=REPOSITORY):
     response = await client.post(
         "/company/sources",
-        json={"product_id": task["product_id"], "type": "git", "reference": reference, "config": {"branch": "master"}},
+        json={"goal_id": task["goal_id"], "type": "git", "reference": reference, "config": {"branch": "master"}},
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -181,20 +181,24 @@ async def test_checkout_session_reuse_and_concurrent_start(service, tmp_path):
     assert (await accept(client, other)).status_code == 200
     path = "/company/tasks/" + task["id"] + "/runs"
     starts = await asyncio.gather(client.post(path), client.post("/company/tasks/" + other["id"] + "/runs"))
-    assert sorted(response.status_code for response in starts) == [202, 409], [r.text for r in starts]
-    if starts[0].status_code == 409:
-        task, other = other, task
-        src = (await client.get("/company/sources", params={"product_id": task["product_id"]})).json()["data"][0]
-        path = "/company/tasks/" + task["id"] + "/runs"
-    blocked = await client.post("/company/tasks/" + other["id"] + "/runs")
-    assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
-    first = await settled(client, task)
-    assert first["status"] == "in_review", first
+    assert [response.status_code for response in starts] == [202, 202], [r.text for r in starts]
+    # Two sandboxed Tasks run side by side, each in its own session, computer and checkpoint.
+    first, beside = await asyncio.gather(settled(client, task), settled(client, other))
+    assert first["status"] == "in_review" and beside["status"] == "in_review", (first, beside)
+    assert first["session_id"] != beside["session_id"]
+    assert len({handle.name for handle in handles}) == 2
+    runs = [
+        run_db.get_run(value["job_id"], deserialize=False)["run_data"]["metadata"]["sandbox"]
+        for value in (first, beside)
+    ]
+    assert runs[0]["checkpoint"]["sha256"] != runs[1]["checkpoint"]["sha256"]
+    assert beside["metadata"]["checkout"]["commit"] == first["metadata"]["checkout"]["commit"]
+    await agent.sandbox.adestroy(handles[0])
+    await agent.sandbox.adestroy(handles[1])
     checkout = first["metadata"]["checkout"]
     assert checkout["source_id"] == src["id"] and checkout["url"] == REPOSITORY
     assert checkout["branch"] == "master" and len(checkout["commit"]) == 40
-    # Discard compute: attempt two must restore the committed session checkpoint.
-    await agent.sandbox.adestroy(handles[-1])
+    # Compute is discarded above: attempt two must restore the committed session checkpoint.
     second = await client.post(path, json={"attempt": 2})
     assert second.status_code == 202, second.text
     final = await settled(client, task)
@@ -235,35 +239,3 @@ async def test_acceptance_and_plain_marker(service, tmp_path):
     assert response.status_code == 200 and response.json()["sandboxed"] is False
     assert (await client.get("/company/tasks/" + task["id"])).json()["sandboxed"] is False
     assert "sandboxed" not in await _call(db, "get_task", task["id"])
-
-
-async def test_cancelled_submitter_keeps_admission_until_enqueue_finishes(service, monkeypatch):
-    client, _, _, agent, app, _ = service
-    first, second = await draft(client), await draft(client)
-    await source(client, first)
-    await source(client, second)
-    assert (await accept(client, first)).status_code == 200
-    assert (await accept(client, second)).status_code == 200
-    entered, release = asyncio.Event(), asyncio.Event()
-    store = app.state.queue_worker.store
-    enqueue = store.enqueue_job
-
-    async def delayed(job, **kwargs):
-        entered.set()
-        await release.wait()
-        return await enqueue(job, **kwargs)
-
-    monkeypatch.setattr(store, "enqueue_job", delayed)
-    pending = asyncio.create_task(client.post("/company/tasks/" + first["id"] + "/runs"))
-    await asyncio.wait_for(entered.wait(), 10)
-    pending.cancel()
-    await asyncio.sleep(0)
-    try:
-        refused = await client.post("/company/tasks/" + second["id"] + "/runs")
-        assert refused.status_code == 409, refused.text
-    finally:
-        release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await pending
-    result = await settled(client, first)
-    assert result["status"] == "in_review", result

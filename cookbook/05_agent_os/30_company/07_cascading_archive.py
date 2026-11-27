@@ -36,29 +36,37 @@ async def exercise(db):
         result = method(*args, **kwargs)
         return await result if inspect.isawaitable(result) else result
 
-    product = await call(manager.create, name="Documentation")
-    first = await call(
-        manager.create_project, product_id=product["id"], name="Release guide"
-    )
-    second = await call(
-        manager.create_project, product_id=product["id"], name="Next release"
+    goal = await call(manager.create, name="Documentation")
+    first = await call(manager.create_project, goal_id=goal["id"], name="Release guide")
+    second = await call(manager.create_project, goal_id=goal["id"], name="Next release")
+    await call(
+        manager.transition_project,
+        project_id=first["id"],
+        target="active",
+        reason="Scope agreed",
     )
     old = await call(
         manager.create_task,
-        product_id=product["id"],
+        goal_id=goal["id"],
         title="Superseded draft",
         project_id=first["id"],
     )
     await call(manager.delete_task, old["id"])
     task = await call(
         manager.create_task,
-        product_id=product["id"],
+        goal_id=goal["id"],
         title="Write guide",
         project_id=first["id"],
     )
     await call(manager.update_task, task["id"], project_id=second["id"])
     await call(manager.delete_project, first["id"])
     assert await call(manager.get_task, task["id"])
+    await call(
+        manager.transition_project,
+        project_id=second["id"],
+        target="active",
+        reason="Scope agreed",
+    )
     await call(
         manager.transition_task,
         task_id=task["id"],
@@ -73,7 +81,7 @@ async def exercise(db):
     assert restored["transitions"] == accepted["transitions"]
     print("Task archive and restore preserved acceptance history")
     try:
-        await call(manager.delete, product["id"])
+        await call(manager.delete, goal["id"])
     except ValueError as exc:
         assert exc.args[0]["tasks"] == [{"id": task["id"], "title": "Write guide"}]
         print("Archive refused with the active Task id and title")
@@ -85,16 +93,16 @@ async def exercise(db):
         target="cancelled",
         reason="Defer this release",
     )
-    assert (await call(manager.get, product["id"]))["counts"]["tasks"]["cancelled"] == 1
-    await call(manager.delete, product["id"])
-    assert (await call(manager.get, product["id"], include_deleted=True))["counts"][
+    assert (await call(manager.get, goal["id"]))["counts"]["tasks"]["cancelled"] == 1
+    await call(manager.delete, goal["id"])
+    assert (await call(manager.get, goal["id"], include_deleted=True))["counts"][
         "projects"
     ] == 0
     assert await call(manager.list_tasks, include_deleted=True) == ([], 0)
     assert await call(manager.list_projects, include_deleted=True) == ([], 0)
     saved = await call(manager.get_task, task["id"], include_deleted=True)
-    assert saved["transitions"][-1]["archived_by"]["id"] == product["id"]
-    await call(manager.restore, product["id"])
+    assert saved["transitions"][-1]["archived_by"]["id"] == goal["id"]
+    await call(manager.restore, goal["id"])
     assert await call(manager.get_task, task["id"])
     assert await call(manager.get_project, first["id"]) is None
     assert await call(manager.get_task, old["id"]) is None

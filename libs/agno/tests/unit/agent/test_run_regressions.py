@@ -801,7 +801,7 @@ def test_handle_agent_run_paused_persists_session_state(monkeypatch: pytest.Monk
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data={})
@@ -826,7 +826,7 @@ def test_handle_agent_run_paused_without_run_context_does_not_set_state(monkeypa
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data={})
@@ -847,7 +847,7 @@ def test_handle_agent_run_paused_persists_state_when_session_data_is_none(monkey
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl")
     session = AgentSession(session_id="s1", session_data=None)
@@ -872,7 +872,7 @@ async def test_ahandle_agent_run_paused_persists_state_when_session_data_is_none
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None
@@ -902,7 +902,7 @@ async def test_ahandle_agent_run_paused_persists_session_state(monkeypatch: pyte
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None
@@ -988,7 +988,7 @@ def test_handle_agent_run_paused_stream_persists_session_state(monkeypatch: pyte
     monkeypatch.setattr(_run, "create_approval_from_pause", lambda **kwargs: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     agent = Agent(name="test-hitl-stream")
     session = AgentSession(session_id="s1", session_data={})
@@ -1015,7 +1015,7 @@ async def test_ahandle_agent_run_paused_stream_persists_session_state(monkeypatc
     monkeypatch.setattr(_session, "save_session", lambda agent, session: None)
     monkeypatch.setattr(_run, "scrub_run_output_for_storage", lambda agent, run_response: None)
     monkeypatch.setattr(_run, "save_run_response_to_file", lambda agent, **kwargs: None)
-    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session, run_response: None)
+    monkeypatch.setattr(_run, "update_session_metrics", lambda agent, session: None)
 
     async def noop_acreate_approval(**kwargs):
         return None

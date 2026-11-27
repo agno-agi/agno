@@ -8,7 +8,8 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Union
+import time
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -153,6 +154,10 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
+# How often the worker retires sandbox computers kept warm past their window.
+_WARM_SWEEP_SECONDS = 180.0
+# How long a ticket handed back because its agent was busy waits before it is claimed again.
+_BUSY_RETRY_SECONDS = 5
 
 
 def resolve_stop_timeout(config: QueueConfig) -> int:
@@ -614,6 +619,21 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     )
 
 
+def _lease_lost(job_id: str) -> bool:
+    from agno.run.concurrency import get_worker_ownership
+
+    ownership = get_worker_ownership(job_id)
+    return ownership is not None and ownership.cancellation_cause == "lease_lost"
+
+
+def _epoch_text(epoch: Any) -> str:
+    if not isinstance(epoch, (int, float)):
+        return "an unknown time"
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
+
+
 class QueueWorker:
     """Claims and executes durable queue jobs.
 
@@ -646,6 +666,7 @@ class QueueWorker:
         self.authorization_app = authorization_app
         self._company_db: Any = None
         self._company_schedule_db: Any = None
+        self._sandbox_agents: List[Any] = []
         self.store = store
         self.resolve_component = resolve_component
         self.config = config
@@ -688,6 +709,10 @@ class QueueWorker:
         self._heartbeat_thread: Optional[Any] = None
         self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
+        self._warm_sweep_task: Optional[asyncio.Task] = None
+        # Wall and monotonic time of the last heartbeat that renewed every in-flight lease.
+        self._last_renewal: Optional[Tuple[float, float]] = None
+        self._lease_check: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         if self._running:
@@ -801,7 +826,7 @@ class QueueWorker:
 
         self._heartbeat_stop = threading.Event()
         stop_event = self._heartbeat_stop
-        interval = max(1.0, self.config.lock_grace_seconds / 3)
+        interval = self._heartbeat_interval
 
         def _beat() -> None:
             # Same contract as the loop-task heartbeat: beat whatever is in
@@ -818,7 +843,8 @@ class QueueWorker:
                         if job_ids:
                             result = beat(self.worker_id, job_ids)
                             if loop is not None and inspect.iscoroutine(result):
-                                loop.run_until_complete(result)
+                                result = loop.run_until_complete(result)
+                            self._record_renewal(job_ids, result)
                     except Exception as e:
                         log_error(f"Job queue heartbeat error: {e}")
             finally:
@@ -840,7 +866,7 @@ class QueueWorker:
         # entry a harmless no-op.
         for _ in range(3):
             try:
-                return list(self._in_flight.keys())
+                return [job_id for job_id in list(self._in_flight.keys()) if not _lease_lost(job_id)]
             except RuntimeError:
                 continue
         return []
@@ -856,6 +882,8 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._task, timeout=5)
         self._task = None
+        # A warm sweep keeps running through the drain and shares its stop_timeout.
+        deadline = asyncio.get_running_loop().time() + self.stop_timeout
 
         # Drain: give in-flight runs a chance to finish. Stamp the drain
         # cause FIRST: on drain timeout the wait_for cancels the gather,
@@ -864,10 +892,13 @@ class QueueWorker:
         # and the foreground cancellation-persist guards consult the cause
         # while those tasks unwind. Runs that finish healthily inside the
         # window never read it.
-        from agno.run.concurrency import set_cancellation_cause
+        from agno.run.concurrency import get_worker_ownership, set_cancellation_cause
 
         for draining_id in list(self._in_flight.keys()):
-            set_cancellation_cause(draining_id, "drain")
+            # A run that lost its lease is already unwinding without writes; draining it would write.
+            draining = get_worker_ownership(draining_id)
+            if draining is None or draining.cancellation_cause != "lease_lost":
+                set_cancellation_cause(draining_id, "drain")
         if self._in_flight:
             # asyncio.wait, NOT wait_for(gather(...)): wait never cancels its
             # awaitables on timeout, which makes the straggler loop below the
@@ -887,6 +918,15 @@ class QueueWorker:
         if self._in_flight:
             await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
         self._in_flight.clear()
+        # Each retirement is shielded, so a cancelled sweep still removes the computer it released.
+        if self._warm_sweep_task is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining > 0:
+                await asyncio.wait({self._warm_sweep_task}, timeout=remaining)
+            self._warm_sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._warm_sweep_task, timeout=5)
+        self._warm_sweep_task = None
         # The heartbeat exits on its own once nothing is in flight (its loop
         # condition covers the drain and the straggler window); the cancel is
         # a backstop for a loop parked mid-sleep
@@ -895,6 +935,11 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._heartbeat_task, timeout=5)
         self._heartbeat_task = None
+        if self._lease_check is not None and not self._lease_check.done():
+            self._lease_check.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._lease_check
+        self._lease_check = None
         # The heartbeat THREAD is only signalled here, after the drain and
         # straggler cleanup: in-flight runs need live leases for the whole
         # stop_timeout window. join in a worker thread so a beat in a slow
@@ -914,15 +959,25 @@ class QueueWorker:
 
         last_cleanup = _time.monotonic()
         last_sweep: Optional[float] = None
+        last_warm_sweep: Optional[float] = None
         while self._running:
             try:
+                # In its own task: removing many computers must not hold up claims.
+                if (
+                    self._sandbox_agents
+                    and (last_warm_sweep is None or _time.monotonic() - last_warm_sweep >= _WARM_SWEEP_SECONDS)
+                    and (self._warm_sweep_task is None or self._warm_sweep_task.done())
+                ):
+                    self._warm_sweep_task = asyncio.create_task(self._sweep_warm_computers())
+                    last_warm_sweep = _time.monotonic()
                 # The sweep keeps its own cadence (at most once per poll
                 # interval): a local wake exists to claim faster, and under a
                 # submission burst it must not multiply sweep queries too
-                if last_sweep is None or _time.monotonic() - last_sweep >= self.config.poll_interval:
-                    await self._sweep_exhausted()
-                    last_sweep = _time.monotonic()
-                await self._claim_burst()
+                if await self._renew_own_leases():
+                    if last_sweep is None or _time.monotonic() - last_sweep >= self.config.poll_interval:
+                        await self._sweep_exhausted()
+                        last_sweep = _time.monotonic()
+                    await self._claim_burst()
                 # Retention: delete old terminal jobs about once an hour
                 if _time.monotonic() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_jobs", None)):
                     removed = await self.store.cleanup_jobs(self.config.retention_seconds)
@@ -975,13 +1030,134 @@ class QueueWorker:
                 await asyncio.wait_for(event.wait(), timeout=self.config.poll_interval)
         event.clear()
 
+    @property
+    def _heartbeat_interval(self) -> float:
+        return max(1.0, self.config.lock_grace_seconds / 3)
+
+    def _record_renewal(self, job_ids: List[str], renewed: Any) -> None:
+        """Note a heartbeat result; a short count starts a lease check on the loop. Safe from any thread."""
+        if not isinstance(renewed, int):
+            return
+        if renewed >= len(job_ids):
+            self._last_renewal = (time.time(), time.monotonic())
+            return
+        loop = self._loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._start_lease_check, list(job_ids))
+
+    def _start_lease_check(self, job_ids: List[str]) -> None:
+        if self._lease_check is None or self._lease_check.done():
+            self._lease_check = asyncio.create_task(self._check_leases(job_ids))
+
+    async def _check_leases(self, job_ids: List[str]) -> None:
+        """Cancel the executions here whose tickets another worker has swept or reclaimed.
+
+        A short heartbeat count is not proof, since a store error renews nothing too: each
+        ticket is read back, and a ticket that cannot be read cancels nothing.
+        """
+        from agno.run.concurrency import get_worker_ownership
+
+        for job_id in job_ids:
+            task = self._in_flight.get(job_id)
+            ownership = get_worker_ownership(job_id)
+            if (
+                task is None
+                or task.done()
+                or ownership is None
+                or ownership.worker_id != self.worker_id
+                or ownership.cancellation_cause == "lease_lost"
+            ):
+                # An execution already cancelled for a lost lease is left to finish its cleanup.
+                continue
+            try:
+                ticket = await self.store.get_job(job_id)
+            except Exception as e:
+                log_warning(f"Job queue: could not read ticket {job_id} to confirm its lease: {e}")
+                continue
+            # Settling its own ticket also leaves it unlocked, so that is checked after the read.
+            if ticket is None or ownership.ticket_settling or task.done():
+                continue
+            if (
+                ticket.get("status") == "running"
+                and ticket.get("locked_by") == self.worker_id
+                and ticket.get("attempt") == ownership.attempt
+            ):
+                continue
+            log_warning(
+                f"Job queue: job {job_id} attempt {ownership.attempt} is still executing on this worker, but its "
+                f"ticket is now {ticket.get('status')} (locked by {ticket.get('locked_by')}, attempt "
+                f"{ticket.get('attempt')}); cancelling this execution. {self._describe_last_renewal()}"
+            )
+            ownership.cancellation_cause = "lease_lost"
+            task.cancel()
+
+    def _describe_last_renewal(self) -> str:
+        last = self._last_renewal
+        if last is None:
+            return "No full lease renewal was recorded on this worker."
+        wall, monotonic = time.time() - last[0], time.monotonic() - last[1]
+        text = (
+            f"The last full lease renewal was {wall:.0f}s ago by the wall clock and {monotonic:.0f}s ago by the "
+            f"monotonic clock; renewals are due every {self._heartbeat_interval:.0f}s."
+        )
+        if wall - monotonic > self._heartbeat_interval:
+            text += " The wall clock moved further than the monotonic clock, which points to a host or VM pause."
+        return text
+
+    async def _renew_own_leases(self) -> bool:
+        """Renew this worker's leases before any lease is judged stale; False skips the tick's sweep and claims.
+
+        After a host or VM pause the wall clock can jump past lock_grace before the heartbeat
+        beats again, and the sweep or a reclaim would take runs still executing here.
+        """
+        job_ids = [job_id for job_id, task in self._in_flight.items() if not task.done() and not _lease_lost(job_id)]
+        if not job_ids:
+            return True
+        last = self._last_renewal
+        if last is not None and time.time() - last[0] < 2 * self._heartbeat_interval:
+            return True
+        try:
+            renewed = await self.store.heartbeat_jobs(self.worker_id, job_ids)
+        except Exception as e:
+            log_warning(f"Job queue: could not renew this worker's leases ({e}); skipping this tick's sweep and claims")
+            return False
+        self._record_renewal(job_ids, renewed)
+        return not isinstance(renewed, int) or renewed >= len(job_ids)
+
+    def _executing_here(self, job: Dict[str, Any]) -> bool:
+        """Whether this worker is still executing the swept job's attempt."""
+        from agno.run.concurrency import get_worker_ownership
+
+        task = self._in_flight.get(job["id"])
+        ownership = get_worker_ownership(job["id"])
+        return (
+            task is not None
+            and not task.done()
+            and ownership is not None
+            and ownership.worker_id == self.worker_id
+            and ownership.attempt == job.get("attempt")
+        )
+
+    def _begin_ticket_write(self, job_id: str) -> bool:
+        """Mark the execution as settling its own ticket; False once another worker owns the ticket."""
+        from agno.run.concurrency import get_worker_ownership
+
+        ownership = get_worker_ownership(job_id)
+        if ownership is None:
+            return True
+        if ownership.cancellation_cause == "lease_lost":
+            return False
+        ownership.ticket_settling = True
+        return True
+
     async def _heartbeat_loop(self) -> None:
         # FALLBACK only (see start()): sync-wrapped stores and clonable async
         # stores beat from the dedicated thread, which survives a starved
         # event loop. This loop task cannot - acceptable for the in-memory
         # store (single process = the sweeper shares the starved loop) and
         # warned about loudly for unclonable async stores.
-        interval = max(1.0, self.config.lock_grace_seconds / 3)
+        interval = self._heartbeat_interval
         # Runs while claiming OR draining: stop() flips _running BEFORE the
         # drain, and the old `while self._running` condition killed the
         # heartbeat at drain start - contradicting stop()'s own comment and
@@ -992,9 +1168,9 @@ class QueueWorker:
         while self._running or self._in_flight:
             try:
                 await asyncio.sleep(interval)
-                job_ids = list(self._in_flight.keys())
+                job_ids = [job_id for job_id in self._in_flight.keys() if not _lease_lost(job_id)]
                 if job_ids:
-                    await self.store.heartbeat_jobs(self.worker_id, job_ids)
+                    self._record_renewal(job_ids, await self.store.heartbeat_jobs(self.worker_id, job_ids))
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1018,6 +1194,13 @@ class QueueWorker:
             job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id)
             if job is None:
                 break
+            running = self._in_flight.get(job["id"])
+            if running is not None and not running.done():
+                log_error(
+                    f"Job queue: claimed job {job['id']} while it is still executing on this worker; "
+                    "not starting a second execution"
+                )
+                continue
             task = asyncio.create_task(self._execute_claimed(job))
             job_id = job["id"]
             self._in_flight[job_id] = task
@@ -1033,6 +1216,32 @@ class QueueWorker:
     def _prune_in_flight(self) -> None:
         for job_id in [jid for jid, t in self._in_flight.items() if t.done()]:
             self._in_flight.pop(job_id, None)
+
+    async def _sweep_warm_computers(self) -> None:
+        """Retire the sandbox computers kept warm past their window, for every sandboxed agent served here.
+
+        A session that never sends another turn would otherwise keep its paused computer
+        forever. Each release is a per-row compare-and-set, so every replica may sweep.
+        """
+        from agno.sandbox import _harness
+
+        # Resolve every coordinator first, so each one knows all the agents it sweeps for.
+        coordinators: Dict[int, Tuple[Any, Any]] = {}
+        for agent in self._sandbox_agents:
+            try:
+                coordinator = _harness.coordinator(agent)
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            coordinators.setdefault(id(coordinator), (agent, coordinator))
+        for agent, coordinator in coordinators.values():
+            try:
+                removed = await coordinator.asweep_warm()
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            if removed:
+                log_info(f"Job queue warm sweep: retired {removed} warm sandbox computer(s) for agent {agent.get_id()}")
 
     async def _sweep_exhausted(self) -> None:
         """Fail exhausted stale jobs visibly. Ownership FIRST: acquire the
@@ -1050,6 +1259,8 @@ class QueueWorker:
         happened, and any replica may do that honestly."""
         swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
+            if self._executing_here(job):
+                continue
             try:
                 await self._sweep_job(job)
             except Exception as e:
@@ -1078,12 +1289,21 @@ class QueueWorker:
         # The message is the operator surface (it lands on job.error and
         # the polled run's content): it must answer the next question -
         # "why did my durable run not re-execute?" - not just state facts
+        allowed = job.get("max_attempts", 1)
         error = (
-            "Worker lost and attempt budget exhausted; run was not re-executed. "
-            "Crashed runs fail visibly instead of silently re-executing (at-most-once, "
-            "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
-            "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            "Worker lost and attempt budget exhausted; the run will not be executed again automatically. "
+            f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent"
         )
+        if (job.get("payload") or {}).get("company_task_id"):
+            # This is also the Task's result. A Task is retried by starting its next attempt: a requeue
+            # of this ticket is failed again from its stored run, and the queue's setting does not
+            # raise the executions a lost Task run gets.
+            error += ". Start the Task's next attempt to retry."
+        else:
+            error += (
+                " (QueueConfig.max_attempts, 1 by default): raise it to allow more automatic "
+                "re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            )
         # A run that failed on its own keeps its error on the Task result. Read before the
         # write below, which turns an unsettled row ERROR and keeps any partial draft in it.
         task_error = error
@@ -1126,7 +1346,8 @@ class QueueWorker:
             # ticket we swept. The row and stream belong to that newer
             # writer - touch neither - but the ticket bookkeeping still
             # settles, or it would sit sweep-locked and re-sweep forever
-            await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+            if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+                self._notify_requester(job, "failed")
             log_warning(
                 f"Job queue: swept job {job['id']} is owned by a newer attempt on the run row; "
                 "ticket failed without touching the row or stream"
@@ -1137,8 +1358,70 @@ class QueueWorker:
             from agno.company.execution import _project_run_before_settle
 
             await _project_run_before_settle(self, job, "failed", task_error)
-        await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
-        log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
+        if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+            self._notify_requester(job, "failed")
+        log_warning(
+            f"Job queue: swept job {job['id']} to failed; its lease held by {job.get('locked_by')} was last "
+            f"renewed at {_epoch_text(job.get('locked_at'))} by the store clock ({error})"
+        )
+
+    @staticmethod
+    def _requested_from(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The conversation that asked for a ticket's work, read from the ticket alone, or None."""
+        from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
+
+        payload = job.get("payload") or {}
+        asked = payload.get("company_requested_from")
+        if asked is None:
+            metadata = (payload.get("kwargs") or {}).get("metadata")
+            asked = metadata.get(REQUESTED_FROM_METADATA_KEY) if isinstance(metadata, dict) else None
+        return asked if isinstance(asked, dict) else None
+
+    def _notify_requester(self, job: Dict[str, Any], status: Optional[str] = None) -> None:
+        """Tell the conversation that asked for a ticket's work that the ticket reached a final state.
+
+        Called after the ticket is written, beside the places that save a Task's result. status is the
+        ticket status just written; without it the ticket is read, and nothing is told while it is
+        still queued or running. A ticket that names no conversation is not read. It returns at once
+        and raises nothing: the notice runs as a task of its own, so it cannot fail, delay or repeat
+        the work.
+        """
+        try:
+            asked = self._requested_from(job)
+            if asked is None:
+                return
+            from agno.run.authorization import AUTHORIZATION_KEY
+            from agno.run.background import _requester_listeners, _requester_notices, notify_requester
+
+            if not _requester_listeners:
+                return
+            payload = job.get("payload") or {}
+            task_id = payload.get("company_task_id")
+            work = {"kind": "task" if task_id else "run", "id": task_id or job["id"], "run_id": job["id"]}
+            if payload.get("continue"):
+                # The run was paused and has been continued: a pause now is a new one.
+                work["continued"] = True
+            # The authority saved when the work was started, not that of a later continue.
+            authority = payload.get(AUTHORIZATION_KEY)
+            states = {"completed": "COMPLETED", "failed": "ERROR", "cancelled": "CANCELLED", "paused": "PAUSED"}
+
+            async def read_then_tell() -> None:
+                try:
+                    ticket = await self.store.get_job(job["id"])
+                    final = states.get(str((ticket or {}).get("status")))
+                    if final is not None:
+                        notify_requester(asked, {**work, "status": final}, authority)
+                except Exception as exc:
+                    log_error(f"Job queue: could not tell a conversation that job {job['id']} ended: {exc}")
+
+            if status is not None:
+                notify_requester(asked, {**work, "status": states[status]}, authority)
+                return
+            task = asyncio.ensure_future(read_then_tell())
+            _requester_notices.add(task)
+            task.add_done_callback(_requester_notices.discard)
+        except Exception as exc:
+            log_error(f"Job queue: could not tell a conversation that job {job.get('id')} ended: {exc}")
 
     async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
         """The component for run-row reads and writes: an unbuildable factory
@@ -1208,11 +1491,17 @@ class QueueWorker:
                 await _project_run_before_settle(self, job, ticket_status)
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
             if settled:
+                self._notify_requester(job, ticket_status)
                 log_warning(
                     f"Job queue: reconciled swept job {job['id']} to {ticket_status} - the leg had "
                     "settled before the sweep (only the ticket write was lost)"
                 )
             return settled
+        if status_value == "PAUSED" and (getattr(run_output, "metadata", None) or {}).get("native_hitl"):
+            # A native process was still executing, not a replayable HITL leg.
+            # The normal owner-loss path fences/stops compute; never park this
+            # as a ticket whose continuation would launch the prompt again.
+            return False
         if status_value == "PAUSED":
             if (job.get("payload") or {}).get("stream"):
                 # The leg's own paused sentinel is written by the executor's
@@ -1230,6 +1519,7 @@ class QueueWorker:
                     )
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, "paused")
             if settled:
+                self._notify_requester(job, "paused")
                 log_warning(
                     f"Job queue: parked swept job {job['id']} back to paused - the leg pausing IS "
                     "settlement, and a failed ticket would obstruct its continuation"
@@ -1336,6 +1626,7 @@ class QueueWorker:
             # not an unknown run
             await event_stream.register_run(run_id, RunStatus.pending)
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
+        self._notify_requester(prior, "cancelled")
         return True
 
     async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
@@ -1347,7 +1638,7 @@ class QueueWorker:
         cleaned up first - a re-execution is a fresh stream, never an append
         onto a contradicted history.
         """
-        from agno.exceptions import RunCancelledException
+        from agno.exceptions import AgentBusyError, RunCancelledException
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
@@ -1448,12 +1739,19 @@ class QueueWorker:
                 # Workflow acontinue_run is an async def returning the stream
                 # iterator; agent/team dispatchers return it directly
                 event_iterator = await event_iterator
+            native_hitl = getattr(component, "_uses_native_hitl", False)
             async for event in event_iterator:
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
                     continue
                 with contextlib.suppress(Exception):
                     await event_stream.add_event(job_id, event, generation=stream_generation)
+                if native_hitl and getattr(event, "event", None) == "RunPaused":
+                    # A harness's native permission request: the chat's stream ends at the pause, as for
+                    # an Agno agent, while the native execution keeps waiting for the decision. The
+                    # continuation reopens the stream before it delivers that decision.
+                    with contextlib.suppress(Exception):
+                        await event_stream.complete_run(job_id, RunStatus.paused, generation=stream_generation)
             if final_output is None and is_workflow:
                 with contextlib.suppress(Exception):
                     final_output = await component.aget_run_output(
@@ -1474,16 +1772,19 @@ class QueueWorker:
                 # must say CANCELLED, not a coerced ERROR
                 raw_status = RunStatus.cancelled
             status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
+            # The agent was busy, so the run did not start and its ticket goes back to the
+            # queue: the stream stays open for the events of the claim that does run it.
+            handed_back = isinstance(sys.exc_info()[1], AgentBusyError) and hasattr(self.store, "release_job")
             # A retryable failure must NOT publish the terminal sentinel: tails
             # would close cleanly and the client would never see the retry's
             # output. Leave the stream open; the retry attempt continues it
             # (dead-producer TTL detection bounds the wait if no retry comes).
             will_retry = (
                 status == RunStatus.error
-                and job.get("attempt", 1) < job.get("max_attempts", 1)
+                and job.get("attempt", 1) < self._failure_attempts(job)
                 and not self._run_is_not_retryable(final_output)
             )
-            if not will_retry:
+            if not will_retry and not handed_back:
                 with contextlib.suppress(Exception):
                     await asyncio.shield(event_stream.complete_run(job_id, status, generation=stream_generation))
         return final_output
@@ -1585,6 +1886,8 @@ class QueueWorker:
         fields: Dict[str, Any] = {
             "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
         }
+        if getattr(component, "_uses_native_hitl", False):
+            fields["requirements"] = []
         if cancellation_stage is not None:
             # Rides the same fenced patch as the status: the adapters apply
             # fields onto the stored run, so no adapter knows the key
@@ -1722,16 +2025,48 @@ class QueueWorker:
             return True
         raw = getattr(run, "status", None)
         status = raw.value if isinstance(raw, RunStatus) else raw
-        if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
+        if (
+            getattr(component, "_uses_native_hitl", False)
+            and getattr(component, "sandbox", None) is None
+            and run is not None
+            and status not in (RunStatus.completed.value, RunStatus.cancelled.value)
+            and (status in (RunStatus.running.value, RunStatus.paused.value) or (run.metadata or {}).get("native_hitl"))
+        ):
+            # A direct native process belonged to the lost worker. Re-entering
+            # arun would repeat its tools, not reconnect to that process.
+            error = "The native execution was lost with its worker; the turn cannot be replayed"
+            if not await self._persist_run_error(job, error):
+                return True
+            await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
+            await self._terminate_stream_view(job, "error")
+            return True
+        # A run that failed by itself before its worker was lost has also spent its own budget.
+        spent = job["attempt"] > self._failure_attempts(job)
+        if (
+            run is None
+            or str(status).upper() != RunStatus.error.value
+            or not (self._run_is_not_retryable(run) or spent)
+        ):
             return False
         error = str(getattr(run, "content", "") or "run errored")
         log_warning(
-            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row marked "
-            f"non-retryable by its component; failing the ticket without re-executing: {error}"
+            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row that failed and "
+            f"is not to be retried; failing the ticket without re-executing: {error}"
         )
         await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
         await self._terminate_stream_view(job, "error")
         return True
+
+    @staticmethod
+    def _failure_attempts(job: Dict[str, Any]) -> int:
+        """How many executions a ticket allows a run that fails by itself: an error, an exception, a timeout.
+
+        A ticket may allow more executions than that for a run whose worker was lost, and then names
+        this lower number in its payload as max_failed_attempts. Without it one budget covers both.
+        """
+        allowed = job.get("max_attempts", 1)
+        own = (job.get("payload") or {}).get("max_failed_attempts")
+        return min(own, allowed) if isinstance(own, int) and not isinstance(own, bool) and own >= 1 else allowed
 
     @staticmethod
     def _run_is_not_retryable(run: Any) -> bool:
@@ -1951,7 +2286,7 @@ class QueueWorker:
         the same row-first rule as an execution failure: the run row, reached
         through the row handle, is written before the ticket settles."""
         job_id, attempt = job["id"], job["attempt"]
-        if target.permanent or attempt >= job.get("max_attempts", 1):
+        if target.permanent or attempt >= self._failure_attempts(job):
             if not await self._persist_run_error(job, target.reason):
                 log_error(
                     f"Job queue: could not persist run-row error for unbuildable job {job_id}; "
@@ -1977,6 +2312,8 @@ class QueueWorker:
         backstop for a genuinely unsettled ticket is the sweep - we stop
         refreshing the lock the moment we return, so the ticket is collected
         once the lease expires - but it must be LOUD, never silent."""
+        if not self._begin_ticket_write(job_id):
+            return False
         try:
             if self._company_db is not None and status in {"completed", "failed", "cancelled"}:
                 from agno.company.execution import _project_run, _project_run_before_settle
@@ -2002,19 +2339,31 @@ class QueueWorker:
             return False
         if not applied:
             log_error(
-                f"Job queue: could not settle ticket {job_id} as {status!r} - the claim was reclaimed, or the "
-                "store could not commit the write. The ticket stays RUNNING with an unrefreshed lease and "
-                "will be collected by the sweep."
+                f"Job queue: could not settle ticket {job_id} as {status!r} - another worker swept or reclaimed "
+                "it, or the store could not commit the write. A ticket still RUNNING under this worker is "
+                "collected by the sweep once its lease expires."
             )
         return applied
 
     async def _aretry_or_fail_ticket(
-        self, job_id: str, attempt: int, error: str, delay: int, shielded: bool = False
+        self, job_id: str, attempt: int, error: str, delay: int, shielded: bool = False, interrupted: bool = False
     ) -> Optional[str]:
         """retry_or_fail_job with MANDATORY result handling (see
         _asettle_ticket). None means the store declined or could not commit -
         the ticket is left RUNNING for the sweep rather than silently
-        assumed requeued."""
+        assumed requeued.
+
+        interrupted says the worker stopped the run (a shutdown), so the run did not fail by itself
+        and the ticket's whole budget applies. Otherwise a ticket that allows a failed run fewer
+        executions than a lost one (see _failure_attempts) is failed once those are spent."""
+        if not interrupted:
+            held = None
+            with contextlib.suppress(Exception):
+                held = await self.store.get_job(job_id)
+            if held is not None and self._failure_attempts(held) <= attempt < held.get("max_attempts", 1):
+                return "failed" if await self._asettle_ticket(job_id, attempt, "failed", error, shielded) else None
+        if not self._begin_ticket_write(job_id):
+            return None
         try:
             if self._company_db is not None:
                 from agno.company.execution import _project_run
@@ -2039,11 +2388,62 @@ class QueueWorker:
             return None
         if outcome is None:
             log_error(
-                f"Job queue: could not retry-or-fail ticket {job_id} - the claim was reclaimed, or the store "
-                "could not commit the write. The ticket stays RUNNING with an unrefreshed lease and will be "
-                "collected by the sweep."
+                f"Job queue: could not retry-or-fail ticket {job_id} - another worker swept or reclaimed it, "
+                "or the store could not commit the write. A ticket still RUNNING under this worker is "
+                "collected by the sweep once its lease expires."
             )
         return outcome
+
+    async def _arelease_ticket(self, component: Any, job: Dict[str, Any]) -> bool:
+        """Hand back a ticket whose agent was busy with another run, to be claimed again shortly.
+
+        The run did not start, so this claim does not count against the ticket's attempts and
+        the run row reads PENDING again. Work for a busy agent therefore waits in the queue,
+        where a restart of this worker leaves it, and not inside a claimed job, where a
+        restart would fail it. False when the ticket could not be handed back; the caller
+        then treats the refusal as a failed attempt.
+        """
+        release = getattr(self.store, "release_job", None)
+        if release is None or not self._begin_ticket_write(job["id"]):
+            return False
+        job_id, attempt = job["id"], job["attempt"]
+        if not (job.get("payload") or {}).get("continue"):
+            from agno.run.base import RunStatus
+            from agno.run.status_persist import RunPersistOutcome, apersist_run_status, component_hook
+
+            # The run row goes back to what it read before this claim, attempt stamp included:
+            # the ticket's attempt is about to drop by one, and a cancel of the waiting ticket
+            # is fenced on the two matching. Unfenced, because the fenced write stamps the
+            # attempt it is given; the claim this worker still holds is the fence.
+            try:
+                outcome = await apersist_run_status(
+                    component,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"status": RunStatus.pending.value, "queue_attempt": attempt - 1},
+                    user_id=job.get("user_id"),
+                )
+                persist_fallback = component_hook(component, "_apersist_run_fallback")
+                if outcome in (RunPersistOutcome.MISSING, RunPersistOutcome.UNAVAILABLE) and persist_fallback:
+                    # A database without the atomic update, where the claim wrote RUNNING the same way.
+                    run = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+                    if run is not None and run.status == RunStatus.running:
+                        run.status = RunStatus.pending
+                        await persist_fallback(job["session_id"], run, job.get("user_id"))
+            except Exception as e:
+                log_warning(f"Job queue: PENDING stamp failed for handed-back job {job_id}: {e}")
+        try:
+            released = bool(await release(job_id, self.worker_id, attempt, _BUSY_RETRY_SECONDS))
+        except Exception as e:
+            log_error(f"Job queue: handing back ticket {job_id} raised ({e})")
+            return False
+        if not released:
+            log_error(
+                f"Job queue: could not hand back ticket {job_id} - another worker swept or reclaimed it, "
+                "or the store could not commit the write"
+            )
+        return released
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.concurrency import worker_managed_execution
@@ -2074,11 +2474,16 @@ class QueueWorker:
             ):
                 from agno.company.execution import _ExecutorAuthorization
 
-                authority = _ExecutorAuthorization(authority)
-            with authorization_scope(lambda: authority):
-                await self._execute_claimed_inner(job, ownership)
+                authority = _ExecutorAuthorization(
+                    authority, task_id=payload.get("company_task_id") or (snapshot or {}).get("company_task_id")
+                )
+            try:
+                with authorization_scope(lambda: authority):
+                    await self._execute_claimed_inner(job, ownership)
+            finally:
+                self._notify_requester(job)
 
-    async def _await_with_timeout(self, execution: Any, ownership: Any) -> Any:
+    async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:
         """asyncio.wait_for with cause attribution: the cancellation cause is
         stamped BEFORE the cancel is delivered, because the foreground
         cancellation-persist guards consult it while the execution unwinds.
@@ -2087,8 +2492,37 @@ class QueueWorker:
         not."""
         exec_task = asyncio.ensure_future(execution)
         try:
-            done, _ = await asyncio.wait({exec_task}, timeout=self.config.timeout_seconds)
-        except asyncio.CancelledError:
+            if getattr(component, "_uses_native_hitl", False) and job is not None:
+                from agno.agents._hitl import pending_ids, read_run, wait_for_execution
+
+                last_waiting = False
+                next_read = 0.0
+
+                async def waiting() -> bool:
+                    nonlocal last_waiting, next_read
+                    from time import monotonic
+
+                    if monotonic() < next_read:
+                        return last_waiting
+                    next_read = monotonic() + 1
+                    try:
+                        run = await read_run(component, job["id"], job.get("session_id"), job.get("user_id"))
+                        if run is not None:
+                            last_waiting = bool(pending_ids(run))
+                    except Exception as error:
+                        log_warning(
+                            f"Could not refresh the confirmation wait for run {job['id']}; retaining last state: {error}"
+                        )
+                    return last_waiting
+
+                assert self.config.timeout_seconds is not None
+                finished = await wait_for_execution(
+                    exec_task, self.config.timeout_seconds, component.hitl_timeout, waiting
+                )
+                done = {exec_task} if finished else set()
+            else:
+                done, _ = await asyncio.wait({exec_task}, timeout=self.config.timeout_seconds)
+        except BaseException:
             # Drain or loop shutdown cancelled US (stop() stamped the drain
             # cause before cancelling): propagate to the execution task
             exec_task.cancel()
@@ -2105,7 +2539,7 @@ class QueueWorker:
         return exec_task.result()
 
     async def _execute_claimed_inner(self, job: Dict[str, Any], ownership: Any = None) -> None:
-        from agno.exceptions import RunCancelledException
+        from agno.exceptions import AgentBusyError, RunCancelledException
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
@@ -2315,7 +2749,7 @@ class QueueWorker:
                     **call_kwargs,
                 )
             if self.config.timeout_seconds:
-                result = await self._await_with_timeout(execution, ownership)
+                result = await self._await_with_timeout(execution, ownership, component, job)
             else:
                 result = await execution
 
@@ -2342,6 +2776,9 @@ class QueueWorker:
             else:
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:
+            if ownership is not None and ownership.cancellation_cause == "lease_lost":
+                # Another worker owns the ticket now: anything written here would contradict its record.
+                raise
             # Shutdown drain: the run was interrupted, not failed by its own
             # doing — requeue if budget remains, else fail visibly. When it
             # would land failed (budget spent), the run-row error is persisted
@@ -2366,6 +2803,7 @@ class QueueWorker:
                 "interrupted by worker shutdown",
                 self.config.retry_delay_seconds,
                 shielded=True,
+                interrupted=True,
             )
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
@@ -2416,7 +2854,7 @@ class QueueWorker:
             # retry's real output). Budget exhausted = genuinely terminal - and
             # the run-row persist gates the terminal ticket write: on failure
             # the job is left stale for the sweep instead of orphaning the row.
-            if attempt >= job.get("max_attempts", 1):
+            if attempt >= self._failure_attempts(job):
                 if not await self._persist_run_error(job, error):
                     log_error(
                         f"Job queue: could not persist run-row error for timed-out job {job_id}; "
@@ -2426,8 +2864,11 @@ class QueueWorker:
                 await self._terminate_stream_view(job)
             await self._aretry_or_fail_ticket(job_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
+            busy = isinstance(e, AgentBusyError)
+            if busy and await self._arelease_ticket(component, job):
+                return
             permanent = self._is_permanent_failure(e, job.get("component_type") if payload.get("continue") else None)
-            if permanent or attempt >= job.get("max_attempts", 1):
+            if permanent or attempt >= self._failure_attempts(job):
                 # Terminal outcome either way: the run-row persist gates the
                 # terminal ticket write below. On failure, leave the job stale
                 # - budget-exhausted jobs are re-swept; a permanent failure
@@ -2448,7 +2889,11 @@ class QueueWorker:
                 with contextlib.suppress(Exception):
                     await self._terminate_stream_view(job)
             else:
-                await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
+                outcome = await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
+                if busy and outcome != "queued":
+                    # The stream was left open for a hand-back that did not happen.
+                    with contextlib.suppress(Exception):
+                        await self._terminate_stream_view(job)
         finally:
             # Ownership deregistration lives in _execute_claimed's context
             # manager, not here: this finally is unreachable from the pre-try
@@ -3293,6 +3738,8 @@ async def queue_lifespan(app: Any, agent_os: Any):
     )
     worker._company_db = getattr(agent_os, "_company_db", None)
     worker._company_schedule_db = agent_os.db
+    if callable(getattr(agent_os, "_sandboxed_agents", None)):
+        worker._sandbox_agents = agent_os._sandboxed_agents()
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:

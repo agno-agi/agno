@@ -3,7 +3,15 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -204,6 +212,11 @@ class FileSystemSummary(BaseModel):
     user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
     max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+    description: Optional[str] = Field(
+        None,
+        description="What the store is for, as written for the model. When several stores share an entry, "
+        "the declared one's, else the first agent's by id",
+    )
 
 
 class FileSystemAgent(BaseModel):
@@ -223,21 +236,59 @@ class FileSystemAgent(BaseModel):
 
 
 class FileSystemNamespace(FileSystemSummary):
-    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
+    id: str = Field(
+        ...,
+        description=(
+            "Identifier to pass as filesystem_id to the /filesystem routes: the namespace, "
+            "with the backend added when two filesystems share a namespace"
+        ),
+    )
+    declared: bool = Field(False, description="Whether the filesystem is declared on the AgentOS")
+    company: bool = Field(False, description="Whether this is the Company filesystem")
+    available: Optional[bool] = Field(
+        None,
+        description=(
+            "False when an agent failed to load and the id, a numbered one, cannot be opened until it does. "
+            "Omitted otherwise"
+        ),
+    )
+    file_count: Optional[int] = Field(
+        None, description="Files the caller can read, at any depth. Set by /filesystem/namespaces; omitted when unknown"
+    )
+    folder_count: Optional[int] = Field(
+        None, description="Distinct folders of those files, at any depth. Omitted when file_count is"
+    )
+    total_bytes: Optional[int] = Field(None, description="Size of those files. Omitted when file_count is")
+    agents: List[FileSystemAgent] = Field(
+        ...,
+        description="Agents using this filesystem namespace and their access; empty when no agent holds it",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _id_from_namespace(cls, data: Any) -> Any:
+        # An AgentOS that sends no id addresses the filesystem by its namespace.
+        if isinstance(data, dict) and "id" not in data and "namespace" in data:
+            return {**data, "id": data["namespace"]}
+        return data
 
 
 class FileSystemConfig(BaseModel):
+    enabled: Optional[bool] = Field(None, description="At least one file system is listed for the caller")
     namespaces: List[FileSystemNamespace] = Field(
         default_factory=list,
         description="Filesystem namespaces with their backend details, limits, and linked agents",
     )
 
 
-def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
-    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
+def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe a filesystem, with its namespace resolved for the caller.
+
+    ``agent`` is the agent holding it, or None for a filesystem declared on the AgentOS.
+    """
     # Partitioned by the run's user, or isolated by a namespace naming the user.
-    user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
-    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    user_isolation = bool(filesystem.user_scoped) or filesystem._namespace_carries_user
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=getattr(agent, "id", None))
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)
     if backend_db is not None or hasattr(backend, "db_engine"):
@@ -255,6 +306,7 @@ def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = No
         user_isolation=user_isolation,
         max_file_bytes=filesystem.max_file_bytes,
         max_namespace_bytes=filesystem.max_namespace_bytes,
+        description=filesystem.description,
     )
 
 
@@ -454,7 +506,7 @@ class QueueCapabilities(BaseModel):
     capability, not operator data - the admin-scoped /queue surface stays
     the only view of actual jobs).
 
-    Both fields describe submissions the durable queue can carry. A
+    durable and queue_per_session describe submissions the durable queue can carry. A
     background submission the queue cannot carry (media uploads, payloads
     plain JSON cannot store, factory-backed or off-registry components)
     executes in-process on the accepting replica, outside the gate and
@@ -471,10 +523,137 @@ class QueueCapabilities(BaseModel):
         description="Same-session background submissions execute at most one at a time, FIFO by submission; "
         "false when no durable queue enforces the gate",
     )
+    cross_container: bool = Field(
+        False,
+        description="Background runs can be cancelled and their events read from any replica, "
+        "because cancellation and the event stream are both shared rather than in-process",
+    )
+
+
+class AuthorizationReport(BaseModel):
+    """How requests to this AgentOS are authenticated and authorized.
+
+    Reported as EFFECTIVE behavior, not constructor arguments: each value is read from
+    what the running app enforces. `enabled`, `mode` and `user_isolation` are returned to
+    every caller that can read /config. The remaining fields are returned only to an
+    administrator of this AgentOS, so their absence beside a present `enabled` means the
+    caller may not see them, while an absent block means the server predates the report.
+
+    Every field is optional so a client parses responses from servers that omit it.
+    Holds no keys, key counts, key locations, audience or issuer values, or role scopes."""
+
+    enabled: Optional[bool] = Field(
+        None,
+        description="Scopes or roles are enforced on requests. False when callers are only authenticated, or not at all",
+    )
+    mode: Optional[Literal["none", "security_key", "jwt"]] = Field(
+        None, description="Authentication mode on the REST/WS plane, the same value /info reports as `auth_mode`"
+    )
+    user_isolation: Optional[bool] = Field(
+        None, description="Per-user data isolation is switched on, the same value /info reports"
+    )
+    managed_roles: Optional[bool] = Field(
+        None,
+        description="Roles managed on this AgentOS decide requests. False under scope-only authorization "
+        "and when a custom authorization provider decides alone. Administrators only",
+    )
+    roles_from_token: Optional[bool] = Field(
+        None,
+        description="A caller's roles can also come from a claim on their token, so the stored assignments "
+        "do not list every role a user holds. Administrators only",
+    )
+    default_role: Optional[str] = Field(
+        None,
+        description="Name of the role a newly provisioned user receives; absent when no default is set. "
+        "Administrators only",
+    )
+    token_scopes_trusted: Optional[bool] = Field(
+        None,
+        description="The scopes carried on a caller's token count toward access decisions: true only when "
+        "a scope plane actually runs, alone or beside managed roles. Administrators only",
+    )
+    audience_verified: Optional[bool] = Field(
+        None,
+        description="A token's audience claim is checked against this AgentOS before the token is accepted. "
+        "Administrators only",
+    )
+
+
+class FeatureStatus(BaseModel):
+    """Whether one optional AgentOS feature is running."""
+
+    enabled: Optional[bool] = Field(None, description="The feature is running on this AgentOS")
+
+
+class UserDirectoryStatus(FeatureStatus):
+    """The user directory: the roster of users and the switch that disables one."""
+
+    auto_provision: Optional[bool] = Field(None, description="A user is added to the directory on their first request")
+    fail_closed: Optional[bool] = Field(
+        None, description="A request is refused when the directory cannot be read to check the user"
+    )
+
+
+class AuditStatus(FeatureStatus):
+    """The audit trails: changes to roles and users, and access decisions.
+
+    `enabled` means events are being recorded. The `*_readable` fields say whether the
+    matching trail can be read back through this AgentOS: a trail is recorded but not
+    readable when the sink only writes (a log sink) or the routes that serve it are not
+    mounted."""
+
+    changes_readable: Optional[bool] = Field(
+        None, description="GET /authz/audit serves the change trail instead of answering 404"
+    )
+    decisions_readable: Optional[bool] = Field(
+        None, description="GET /authz/decisions serves the decision trail instead of answering 404"
+    )
+
+
+class MediaStorageStatus(FeatureStatus):
+    """Where the media routes read stored media from."""
+
+    backend: Optional[str] = Field(None, description="Storage backend: s3, gcs or local")
+
+
+class PublicStatus(FeatureStatus):
+    """The public surface: components served to outside callers under public input and rate limits."""
+
+    agents: Optional[List[str]] = Field(None, description="IDs of the agents anonymous callers can run")
+    teams: Optional[List[str]] = Field(None, description="IDs of the teams anonymous callers can run")
+    workflows: Optional[List[str]] = Field(
+        None, description="IDs of the public workflows. Callers still need a bearer token, unlike agents and teams"
+    )
+    mcp: Optional[bool] = Field(
+        None,
+        description="The MCP server is on the public surface. Anonymous only without mcp_auth; "
+        "/info carries the OAuth details when sign-in is required",
+    )
+
+
+class KnowledgeReport(KnowledgeConfig):
+    """The /config knowledge block. KnowledgeConfig is also operator input, so `enabled` lives here only."""
+
+    enabled: Optional[bool] = Field(None, description="At least one knowledge instance is served")
+
+
+class TracesReport(TracesConfig):
+    """The /config traces block. TracesConfig is also operator input, so `enabled` lives here only."""
+
+    enabled: Optional[bool] = Field(
+        None, description="Runs are traced and the spans stored by this AgentOS; dbs lists where to read them"
+    )
 
 
 class ConfigResponse(BaseModel):
-    """Response schema for the general config endpoint"""
+    """Response schema for the general config endpoint.
+
+    Each optional feature is one top-level block that says whether it is on, reported
+    as EFFECTIVE behavior: a feature that was requested but could not start is off.
+    Most carry `enabled`; three keep the off signal older clients read: `company` is
+    null, `interfaces` is empty and `queue.durable` is false. `user_directory`, `audit`
+    and `public` go to administrators only. The data blocks (session, memory, learning,
+    metrics, evals) say where each domain is stored and are not features."""
 
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
@@ -497,15 +676,37 @@ class ConfigResponse(BaseModel):
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
     company: Optional[CompanySectionConfig] = Field(None, description="Company configuration")
     filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
-    knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
+    knowledge: Optional[KnowledgeReport] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
-    traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
+    traces: Optional[TracesReport] = Field(None, description="Traces configuration")
     # Optional for CLIENT compatibility (the SDK parses this same schema, and
     # older servers omit the field); the server always populates it.
     queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
-    # Optional for the same reason: older servers omit it.
-    allow_temporary_runs: Optional[bool] = Field(
-        None, description="Whether the run routes accept store_run=false (a run that is answered but not saved)"
+    authorization: Optional[AuthorizationReport] = Field(
+        None, description="How requests are authenticated and authorized; detail fields for administrators only"
+    )
+    scheduler: Optional[FeatureStatus] = Field(None, description="Scheduled runs are polled and executed")
+    mcp: Optional[FeatureStatus] = Field(
+        None, description="The MCP server is served; /info carries its path and OAuth details"
+    )
+    manager: Optional[FeatureStatus] = Field(
+        None, description="The OS Manager team is served; teams[] carries it as an internal team"
+    )
+    media_storage: Optional[MediaStorageStatus] = Field(
+        None, description="Stored media is served from a storage backend instead of only the database"
+    )
+    telemetry: Optional[FeatureStatus] = Field(
+        None,
+        description="Usage telemetry is sent to Agno: the AgentOS launch ping, or run telemetry "
+        "from a local agent, team or workflow",
+    )
+    temporary_runs: Optional[FeatureStatus] = Field(
+        None, description="The run routes accept store_run=false, a run that is answered but not saved"
+    )
+    user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
+    audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
+    public: Optional[PublicStatus] = Field(
+        None, description="Components served under public limits. Administrators only"
     )
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
@@ -752,8 +953,35 @@ CANCELLATION_STAGE_DESCRIPTION = (
 )
 
 
+class CompactionSchema(BaseModel):
+    """What one compaction did to the context, without the summary text or the archived messages."""
+
+    id: Optional[str] = Field(None, description="Unique identifier for the compaction record")
+    run_id: Optional[str] = Field(
+        None, description="Run that compacted its own context. Not set for a manual compaction, which no run made"
+    )
+    messages_compacted: int = Field(0, description="Number of history messages the compaction replaced")
+    tokens_before: Optional[int] = Field(None, description="Context size before the compaction, in tokens")
+    tokens_after: Optional[int] = Field(None, description="Context size after the compaction, in tokens")
+    created_at: Optional[datetime] = Field(None, description="Compaction creation timestamp")
+    archived: bool = Field(False, description="Whether the replaced messages were stored and can be read back")
+
+    @classmethod
+    def from_dict(cls, record: Dict[str, Any]) -> "CompactionSchema":
+        return cls(
+            id=record.get("compaction_id"),
+            run_id=record.get("run_id"),
+            messages_compacted=record.get("messages_compacted") or 0,
+            tokens_before=record.get("tokens_before"),
+            tokens_after=record.get("tokens_after"),
+            created_at=to_utc_datetime(record.get("created_at")),
+            archived=bool(record.get("archived_messages")),
+        )
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -790,10 +1018,12 @@ class RunSchema(BaseModel):
         None, description="If this run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this run was forked, the message index at which the source was truncated"
+        None,
+        description="If this run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this run was created via session branch, the source session's ID"
+        None,
+        description="If this run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
@@ -862,6 +1092,7 @@ class SessionRunPreviewSchema(BaseModel):
     and the single-run endpoint. Previews are truncated to 280 characters."""
 
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
     team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
@@ -886,6 +1117,7 @@ class SessionRunPreviewSchema(BaseModel):
     def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
         return cls(
             run_id=run.run_id,
+            run_index=getattr(run, "run_index", None),
             parent_run_id=getattr(run, "parent_run_id", None),
             agent_id=getattr(run, "agent_id", None),
             team_id=getattr(run, "team_id", None),
@@ -900,6 +1132,7 @@ class SessionRunPreviewSchema(BaseModel):
 
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -935,10 +1168,12 @@ class TeamRunSchema(BaseModel):
         None, description="If this team run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this team run was forked, the message index at which the source was truncated"
+        None,
+        description="If this team run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this team run was created via session branch, the source session's ID"
+        None,
+        description="If this team run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"
@@ -989,6 +1224,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -1075,6 +1311,25 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RunsPageInfo(BaseModel):
+    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
+    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
+    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    oldest_run_index: Optional[int] = Field(
+        None, description="Oldest top-level run_index on this page; pass it as before_run_index for the older page"
+    )
+    newest_run_index: Optional[int] = Field(
+        None, description="Newest top-level run_index on this page; pass it as after_run_index for the newer page"
+    )
+
+
+class RunsPage(BaseModel, Generic[T]):
+    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: RunsPageInfo = Field(..., description="Pagination metadata")
 
 
 class ComponentType(str, Enum):
@@ -1210,6 +1465,7 @@ class RegistryResourceType(str, Enum):
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
     LEARNING = "learning"
+    SANDBOX = "sandbox"
 
 
 class CallableMetadata(BaseModel):

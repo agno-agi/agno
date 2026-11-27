@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from google.genai.types import Part
 
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -811,6 +812,30 @@ def test_format_image_for_message_falls_back_to_jpeg_for_unknown_bytes():
     assert result["mime_type"] == "image/jpeg"
 
 
+def test_format_image_for_message_content_passes_the_bytes_through():
+    """Part.from_bytes takes raw bytes; a base64 string would only be decoded back into a copy."""
+    result = format_image_for_message(Image(content=PNG_BYTES))
+
+    assert result is not None
+    assert result["data"] is PNG_BYTES
+
+
+def test_format_image_for_message_url_passes_the_downloaded_bytes_through():
+    with patch.object(Image, "get_content_bytes", return_value=WEBP_BYTES):
+        result = format_image_for_message(Image(url="https://example.com/photo.webp"))
+
+    assert result is not None
+    assert result["data"] is WEBP_BYTES
+
+
+def test_formatted_image_builds_the_same_part_as_before():
+    part = Part.from_bytes(**format_image_for_message(Image(content=PNG_BYTES)))  # type: ignore[arg-type]
+
+    assert part.inline_data is not None
+    assert part.inline_data.data == PNG_BYTES
+    assert part.inline_data.mime_type == "image/png"
+
+
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("strict", [False, True])
 def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async, strict):
@@ -835,7 +860,11 @@ def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async
                     "INTEGER"
                     if argument in ("limit", "page", "days", "offset", "content_offset", "max_chars")
                     else "ARRAY"
-                    if argument in ("sources", "routines")
+                    if argument in ("sources", "routines", "add", "remove")
+                    # A decision's context is text; a Task's context is a list of references.
+                    or (argument == "context" and name != "log_company_decision")
+                    else "BOOLEAN"
+                    if argument in ("enabled", "leave_auto_accept_off")
                     else "STRING"
                 )
                 assert schema.type == ("OBJECT" if argument == "config" else expected_type), (name, argument)

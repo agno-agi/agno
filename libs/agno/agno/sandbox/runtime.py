@@ -101,6 +101,60 @@ def _process_start(pid: int) -> str | None:
         return None
 
 
+_CGROUP = Path("/sys/fs/cgroup")
+
+
+def _memory_events() -> Optional[Dict[str, int]]:
+    """This sandbox's own out-of-memory counters, from its cgroup v2 ``memory.events``.
+
+    ``oom_kill`` counts the processes the kernel killed in the sandbox for memory, whichever
+    memory ran out: the sandbox's own limit or the host's. ``oom`` counts the times the
+    sandbox's own limit left an allocation nothing to use. None where they cannot be read.
+    """
+    try:
+        events = {}
+        for line in (_CGROUP / "memory.events").read_text().splitlines():
+            key, _, value = line.partition(" ")
+            events[key] = value
+        return {"oom_kill": int(events["oom_kill"]), "oom": int(events["oom"])}
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _memory_note(before: Optional[Dict[str, int]]) -> str:
+    """One or two sentences saying the kernel killed processes for memory since ``before``, else nothing.
+
+    A process the kernel kills only reports "exit code -9" or disappears, which does not say
+    that memory was the cause. The sandbox's limit is named only when the sandbox itself
+    reached it: the kernel also kills a sandbox's processes when the host runs out of memory,
+    and raising the sandbox's limit makes that worse.
+    """
+    after = _memory_events()
+    if before is None or after is None or after["oom_kill"] <= before["oom_kill"]:
+        return ""
+    count = after["oom_kill"] - before["oom_kill"]
+    killed = f"the kernel killed {count} process{'es' if count != 1 else ''}"
+    if after["oom"] <= before["oom"]:
+        return (
+            f"During this turn {killed} in the sandbox (out of memory). The sandbox had not reached "
+            "its own memory limit, so memory ran out outside it, on the host that runs it."
+        )
+    try:
+        limit = f"its {int((_CGROUP / 'memory.max').read_text()) // (1024 * 1024)} MB memory limit"
+    except (OSError, ValueError):
+        limit = "its memory limit"
+    return (
+        f"The sandbox reached {limit} during this turn and {killed} (out of memory). Files on the "
+        "sandbox's in-memory filesystems count toward that limit."
+    )
+
+
+def _with_memory_note(error: str, before: Optional[Dict[str, int]]) -> str:
+    """A failed turn's error, followed by the memory note when there is one."""
+    note = _memory_note(before)
+    return f"{error.rstrip('. ')}. {note}" if note else error
+
+
 def _start(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
     _validate(request)
     if _process_start(os.getpid()) is None:
@@ -212,6 +266,8 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     # database. It has no network credentials and is checkpointed after SDK drain.
     db = SqliteDb(db_file=str(native / "history.db"))
     config = dict(request.get("config", {}))
+    config.pop("_native_hitl", None)
+    nested_hitl = config.pop("_nested_native_hitl", False)
     repository = config.pop("repository", None)
     config.update(
         id=request["agent_id"],
@@ -226,10 +282,13 @@ def _agent(request: Dict[str, Any], native: Path) -> Any:
     if request["sdk"] == "claude":
         from agno.agents.claude import ClaudeAgent
 
-        return ClaudeAgent(**config)
-    from agno.agents.codex import CodexAgent
+        agent: Any = ClaudeAgent(**config)
+    else:
+        from agno.agents.codex import CodexAgent
 
-    return CodexAgent(**config)
+        agent = CodexAgent(**config)
+    agent._nested_native_hitl = nested_hitl
+    return agent
 
 
 async def _prepare_codex(native: Path) -> None:
@@ -269,7 +328,7 @@ async def _login_codex(agent: Any, api_key: str) -> None:
         raise SandboxError("Codex login failed: " + message[:500]) from None
 
 
-async def _execute(directory: Path, request: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute(directory: Path, request: Dict[str, Any], waits: Optional[set] = None) -> Dict[str, Any]:
     from agno.sandbox.repository import RepositoryPreparationError, _aprepare, _read_pin, validate_repository_override
 
     native = directory.parent.parent / "native"
@@ -290,13 +349,17 @@ async def _execute(directory: Path, request: Dict[str, Any]) -> Dict[str, Any]:
             # Preparation drains its filesystem work before cancellation propagates. No
             # harness has started, so the worker's execution deadline is safe to retry.
             raise RepositoryPreparationError("Repository preparation interrupted before model execution") from None
-    result = await _execute_harness(directory, request)
+    result = (
+        await _execute_harness(directory, request, waits)
+        if waits is not None
+        else await _execute_harness(directory, request)
+    )
     if repository is not None:
         result["repository"] = _read_pin(native, repository)
     return result
 
 
-async def _execute_harness(directory: Path, request: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_harness(directory: Path, request: Dict[str, Any], waits: Optional[set] = None) -> Dict[str, Any]:
     if request["sdk"] == "fixture":
         return await _fixture(directory, request)
     from agno.run.agent import RunOutput
@@ -331,6 +394,11 @@ async def _execute_harness(directory: Path, request: Dict[str, Any]) -> Dict[str
             if isinstance(event, RunOutput):
                 run = event
             elif event.event not in _TERMINAL_EVENTS:
+                if waits is not None:
+                    if event.event == "RunPaused" and getattr(event, "external_agent_request", None):
+                        waits.add(event.external_agent_request["tool_call_id"])
+                    elif event.event == "RunContinued":
+                        waits.discard(getattr(event, "external_agent_request_id", None))
                 _append(directory, event.to_dict())
         if run is None:
             raise SandboxError("SDK runtime did not produce an execution result")
@@ -351,24 +419,61 @@ async def _execute_harness(directory: Path, request: Dict[str, Any]) -> Dict[str
 def _worker(directory: Path) -> None:
     request = json.loads((directory / "request.json").read_bytes())
     root = directory.parent.parent
+    # Read before the turn, so a kill is only reported for the turn it happened in.
+    memory_events = _memory_events()
     try:
         _validate(request)
         with _lock(root / "execution.lock"):
             _atomic(
                 directory / "status.json",
-                _encode({"phase": "running", "pid": os.getpid(), "start": _process_start(os.getpid())}),
+                _encode(
+                    {
+                        "phase": "running",
+                        "pid": os.getpid(),
+                        "start": _process_start(os.getpid()),
+                        "memory_events": memory_events,
+                    }
+                ),
             )
 
             async def bounded_execute() -> Dict[str, Any]:
-                return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
+                if not request.get("config", {}).get("_native_hitl", False):
+                    return await asyncio.wait_for(_execute(directory, request), request.get("execution_timeout", 900))
+                from agno.agents._hitl import wait_for_execution
+
+                waits: set = set()
+                task = asyncio.create_task(_execute(directory, request, waits))
+                try:
+                    finished = await wait_for_execution(
+                        task,
+                        request.get("execution_timeout", 900),
+                        request["config"].get("hitl_timeout", 900),
+                        lambda: bool(waits),
+                    )
+                    if not finished:
+                        raise TimeoutError("Runtime active or confirmation-wait budget exceeded")
+                    return task.result()
+                finally:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
             result = asyncio.run(bounded_execute())
+            if (result.get("run") or {}).get("status") == "ERROR":
+                # A harness whose command was killed ends its own run with that error. The run is
+                # already stored as it is, so the reason travels beside it for the host to add.
+                note = _memory_note(memory_events)
+                if note:
+                    result["memory_note"] = note
             payload = _encode(result)
             if len(payload) > _MAX_RESULT:
                 raise SandboxError("Runtime execution result exceeds its limit")
             _atomic(directory / "result.json", payload)
     except Exception as error:
-        result = {"type": "execution_error", "error": (str(error) or type(error).__name__)[:2000]}
+        result = {
+            "type": "execution_error",
+            "error": _with_memory_note((str(error) or type(error).__name__)[:2000], memory_events),
+        }
         from agno.sandbox.repository import RepositoryPreparationError
 
         if isinstance(error, RepositoryPreparationError):
@@ -377,6 +482,79 @@ def _worker(directory: Path) -> None:
             # Machine-readable, so a coordinator retries the restore instead of the turn.
             result["reason"] = "native_state_missing"
         _atomic(directory / "result.json", _encode(result))
+
+
+def _capabilities(request: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "version": _VERSION,
+        "execution_id": request.get("execution_id"),
+        "capabilities": ["native_hitl_v1"],
+    }
+
+
+def _resolve(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
+    """Deliver one confirm or reject to the native request waiting in this runtime's execution.
+
+    The decision is recorded on the runtime's paused run, which the waiting execution reads.
+    """
+    from agno.agents._hitl import record_decision
+    from agno.agents.base import run_coroutine_sync
+
+    directory = _job(root, request["execution_id"])
+    original = json.loads((directory / "request.json").read_bytes())
+    if any(request.get(key) != original.get(key) for key in ("run_id", "session_id", "agent_id", "execution_id")):
+        raise SandboxError("Native execution identity mismatch")
+    tool_call_id = request.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id or len(tool_call_id) > 256:
+        raise ValueError("Invalid native request identity")
+    answers = request.get("answers")
+    if answers is not None:
+        if not isinstance(answers, list) or not all(
+            isinstance(selected, list) and all(isinstance(value, str) for value in selected) for selected in answers
+        ):
+            raise ValueError("Native question answers must be lists of selections")
+    elif not isinstance(request.get("confirmed"), bool):
+        raise ValueError("A native decision must confirm or reject")
+    if not isinstance(request.get("digest"), str) or not isinstance(request.get("owner"), str):
+        raise ValueError("A native decision must name the request it answers")
+    with _lock(directory / "hitl.lock"):
+        state = json.loads((directory / "status.json").read_bytes())
+        if (
+            (directory / "result.json").exists()
+            or state.get("phase") != "running"
+            or _process_start(state["pid"]) != state.get("start")
+        ):
+            raise SandboxError("Native execution is no longer available")
+        agent = _agent(original, root / "native")
+        try:
+            accepted = run_coroutine_sync(
+                record_decision(
+                    agent,
+                    original["run_id"],
+                    original["session_id"],
+                    original.get("user_id"),
+                    tool_call_id=tool_call_id,
+                    confirmed=request.get("confirmed"),
+                    answers=answers,
+                    digest=request["digest"],
+                    owner=request["owner"],
+                )
+            )
+        except ValueError as error:
+            raise SandboxError(str(error)) from error
+        finally:
+            agent.db.db_engine.dispose()
+        if not accepted:
+            raise SandboxError("Native request was already decided differently")
+        return {"version": _VERSION, "execution_id": request["execution_id"], "accepted": True}
+
+
+def _dispatch(root: Path, operation: str, request: Dict[str, Any]) -> Dict[str, Any]:
+    if operation == "capabilities":
+        return _capabilities(request)
+    if operation == "resolve":
+        return _resolve(root, request)
+    return _start(root, request) if operation == "start" else _poll_wait(root, request)
 
 
 def _poll(root: Path, execution_id: str, cursor: int) -> Dict[str, Any]:
@@ -424,7 +602,9 @@ def _poll(root: Path, execution_id: str, cursor: int) -> Dict[str, Any]:
         if status["phase"] == "running" and _process_start(status["pid"]) != status.get("start"):
             result = {
                 "type": "execution_unknown",
-                "error": "Runtime worker disappeared; reconcile effects before retrying",
+                "error": _with_memory_note(
+                    "Runtime worker disappeared; reconcile effects before retrying", status.get("memory_events")
+                ),
             }
         elif status["phase"] == "starting" and time.time() - status["created_at"] > 30:
             result = {"type": "execution_unknown", "error": "Runtime dispatch outcome is unknown"}
@@ -508,7 +688,7 @@ def _serve(root: Path, port: int, token: Optional[str] = None) -> Any:
         def do_POST(self) -> None:
             if not self._authorized():
                 return
-            if self.path not in ("/start", "/poll"):
+            if self.path not in ("/start", "/poll", "/resolve", "/capabilities"):
                 self._reply(404, {"error": "Unknown runtime operation"})
                 return
             length = int(self.headers.get("Content-Length") or 0)
@@ -519,7 +699,7 @@ def _serve(root: Path, port: int, token: Optional[str] = None) -> Any:
                 request = json.loads(self.rfile.read(length))
                 if not isinstance(request, dict):
                     raise ValueError("Runtime request must be a JSON object")
-                result = _start(root, request) if self.path == "/start" else _poll_wait(root, request)
+                result = _dispatch(root, self.path.lstrip("/"), request)
             except (ValueError, KeyError, TypeError) as error:
                 self._reply(400, {"error": str(error) or type(error).__name__})
             except SandboxError as error:
@@ -609,7 +789,9 @@ def _take_token(from_stdin: bool = False) -> Optional[str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sandbox runtime protocol")
-    parser.add_argument("operation", choices=("start", "poll", "worker", "serve", "supervise"))
+    parser.add_argument(
+        "operation", choices=("start", "poll", "resolve", "capabilities", "worker", "serve", "supervise")
+    )
     parser.add_argument("directory", nargs="?")
     parser.add_argument("--port", type=int, default=int(os.environ.get("AGNO_SANDBOX_RUNTIME_PORT", "8765")))
     parser.add_argument("--token-stdin", action="store_true", help="read the control token from the first stdin line")
@@ -625,7 +807,7 @@ def main() -> None:
         _serve(root, args.port, _take_token(from_stdin=args.token_stdin)).serve_forever()
         return
     request = json.loads(sys.stdin.buffer.read(_MAX_REQUEST + 1))
-    result = _start(root, request) if args.operation == "start" else _poll_wait(root, request)
+    result = _dispatch(root, args.operation, request)
     print(_encode(result).decode())
 
 

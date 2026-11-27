@@ -5,7 +5,7 @@ without writing the run or its session to the database. The default (``true``) k
 the existing behaviour. A temporary run cannot be a background run, because background
 runs are polled from the stored run row, so that combination answers 400. An operator
 can switch the option off for the whole OS with ``AgentOS(allow_temporary_runs=False)``,
-which also answers 400 and is visible on ``GET /config``.
+which also answers 400 and is visible on ``GET /config`` as the ``temporary_runs`` feature block.
 """
 
 from typing import Dict, Optional
@@ -210,5 +210,5 @@ class TestOperatorCanDisableTemporaryRuns:
         assert db.get_session(session_id="kept", session_type=SESSION_TYPES[route]) is not None
 
     def test_config_reports_the_setting(self, client: TestClient, strict_client: TestClient):
-        assert client.get("/config").json()["allow_temporary_runs"] is True
-        assert strict_client.get("/config").json()["allow_temporary_runs"] is False
+        assert client.get("/config").json()["temporary_runs"] == {"enabled": True}
+        assert strict_client.get("/config").json()["temporary_runs"] == {"enabled": False}

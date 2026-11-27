@@ -65,7 +65,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_strict_output_false():
     """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=Sambanova(id="Meta-Llama-3.1-8B-Instruct", strict_output=False),
+        model=Sambanova(id="Meta-Llama-3.3-70B-Instruct", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )

@@ -3,7 +3,7 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -79,6 +79,8 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
       never turn a write into an error, and a value that cannot be stored must
       never reach the column - it would make the component, and every listing
       that includes it, unreadable. The config keeps whatever the caller sent.
+      Owned metadata keeps a stored external agent's ``sdk``, which catalog
+      readers use to tell it from an Agent.
     """
     projection: Dict[str, Any] = {}
     if config.get("name") is not None:
@@ -89,7 +91,8 @@ def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(metadata, dict):
         stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
         if config.get("metadata_authored") or not stamp_only:
-            projection["metadata"] = metadata
+            sdk = config.get("sdk")
+            projection["metadata"] = {**metadata, "sdk": sdk} if isinstance(sdk, str) else metadata
     return projection
 
 
@@ -308,6 +311,9 @@ class BaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -318,7 +324,7 @@ class BaseDb(ABC):
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
-        products_table: Optional[str] = None,
+        goals_table: Optional[str] = None,
         sources_table: Optional[str] = None,
         projects_table: Optional[str] = None,
         tasks_table: Optional[str] = None,
@@ -350,6 +356,34 @@ class BaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
+        from agno.db.utils import bound_index_name
+
+        if component_metrics_table:
+            self.component_metrics_table_name = component_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.component_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_component_metrics"
+            )
+        else:
+            self.component_metrics_table_name = "agno_component_metrics"
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_aggregate_metrics"
+            )
+        else:
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
+        if metrics_refreshes_table:
+            self.metrics_refreshes_table_name = metrics_refreshes_table
+        elif session_table and session_table != "agno_sessions":
+            self.metrics_refreshes_table_name = bound_index_name(
+                type(self).__name__, session_table, "_metrics_refreshes"
+            )
+        else:
+            self.metrics_refreshes_table_name = "agno_metrics_refreshes"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -360,7 +394,8 @@ class BaseDb(ABC):
         self.component_links_table_name = component_links_table or "agno_component_links"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
-        self.products_table_name = products_table or "agno_company_products"
+        self.goals_table_name = goals_table or "agno_company_goals"
+        self.company_table_name = self.goals_table_name + "_details"
         self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
@@ -409,6 +444,18 @@ class BaseDb(ABC):
         cached = self._table_cache.get(table_type, table_name)
         if cached is not None:
             return cached
+        from agno.db.utils import company_migration_required_error, legacy_company_table
+
+        legacy_table = legacy_company_table(self, table_type)
+        creates_company_table = False
+        if legacy_table is not None and self.table_exists(legacy_table):
+            from agno.db.migrations.versions.v3_3_0 import company_table_pending
+
+            # An agno 3.2 process that starts after the migration creates its table again.
+            if company_table_pending(self, table_type):
+                raise company_migration_required_error(legacy_table, table_name)
+        elif legacy_table is not None and create_table_if_not_found:
+            creates_company_table = not self.table_exists(table_name)
         if not create_table_if_not_found and not self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
@@ -416,9 +463,14 @@ class BaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            return self._resolve_table(
+            table = self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+        if creates_company_table:
+            from agno.db.migrations.versions.v3_3_0 import record_company_table
+
+            record_company_table(self, table_type)
+        return table
 
     def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -442,13 +494,15 @@ class BaseDb(ABC):
         """
         Serialize common DB fields (table names + id). Subclasses may extend this.
         """
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
+            "component_metrics_table": self.component_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
+            "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
@@ -459,7 +513,7 @@ class BaseDb(ABC):
             "component_links_table": self.component_links_table_name,
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
-            "products_table": self.products_table_name,
+            "goals_table": self.goals_table_name,
             "sources_table": self.sources_table_name,
             "projects_table": self.projects_table_name,
             "tasks_table": self.tasks_table_name,
@@ -473,17 +527,27 @@ class BaseDb(ABC):
             "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
             "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseDb":
         """
         Reconstruct using only fields defined in BaseDb. Subclasses should override this.
         """
+        from agno.db.utils import goals_table_from_dict
+
         return cls(
             session_table=data.get("session_table"),
             runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -494,7 +558,7 @@ class BaseDb(ABC):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
-            products_table=data.get("products_table"),
+            goals_table=goals_table_from_dict(data),
             sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
@@ -857,7 +921,61 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
+        raise NotImplementedError
+
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics as calculate_metrics does, returning only the days calculated, and stop between days or
+        a day's batches once should_stop returns True."""
+        raise NotImplementedError
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        return None
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The metrics of every user, one row per day, and when they were last updated."""
+        from agno.db.utils import aggregate_metrics_by_date
+
+        metrics, latest_updated_at = self.get_metrics(starting_date=starting_date, ending_date=ending_date)
+        return aggregate_metrics_by_date(metrics), latest_updated_at
+
+    # --- Component Metrics (Optional) ---
+    # ``user_id`` works as in get_metrics: ``None`` totals every owner, a name that user's rows, ``""`` unowned rows.
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The component metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The component metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
+        raise NotImplementedError
+
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """The status of the most recent calculate_metrics, shared by every process: 'running', 'completed' or
+        'failed', when it started and finished, and its error. ``None`` before the first one."""
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -1876,9 +1994,9 @@ class BaseDb(ABC):
 
     # --- Sources (Optional) ---
 
-    def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
-        """Atomically append a Routine id without overwriting Product metadata."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    def add_goal_routine(self, goal_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Goal metadata."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
     def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
         """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
@@ -1896,7 +2014,7 @@ class BaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Sources and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company sources not supported by the configured database")
@@ -1913,19 +2031,31 @@ class BaseDb(ABC):
         """Restore a deleted Source within the owner scope; otherwise return None."""
         raise NotImplementedError("Company sources not supported by the configured database")
 
-    # --- Products (Optional) ---
+    # --- Goals (Optional) ---
 
-    def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a Product; product_data carries its owner and timestamps."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    def get_company(self) -> Optional[Dict[str, Any]]:
+        """Read the singleton company in this database scope."""
+        raise NotImplementedError("Company details not supported by the configured database")
 
-    def get_product(
-        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        """Seed or refresh unedited company details, retaining human edits."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Compare-and-swap name/description; None means the record changed or is absent."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    def create_goal(self, goal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Goal; goal_data carries its owner and timestamps."""
+        raise NotImplementedError("Company goals not supported by the configured database")
+
+    def get_goal(
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """Read a Product. None user_id is unscoped; a string filters by owner."""
-        raise NotImplementedError("Company products not supported by the configured database")
+        """Read a Goal. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    def get_products(
+    def get_goals(
         self,
         user_id: Optional[str] = None,
         limit: int = 20,
@@ -1934,24 +2064,24 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List Products and their total, filtering by owner before pagination."""
-        raise NotImplementedError("Company products not supported by the configured database")
+        """List Goals and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Product within the owner scope."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    def update_goal(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Goal within the owner scope."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    def get_goal_counts(self, goal_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         """Count visible children for a page in one grouped query, including zero statuses."""
-        raise NotImplementedError("Company product counts not supported by the configured database")
+        raise NotImplementedError("Company goal counts not supported by the configured database")
 
-    def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    def delete_goal(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; raise ValueError with active Task ids and titles."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Product and exactly the children archived by it within the owner scope."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    def restore_goal(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and exactly the children archived by it within the owner scope."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
     # --- Projects (Optional) ---
 
@@ -1971,10 +2101,11 @@ class BaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Projects and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company projects not supported by the configured database")
@@ -2036,21 +2167,30 @@ class BaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
         failed: Optional[bool] = None,
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -2061,6 +2201,19 @@ class BaseDb(ABC):
         """Restore a deleted Task within the owner scope; otherwise return None."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
+    def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Remove context entries by id and add others, on a Task that is not Done or Cancelled.
+
+        Returns None when the Task is missing or archived, or is not in expected_status when one is given.
+        """
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
     def start_task_run(
         self,
         task_id: str,
@@ -2069,6 +2222,8 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
         raise NotImplementedError("Company execution not supported by this database")
@@ -2101,12 +2256,16 @@ class BaseDb(ABC):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Transition a visible Task and record the caller and reason.
 
         Automatic acceptance requires expected_updated_at. Explicit None matches
         SQL NULL; omission leaves manual transitions without a timestamp guard.
         Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        expected_status and expected_job_id name the stage and run the caller observed:
+        the transition applies only while the Task still holds them.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -2471,6 +2630,10 @@ class BaseDb(ABC):
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
 
+    def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
+
     def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""
         raise NotImplementedError
@@ -2727,6 +2890,9 @@ class AsyncBaseDb(ABC):
         runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -2735,7 +2901,7 @@ class AsyncBaseDb(ABC):
         components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
-        products_table: Optional[str] = None,
+        goals_table: Optional[str] = None,
         sources_table: Optional[str] = None,
         projects_table: Optional[str] = None,
         tasks_table: Optional[str] = None,
@@ -2761,6 +2927,34 @@ class AsyncBaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        # Named after a custom session table, so two databases sharing one schema never rebuild each other's metrics.
+        # On PostgreSQL a name over 63 bytes keeps its suffix and is shortened with a digest, so no two tables share it
+        from agno.db.utils import bound_index_name
+
+        if component_metrics_table:
+            self.component_metrics_table_name = component_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.component_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_component_metrics"
+            )
+        else:
+            self.component_metrics_table_name = "agno_component_metrics"
+        if aggregate_metrics_table:
+            self.aggregate_metrics_table_name = aggregate_metrics_table
+        elif session_table and session_table != "agno_sessions":
+            self.aggregate_metrics_table_name = bound_index_name(
+                type(self).__name__, session_table, "_aggregate_metrics"
+            )
+        else:
+            self.aggregate_metrics_table_name = "agno_aggregate_metrics"
+        if metrics_refreshes_table:
+            self.metrics_refreshes_table_name = metrics_refreshes_table
+        elif session_table and session_table != "agno_sessions":
+            self.metrics_refreshes_table_name = bound_index_name(
+                type(self).__name__, session_table, "_metrics_refreshes"
+            )
+        else:
+            self.metrics_refreshes_table_name = "agno_metrics_refreshes"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -2770,7 +2964,8 @@ class AsyncBaseDb(ABC):
         self.components_table_name = components_table or "agno_components"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
-        self.products_table_name = products_table or "agno_company_products"
+        self.goals_table_name = goals_table or "agno_company_goals"
+        self.company_table_name = self.goals_table_name + "_details"
         self.sources_table_name = sources_table or "agno_company_sources"
         self.projects_table_name = projects_table or "agno_company_projects"
         self.tasks_table_name = tasks_table or "agno_company_tasks"
@@ -2805,12 +3000,14 @@ class AsyncBaseDb(ABC):
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize common async database configuration and table overrides."""
-        return {
+        config = {
             "id": self.id,
             "session_table": self.session_table_name,
             "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
-            "metrics_table": self.metrics_table_name,
+            "component_metrics_table": self.component_metrics_table_name,
+            "aggregate_metrics_table": self.aggregate_metrics_table_name,
+            "metrics_refreshes_table": self.metrics_refreshes_table_name,
             "eval_table": self.eval_table_name,
             "knowledge_table": self.knowledge_table_name,
             "traces_table": self.trace_table_name,
@@ -2819,7 +3016,7 @@ class AsyncBaseDb(ABC):
             "components_table": self.components_table_name,
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
-            "products_table": self.products_table_name,
+            "goals_table": self.goals_table_name,
             "sources_table": self.sources_table_name,
             "projects_table": self.projects_table_name,
             "tasks_table": self.tasks_table_name,
@@ -2829,16 +3026,26 @@ class AsyncBaseDb(ABC):
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
         }
+        # The deprecated metrics_table is kept only when it was renamed, so loading a database that never set it does
+        # not warn
+        if self.metrics_table_name != "agno_metrics":
+            config["metrics_table"] = self.metrics_table_name
+        return config
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AsyncBaseDb":
         """Reconstruct common fields; adapters extend connection configuration."""
+        from agno.db.utils import goals_table_from_dict
+
         return cls(
             id=data.get("id"),
             session_table=data.get("session_table"),
             runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -2847,7 +3054,7 @@ class AsyncBaseDb(ABC):
             components_table=data.get("components_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
-            products_table=data.get("products_table"),
+            goals_table=goals_table_from_dict(data),
             sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
@@ -2869,6 +3076,17 @@ class AsyncBaseDb(ABC):
         cached = self._table_cache.get(table_type, table_name)
         if cached is not None:
             return cached
+        from agno.db.utils import company_migration_required_error, legacy_company_table
+
+        legacy_table = legacy_company_table(self, table_type)
+        creates_company_table = False
+        if legacy_table is not None and await self.table_exists(legacy_table):
+            from agno.db.migrations.versions.v3_3_0 import acompany_table_pending
+
+            if await acompany_table_pending(self, table_type):
+                raise company_migration_required_error(legacy_table, table_name)
+        elif legacy_table is not None and create_table_if_not_found:
+            creates_company_table = not await self.table_exists(table_name)
         if not create_table_if_not_found and not await self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
@@ -2876,9 +3094,14 @@ class AsyncBaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            return await self._resolve_table(
+            table = await self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+        if creates_company_table:
+            from agno.db.migrations.versions.v3_3_0 import arecord_company_table
+
+            await arecord_company_table(self, table_type)
+        return table
 
     async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -3176,7 +3399,61 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def calculate_metrics(self) -> Optional[Any]:
+    async def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[Any]:
+        raise NotImplementedError
+
+    async def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics as calculate_metrics does, returning only the days calculated, and stop between days or
+        a day's batches once should_stop returns True."""
+        raise NotImplementedError
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        return None
+
+    async def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The metrics of every user, one row per day, and when they were last updated."""
+        from agno.db.utils import aggregate_metrics_by_date
+
+        metrics, latest_updated_at = await self.get_metrics(starting_date=starting_date, ending_date=ending_date)
+        return aggregate_metrics_by_date(metrics), latest_updated_at
+
+    # --- Component Metrics (Optional) ---
+    # See the BaseDb component metrics methods for the ``user_id`` semantics.
+
+    async def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """The component metrics totals of each day in the date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """The component metrics totals of the whole date range, and when they were last updated."""
+        raise NotImplementedError
+
+    async def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """The version of each everyone aggregate metrics row in the date range, ``None`` until a first calculation."""
+        raise NotImplementedError
+
+    async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """The status of the most recent calculate_metrics, shared by every process: 'running', 'completed' or
+        'failed', when it started and finished, and its error. ``None`` before the first one."""
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -3914,9 +4191,9 @@ class AsyncBaseDb(ABC):
 
     # --- Sources (Optional) ---
 
-    async def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
-        """Atomically append a Routine id without overwriting Product metadata."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    async def add_goal_routine(self, goal_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Atomically append a Routine id without overwriting Goal metadata."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
     async def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
         """Create a Source; reuse atomically returns an identical reference or refuses conflicting settings."""
@@ -3934,7 +4211,7 @@ class AsyncBaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Sources and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company sources not supported by the configured database")
@@ -3953,19 +4230,31 @@ class AsyncBaseDb(ABC):
         """Restore a deleted Source within the owner scope; otherwise return None."""
         raise NotImplementedError("Company sources not supported by the configured database")
 
-    # --- Products (Optional) ---
+    # --- Goals (Optional) ---
 
-    async def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a Product; product_data carries its owner and timestamps."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    async def get_company(self) -> Optional[Dict[str, Any]]:
+        """Read the singleton company in this database scope."""
+        raise NotImplementedError("Company details not supported by the configured database")
 
-    async def get_product(
-        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    async def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        """Seed or refresh unedited company details, retaining human edits."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    async def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Compare-and-swap name/description; None means the record changed or is absent."""
+        raise NotImplementedError("Company details not supported by the configured database")
+
+    async def create_goal(self, goal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a Goal; goal_data carries its owner and timestamps."""
+        raise NotImplementedError("Company goals not supported by the configured database")
+
+    async def get_goal(
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """Read a Product. None user_id is unscoped; a string filters by owner."""
-        raise NotImplementedError("Company products not supported by the configured database")
+        """Read a Goal. None user_id is unscoped; a string filters by owner."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    async def get_products(
+    async def get_goals(
         self,
         user_id: Optional[str] = None,
         limit: int = 20,
@@ -3974,26 +4263,24 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List Products and their total, filtering by owner before pagination."""
-        raise NotImplementedError("Company products not supported by the configured database")
+        """List Goals and their total, filtering by owner before pagination."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    async def update_product(
-        self, product_id: str, user_id: Optional[str] = None, **fields: Any
-    ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Product within the owner scope."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    async def update_goal(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update descriptive fields on an active Goal within the owner scope."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    async def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    async def get_goal_counts(self, goal_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         """Count visible children for a page in one grouped query, including zero statuses."""
-        raise NotImplementedError("Company product counts not supported by the configured database")
+        raise NotImplementedError("Company goal counts not supported by the configured database")
 
-    async def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Product and its children atomically; raise ValueError with active Task ids and titles."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    async def delete_goal(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; raise ValueError with active Task ids and titles."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
-    async def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Product and exactly the children archived by it within the owner scope."""
-        raise NotImplementedError("Company products not supported by the configured database")
+    async def restore_goal(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and exactly the children archived by it within the owner scope."""
+        raise NotImplementedError("Company goals not supported by the configured database")
 
     # --- Projects (Optional) ---
 
@@ -4013,10 +4300,11 @@ class AsyncBaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Projects and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company projects not supported by the configured database")
@@ -4078,21 +4366,30 @@ class AsyncBaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
         failed: Optional[bool] = None,
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List Tasks and their total, filtering by owner before pagination."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def delete_task(
@@ -4105,6 +4402,19 @@ class AsyncBaseDb(ABC):
         """Restore a deleted Task within the owner scope; otherwise return None."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
+    async def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Remove context entries by id and add others, on a Task that is not Done or Cancelled.
+
+        Returns None when the Task is missing or archived, or is not in expected_status when one is given.
+        """
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
     async def start_task_run(
         self,
         task_id: str,
@@ -4113,6 +4423,8 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
         raise NotImplementedError("Company execution not supported by this database")
@@ -4145,12 +4457,16 @@ class AsyncBaseDb(ABC):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Transition a visible Task and record the caller and reason.
 
         Automatic acceptance requires expected_updated_at. Explicit None matches
         SQL NULL; omission leaves manual transitions without a timestamp guard.
         Timestamps are epoch seconds, so same-second writes are indistinguishable.
+        expected_status and expected_job_id name the stage and run the caller observed:
+        the transition applies only while the Task still holds them.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -4435,6 +4751,10 @@ class AsyncBaseDb(ABC):
     async def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
         """All (role, resource, action, effect) rows whose role is in ``roles``."""
         raise NotImplementedError
+
+    async def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+        raise NotImplementedError("Authorization is not supported by the configured database")
 
     async def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
         """One role's (resource, action, effect) rows."""

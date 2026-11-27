@@ -102,7 +102,7 @@ class StreamState:
             ops = patch.patch
             if not ops:
                 return None
-            return ops
+            return [dict(op) for op in ops]
         except Exception as e:
             log_warning(f"Failed to compute state delta: {e}")
             return None

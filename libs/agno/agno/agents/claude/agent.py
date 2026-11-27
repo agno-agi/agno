@@ -1,4 +1,5 @@
 import copy
+import os
 import warnings
 from dataclasses import field, fields
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import (
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
+from agno.agents._hitl import live_native_run
 from agno.agents._media import (
     accept_media,
     cleanup_run_media,
@@ -38,6 +40,7 @@ from agno.agents.base import (
     ExternalRunResult,
     ExternalRunStructuredOutputEvent,
     ExternalRunWarningEvent,
+    run_coroutine_sync,
 )
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
@@ -92,6 +95,10 @@ def _sdk() -> Any:
 
 # Result subtypes for limits the user configured; a retry would grant a fresh allowance.
 _LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"}
+_OAUTH_TOKEN_REFUSED = (
+    "The Claude Code OAuth token was refused or has expired; make a new one with `claude setup-token`. "
+    "No API key was used."
+)
 # AssistantMessage.error values that fail the same way on every attempt.
 _PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
 
@@ -113,6 +120,41 @@ class ClaudeResultError(RuntimeError):
         self.errors = errors
         self.api_error_status = api_error_status
         self.assistant_error = assistant_error
+
+
+async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
+    """Pause for Claude's AskUserQuestion as user feedback and hand the selections back to Claude.
+
+    Claude reads the answers from the allowed tool input, keyed by question text; a multi-select answer
+    is comma-separated. When every question is skipped, Claude is told the user declined to answer.
+    """
+    from agno.agents._hitl import current_bridge
+
+    questions = arguments.get("questions")
+    if (
+        not isinstance(questions, list)
+        or not questions
+        or not all(isinstance(q, dict) and q.get("question") for q in questions)
+    ):
+        raise ValueError("AskUserQuestion has no questions to ask")
+    asked = [
+        {
+            "question": str(q["question"]),
+            "header": q.get("header"),
+            "options": [
+                {"label": str(o.get("label", "")), "description": o.get("description")}
+                for o in q.get("options") or []
+                if isinstance(o, dict)
+            ],
+            "multi_select": q.get("multiSelect") is True,
+        }
+        for q in questions
+    ]
+    selections = await current_bridge().ask("AskUserQuestion", arguments, native, asked)
+    answers = {q["question"]: ", ".join(selected) for q, selected in zip(asked, selections) if selected}
+    if not answers:
+        return sdk.PermissionResultDeny(message="The user declined to answer these questions")
+    return sdk.PermissionResultAllow(updated_input={**arguments, "answers": answers})
 
 
 @agent_dataclass
@@ -145,6 +187,10 @@ class ClaudeAgent(BaseExternalAgent):
         strict_mcp_config: Use only explicitly configured MCP servers when True.
         skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
         plugins: Native SDK plugin configurations.
+        oauth_token: Run on a Claude subscription instead of an API key. Pass the token that
+            `claude setup-token` prints. When set, the agent never uses ANTHROPIC_API_KEY, so an
+            expired or refused token fails the run instead of billing the API key. Leave it
+            unset to use the API key.
         options: Native ClaudeAgentOptions for advanced configuration. Non-None constructor
             fields override these options, including empty collections and False. Agno owns
             native session selection and token streaming; configure them through run/arun.
@@ -202,12 +248,27 @@ class ClaudeAgent(BaseExternalAgent):
     # Execution limits
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
+    # A Claude Code OAuth token; never shown, stored as a component config or sent to a sandbox as configuration.
+    oauth_token: Optional[str] = field(default=None, repr=False)
     # Advanced native configuration
     options: Optional["ClaudeAgentOptions"] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     _sdk_name: ClassVar[str] = "claude-agent-sdk"
     _sandbox_runtime: ClassVar[Optional[str]] = "claude"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
+        "options_kwargs": "deprecated; use the named parameters instead",
+        "oauth_token": "a credential; set it on the agent in the serving AgentOS's code",
+    }
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+    )
     # Key under which the SDK session id is stored in the Agno session.
     _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
@@ -221,6 +282,18 @@ class ClaudeAgent(BaseExternalAgent):
 
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        opts = self._option_values()
+        mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
+        mode = self.options_kwargs.get("permission_mode", mode)
+        return (
+            self.db is not None
+            and mode not in ("bypassPermissions", "dontAsk")
+            and not opts.get("can_use_tool")
+            and not opts.get("permission_prompt_tool_name")
+        )
 
     def __post_init__(self) -> None:
         if self.options is not None and self.options_kwargs:
@@ -243,6 +316,22 @@ class ClaudeAgent(BaseExternalAgent):
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
+
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
+        return {"CLAUDE_CODE_OAUTH_TOKEN": self.oauth_token.strip()} if self.oauth_token is not None else None
+
+    def _check_subscription(self) -> None:
+        if self.oauth_token is not None and not self.oauth_token.strip():
+            raise ValueError(
+                f"{self.get_id()} is set to run on a Claude subscription, but its OAuth token is empty. Make one with "
+                "`claude setup-token`. ANTHROPIC_API_KEY was not used."
+            )
+
+    def _signed_in_with_oauth_token(self) -> bool:
+        """Whether Claude Code has only an OAuth token to sign in with, here or inside a sandbox."""
+        if self.oauth_token is not None:
+            return True
+        return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) and not os.environ.get("ANTHROPIC_API_KEY")
 
     def _run_model(self) -> Tuple[Optional[str], Optional[str]]:
         return self._effective_model(), "Anthropic"
@@ -359,6 +448,16 @@ class ClaudeAgent(BaseExternalAgent):
         # Keep the old dictionary's precedence during migration, without allowing it to
         # override the native session selected by Agno or disable requested streaming.
         opts.update(self.options_kwargs)
+        subscription = self._subscription_env()
+        if subscription is not None:
+            self._check_subscription()
+            # Claude Code inherits this process's environment, where a variable cannot be removed:
+            # an empty value is one it does not use.
+            opts["env"] = {
+                **(opts.get("env") or {}),
+                **{name: "" for name in self._subscription_blocked_env},
+                **subscription,
+            }
         partial = opts.get("include_partial_messages", False)
         if (partial and not streaming) or ("include_partial_messages" in self.options_kwargs and partial != streaming):
             raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")
@@ -370,6 +469,19 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
+        if self._uses_native_hitl:
+            from agno.agents._hitl import current_bridge
+
+            async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
+                native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
+                if name == "AskUserQuestion":
+                    return await _ask_user_question(sdk, arguments, native)
+                allowed = await current_bridge().request(name, arguments, native)
+                if allowed:
+                    return sdk.PermissionResultAllow(updated_input=arguments)
+                return sdk.PermissionResultDeny(message="The user rejected this action")
+
+            opts["can_use_tool"] = can_use_tool
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -501,7 +613,9 @@ class ClaudeAgent(BaseExternalAgent):
                     if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
                         assistant_error = message.error
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(sdk, message, assistant_error)
+                        self._check_result_message(
+                            sdk, message, assistant_error, oauth_token=self._signed_in_with_oauth_token()
+                        )
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -788,6 +902,10 @@ class ClaudeAgent(BaseExternalAgent):
             tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
             record_input = input
             before = False
+        forked_from_message_index = source.forked_from_message_index
+        # A fork cut before the messages it copied keeps only copied ones, so the work continued here is its own
+        if forked_from_message_index is not None and forked_from_message_index > len(kept):
+            forked_from_message_index = len(kept)
         continuation = ExternalContinuation(
             messages=kept,
             tools=tools,
@@ -795,7 +913,7 @@ class ClaudeAgent(BaseExternalAgent):
             record_input=record_input,
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
-            forked_from_message_index=index if fork else source.forked_from_message_index,
+            forked_from_message_index=index if fork else forked_from_message_index,
             source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation
@@ -837,6 +955,26 @@ class ClaudeAgent(BaseExternalAgent):
         sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
+        source = run_response or self.get_run_output(run_id or "", session_id, user_id)
+        if live_native_run(source):
+            from agno.agents._hitl import continue_run, sync_events
+
+            continuation = continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+                stream=stream,
+            )
+            return sync_events(continuation) if stream else run_coroutine_sync(continuation)
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
         if source is None:
@@ -873,6 +1011,62 @@ class ClaudeAgent(BaseExternalAgent):
         **kwargs: Any,
     ) -> Any:
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
+        if regenerate:
+            raise ValueError("Claude continuation does not support regenerate")
+        resolved = kwargs.pop("_hitl_resolved", False)
+        if self._uses_native_hitl and run_response is None and not resolved:
+
+            async def dispatch():
+                source = await self.aget_run_output(run_id or "", session_id, user_id)
+                result = self.acontinue_run(
+                    source,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    requirements=requirements,
+                    updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
+                    stream=stream,
+                    _hitl_resolved=True,
+                    **kwargs,
+                )
+                if stream:
+                    async for event in result:
+                        yield event
+                else:
+                    yield await result
+
+            if stream:
+                return dispatch()
+
+            async def result():
+                async for item in dispatch():
+                    return item
+
+            return result()
+        if live_native_run(run_response):
+            from agno.agents._hitl import continue_run
+
+            return continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                stream=stream,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+            )
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         kwargs.pop("background_tasks", None)
         call = dict(
@@ -1040,7 +1234,9 @@ class ClaudeAgent(BaseExternalAgent):
         return self._build_metrics(totals, details, additional)
 
     @staticmethod
-    def _check_result_message(sdk: Any, message: Any, assistant_error: Optional[str] = None) -> None:
+    def _check_result_message(
+        sdk: Any, message: Any, assistant_error: Optional[str] = None, oauth_token: bool = False
+    ) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
             return
@@ -1054,8 +1250,11 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "result", None)
                 or getattr(message, "stop_reason", None)
             )
+            status = getattr(message, "api_error_status", None)
+            refused = oauth_token and (assistant_error == "authentication_failed" or status == 401)
+            text = f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}"
             raise ClaudeResultError(
-                f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}",
+                f"{text.rstrip('. ')}. {_OAUTH_TOKEN_REFUSED}" if refused else text,
                 subtype=subtype,
                 errors=getattr(message, "errors", None),
                 api_error_status=getattr(message, "api_error_status", None),

@@ -1,5 +1,22 @@
 # Customer feedback cookbook test log
 
+## 2026-11-24
+
+### company_os.py — startup after Product was renamed to Goal
+
+**Status:** PASS
+
+**Description:** Started the server on a new PostgreSQL database with the Goal declared as
+`Goal(objective=...)` and `CompanyConfig(goals=[feedback])`, read `GET /company/goals`, and
+stopped it. The words "product brief" and "product improvements" in this example mean the
+customer's product and were not renamed.
+
+**Result:** The server started with no warning or error in its log. `GET /company/goals`
+returned the Customer Feedback Goal with its objective. The UI workflow and the Routine's live
+run were NOT RUN. No model call was made.
+
+---
+
 ## 2026-10-23
 
 ### company_os.py — startup and live UI workflow
@@ -140,5 +157,25 @@ not a guarantee for arbitrary inputs, concurrent discovery, provider outages,
 multi-replica operation, or shipped product improvements. Suggested executors
 on Backlog Tasks were treated as suggestions, not acceptance; state and job
 records determined whether work was authorized.
+
+---
+
+### company_os.py: Routine names Super Agent (2026-11-10)
+
+**Status:** PASS
+
+**Description:** The `review-feedback` Routine names team `superagent`. Loaded the module with `runpy` against local PostgreSQL in a disposable schema, without serving it, and rehydrated the Product. The schema was dropped afterwards.
+
+**Result:** The stored schedule endpoint is `/agents/miniagent/runs` with `target_type` `team` and `target_id` `superagent`. The UI walkthrough, Routine runs and Task execution need live models and were not run. No model calls were made.
+
+---
+
+### company_os.py (default Routine executor)
+
+**Status:** PASS
+
+**Description:** The `review-feedback` Routine no longer names an executor, so it runs as Super Agent. Checked that the declaration resolves to team `superagent` by importing `Routine` and validating the same fields. The module itself needs PostgreSQL and was not served.
+
+**Result:** The declaration validates to `executor_type` `team` and `executor_id` `superagent`. No model calls were made.
 
 ---

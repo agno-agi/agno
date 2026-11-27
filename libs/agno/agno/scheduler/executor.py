@@ -5,12 +5,13 @@ import json
 import time
 from contextvars import ContextVar
 from inspect import signature
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 from agno.db.schemas.scheduler import (
     RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
+    SCHEDULED_RUN_METADATA_KEY,
     SCHEDULE_OWNER_HEADER,
     Schedule,
     match_run_endpoint,
@@ -37,6 +38,35 @@ def _to_form_value(v: Any) -> str:
     if isinstance(v, (dict, list)):
         return json.dumps(v)
     return str(v)
+
+
+# A safety margin past a run's timeout before nothing is left to record its final status.
+RUN_DEADLINE_MARGIN_SECONDS = 300
+
+
+def run_deadline(triggered_at: int, timeout_seconds: int) -> int:
+    """When the executor has stopped waiting on a run, plus the safety margin."""
+    return triggered_at + timeout_seconds + RUN_DEADLINE_MARGIN_SECONDS
+
+
+def terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Optional[Tuple[str, Optional[str]]]:
+    """Map a finished component run to its schedule run status and error; None while it has not finished."""
+    run_status = data.get("status")
+    if run_status not in _TERMINAL_STATUSES:
+        return None
+    company_error = None
+    if company_routine:
+        from agno.company.routines import _routine_failure
+
+        company_error = _routine_failure(data)
+    if run_status == "COMPLETED":
+        return ("failed" if company_error else "success"), company_error
+    if run_status == "PAUSED":
+        return "paused", None
+    if run_status == "CANCELLED":
+        # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
+        return "cancelled", data.get("error") or "Run was cancelled"
+    return "failed", company_error or data.get("error") or f"Run failed with status {run_status}"
 
 
 _active_schedule_run: ContextVar[Optional[tuple]] = ContextVar("active_schedule_run", default=None)
@@ -368,9 +398,12 @@ class ScheduleExecutor:
             )
             snapshot["company_routine_unscoped"] = unscoped
             snapshot["company_routine_id"] = schedule.id
-            snapshot["company_product_id"] = (payload.get("metadata") or {}).get("product_id")
+            snapshot["company_goal_id"] = (payload.get("metadata") or {}).get("goal_id")
             snapshot["company_routine"] = True
             has_authority = True
+        elif snapshot is not None:
+            # The saved authority is the creator's, and nobody is present when the schedule fires.
+            snapshot = {**snapshot, "scheduled": True}
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
@@ -428,6 +461,14 @@ class ScheduleExecutor:
             }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
+            if snapshot is None:
+                # With a saved authority the run carries "scheduled" on it. With none, or with one
+                # saved empty where authorization is off, the run's metadata is the only place left
+                # to say that nobody is present. Written after the payload's own metadata, so a
+                # schedule cannot leave it out.
+                kept = sanitized_payload.get("metadata")
+                marked = {**(kept if isinstance(kept, dict) else {}), SCHEDULED_RUN_METADATA_KEY: True}
+                form_payload["metadata"] = _to_form_value(marked)
 
             # The owner wins over the user-controlled payload: a crafted schedule must not run as another user
             form_payload.pop("user_id", None)
@@ -565,8 +606,11 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Poll a run status endpoint until the run reaches a terminal state."""
+        from agno.run.authorization import AUTHORIZATION_HEADER
+
         poll_url = f"{self.base_url}/{resource_type}/{resource_id}/runs/{run_id}"
         deadline = time.monotonic() + timeout_seconds
+        company_routine = bool(json.loads(headers.get(AUTHORIZATION_HEADER, "{}")).get("company_routine"))
 
         while True:
             if time.monotonic() >= deadline:
@@ -614,29 +658,9 @@ class ScheduleExecutor:
                 continue
 
             run_status = data.get("status")
-
-            if run_status in _TERMINAL_STATUSES:
-                from agno.run.authorization import AUTHORIZATION_HEADER
-
-                authority = json.loads(headers.get(AUTHORIZATION_HEADER, "{}"))
-                company_error = None
-                if authority.get("company_routine"):
-                    from agno.company.routines import _routine_failure
-
-                    company_error = _routine_failure(data)
-                if run_status == "COMPLETED":
-                    status = "failed" if company_error else "success"
-                    error = company_error
-                elif run_status == "PAUSED":
-                    status = "paused"
-                    error = None
-                elif run_status == "CANCELLED":
-                    # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
-                    status = "cancelled"
-                    error = data.get("error") or "Run was cancelled"
-                else:
-                    status = "failed"
-                    error = company_error or data.get("error") or f"Run failed with status {run_status}"
+            settled = terminal_run_status(data, company_routine)
+            if settled is not None:
+                status, error = settled
 
                 # Extract input, output, and requirements from RunOutput
                 run_input = data.get("input") if isinstance(data.get("input"), dict) else None

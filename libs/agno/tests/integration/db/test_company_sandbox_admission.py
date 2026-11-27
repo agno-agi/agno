@@ -1,4 +1,4 @@
-"""Model-free sandbox admission and retry regressions on all four Company stores."""
+"""Model-free sandboxed Task start and retry regressions on all four Company stores."""
 
 from types import SimpleNamespace
 
@@ -53,7 +53,7 @@ async def engineering_task(client, db):
     await _call(
         db,
         "create_source",
-        {"id": task["id"], "product_id": task["product_id"], "type": "git", "reference": URL, "created_at": 1},
+        {"id": task["id"], "goal_id": task["goal_id"], "type": "git", "reference": URL, "created_at": 1},
     )
     ready = await client.post(
         path + "/transitions",
@@ -101,76 +101,75 @@ async def test_successful_retry_establishes_missing_pin(sandbox_system, first_st
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["backlog", "reassigned", "archived", "new_reservation"])
-async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
+@pytest.mark.parametrize("first", ["running", "failed", "cancelled"])
+async def test_second_sandboxed_task_starts_whatever_the_first_is_doing(sandbox_system, first):
     client, db, worker, _, _ = sandbox_system
-    first = await engineering_task(client, db)
-    second = await engineering_task(client, db)
-    path = "/company/tasks/" + first["id"]
-    response = await client.post(path + "/runs")
-    assert response.status_code == 202, response.text
+    one = await engineering_task(client, db)
+    two = await engineering_task(client, db)
+    started = await client.post("/company/tasks/" + one["id"] + "/runs")
+    assert started.status_code == 202, started.text
     job = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
-    assert job["id"] == response.json()["run_id"]
-    second_path = "/company/tasks/" + second["id"] + "/runs"
-    assert (await client.post(second_path)).status_code == 409
-    assert (
-        await client.post(path + "/transitions", json={"target": "backlog", "reason": "Edit work"})
-    ).status_code == 409
-    # The route refuses leaving In progress mid-run; a direct manager or db caller can still move the Task.
-    await _call(db, "transition_task", first["id"], "backlog", "Edit work")
-    if mutation in {"reassigned", "new_reservation"}:
-        ready = await client.post(
-            path + "/transitions",
-            json={"target": "ready", "reason": "New executor", "executor_type": "agent", "executor_id": "writer"},
-        )
-        assert ready.status_code == 200, ready.text
-        if mutation == "new_reservation":
-            value = await _call(db, "get_task", first["id"])
-            await _call(db, "start_task_run", first["id"], 2, value["transitions"], run_db_id=worker.config.db.id)
-    elif mutation == "archived":
-        assert (await client.delete(path)).status_code == 204
-    blocked = await client.post(second_path)
-    assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
-    assert (await worker.store.get_job(job["id"]))["status"] == "running"
-    await worker.store.complete_job(job["id"], worker.worker_id, job["attempt"], "cancelled")
-    allowed = await client.post(second_path)
-    assert allowed.status_code == 202, allowed.text
+    assert job["id"] == started.json()["run_id"] and job["status"] == "running"
+    if first != "running":
+        await worker.store.complete_job(job["id"], worker.worker_id, job["attempt"], first)
+    second = await client.post("/company/tasks/" + two["id"] + "/runs")
+    assert second.status_code == 202, second.text
+    # Each Task runs in its own session, so the queue's one-turn-per-session rule holds neither back.
+    other = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert other["id"] == second.json()["run_id"] and other["status"] == "running"
+    assert other["session_id"] == two["session_id"] != one["session_id"] == job["session_id"]
+    assert (await worker.store.get_job(job["id"]))["status"] == first
+    assert [(await _call(db, "get_task", task["id"]))["status"] for task in (one, two)] == ["in_progress"] * 2
 
 
 @pytest.mark.asyncio
-async def test_ticketless_run_blocks_after_reassignment(sandbox_system):
-    client, db, worker, _, agent = sandbox_system
+async def test_three_sandboxed_tasks_started_together_are_all_queued(sandbox_system):
+    import asyncio
+
+    client, db, worker, _, _ = sandbox_system
+    tasks = [await engineering_task(client, db) for _ in range(3)]
+    starts = await asyncio.gather(*(client.post("/company/tasks/" + task["id"] + "/runs") for task in tasks))
+    assert [response.status_code for response in starts] == [202] * 3, [response.text for response in starts]
+    jobs, total = await worker.store.list_jobs(status=["queued"])
+    assert total == 3 and {job["payload"]["company_task_id"] for job in jobs} == {task["id"] for task in tasks}
+    assert len({job["session_id"] for job in jobs}) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_task_itself_still_has_one_run_at_a_time(sandbox_system):
+    client, db, worker, _, _ = sandbox_system
+    task = await engineering_task(client, db)
+    path = "/company/tasks/" + task["id"] + "/runs"
+    first = await client.post(path)
+    assert first.status_code == 202, first.text
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is not None
+    # A repeated start joins the live attempt, and the next attempt waits for it to end.
+    again = await client.post(path)
+    assert again.status_code == 202 and again.json()["run_id"] == first.json()["run_id"]
+    refused = await client.post(path, json={"attempt": 2})
+    assert refused.status_code == 409, refused.text
+    assert (await worker.store.list_jobs())[1] == 1
+
+
+@pytest.mark.asyncio
+async def test_automatic_pickup_starts_a_sandboxed_task_while_another_is_live(sandbox_system, system):  # noqa: F811
+    from tests.integration.db.test_company_execution_parity import automation
+
+    client, db, worker, _, _ = sandbox_system
     first = await engineering_task(client, db)
     second = await engineering_task(client, db)
-    path = "/company/tasks/" + first["id"]
-    response = await client.post(path + "/runs")
-    assert response.status_code == 202, response.text
-    run_id = response.json()["run_id"]
-    run = agent.db.get_run(run_id, deserialize=False)
-    data = {**run["run_data"], "status": "RUNNING"}
-    agent.db.upsert_run(data, session_id=run["session_id"])
-    table = worker.config.db._get_table("jobs")
-    with worker.config.db.Session() as session, session.begin():
-        session.execute(table.delete().where(table.c.id == run_id))
-    assert (
-        await client.post(path + "/transitions", json={"target": "backlog", "reason": "Edit work"})
-    ).status_code == 200
-    assert (
-        await client.post(
-            path + "/transitions",
-            json={"target": "ready", "reason": "New executor", "executor_type": "agent", "executor_id": "writer"},
-        )
-    ).status_code == 200
-    second_path = "/company/tasks/" + second["id"] + "/runs"
-    blocked = await client.post(second_path)
-    assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
-    agent.db.upsert_run({**data, "status": "CANCELLED"}, session_id=run["session_id"])
-    assert (await client.post(second_path)).status_code == 202
+    assert (await client.post("/company/tasks/" + first["id"] + "/runs")).status_code == 202
+    assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is not None
+    executor, _ = await automation(system)
+    await executor._dispatch(await _call(db, "get_task", second["id"]))
+    jobs, total = await worker.store.list_jobs(status=["queued", "running"])
+    assert total == 2 and {job["payload"]["company_task_id"] for job in jobs} == {first["id"], second["id"]}
+    assert (await _call(db, "get_task", second["id"]))["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("authorized", [True, False])
-async def test_start_checks_permission_once_before_admission(sandbox_system, monkeypatch, authorized):
+async def test_start_checks_permission_once_before_queueing(sandbox_system, monkeypatch, authorized):
     from unittest.mock import AsyncMock
 
     from fastapi import HTTPException
@@ -180,13 +179,11 @@ async def test_start_checks_permission_once_before_admission(sandbox_system, mon
     client, db, worker, _, _ = sandbox_system
     task = await engineering_task(client, db)
     permission = AsyncMock(side_effect=None if authorized else HTTPException(403, "Denied"))
-    listing = AsyncMock(wraps=worker.store.list_jobs)
     monkeypatch.setattr(routes, "_require_endpoint_permission", permission)
-    monkeypatch.setattr(worker.store, "list_jobs", listing)
     response = await client.post("/company/tasks/" + task["id"] + "/runs")
     assert response.status_code == (202 if authorized else 403), response.text
     permission.assert_awaited_once()
-    assert listing.await_count == (1 if authorized else 0)
+    assert (await worker.store.list_jobs())[1] == (1 if authorized else 0)
 
 
 @pytest.mark.asyncio
@@ -195,7 +192,9 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
     from agno.db.base import AsyncBaseDb
     from tests.integration.db.test_company_execution_parity import execute
 
-    client, db, worker, os, _ = sandbox_system
+    client, db, worker, os, engineer = sandbox_system
+    # The fixture serves only the engineer's instance under a shared id; the writer runs first.
+    os._register_db_with_validation(os.dbs, db)
     old = await accepted(client)
     other = await engineering_task(client, db)
     path = "/company/tasks/" + old["id"]
@@ -217,73 +216,11 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
             with db.db_engine.begin() as connection:
                 connection.execute(table.update().where(table.c.id == old["id"]).values(transitions=history))
     os.dbs.pop(db.id, None)
+    # The engineer's runs are read back through its database, so AgentOS must still serve it.
+    os._register_db_with_validation(os.dbs, engineer.db)
     os.registry.agents[:] = [agent for agent in os.registry.agents if agent.id != "writer"]
     started = await client.post("/company/tasks/" + other["id"] + "/runs")
     assert started.status_code == 202, started.text
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("async_queue", [False, True])
-async def test_queue_read_failure_refuses_admission(sandbox_system, monkeypatch, async_queue):
-    from unittest.mock import AsyncMock
-
-    from agno.db.postgres import AsyncPostgresDb
-
-    client, db, worker, _, _ = sandbox_system
-    task = await engineering_task(client, db)
-    store = worker.config.db
-    if async_queue:
-        store = AsyncPostgresDb(
-            db_url=str(store.db_engine.url.render_as_string(hide_password=False)), db_schema=store.db_schema
-        )
-        worker.store = store
-    original = store._get_table
-
-    def broken(*args, **kwargs):
-        if kwargs.get("table_type") == "jobs":
-            raise RuntimeError("Injected job read failure")
-        return original(*args, **kwargs)
-
-    try:
-        monkeypatch.setattr(store, "_get_table", AsyncMock(side_effect=broken) if async_queue else broken)
-        response = await client.post("/company/tasks/" + task["id"] + "/runs")
-        assert response.status_code == 503 and "queue is unavailable" in response.text, response.text
-        assert (await _call(db, "get_task", task["id"]))["status"] == "ready"
-    finally:
-        if async_queue:
-            await store.close()
-
-
-@pytest.mark.asyncio
-async def test_untagged_live_job_blocks_named_deployment(sandbox_system):
-    client, db, worker, _, _ = sandbox_system
-    first = await engineering_task(client, db)
-    second = await engineering_task(client, db)
-    response = await client.post("/company/tasks/" + first["id"] + "/runs")
-    assert response.status_code == 202, response.text
-    worker.config.deployment_id = "new-deployment"
-    job = await worker.store.claim_job(
-        worker.worker_id, worker.config.lock_grace_seconds, deployment_id="new-deployment"
-    )
-    assert job["id"] == response.json()["run_id"] and job["deployment_id"] is None
-    blocked = await client.post("/company/tasks/" + second["id"] + "/runs")
-    assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
-
-
-@pytest.mark.asyncio
-async def test_contention_is_quiet_for_automatic_pickup(sandbox_system, system):  # noqa: F811
-    from agno.company.routines import _AutomationSkip
-    from tests.integration.db.test_company_execution_parity import automation
-
-    client, db, worker, _, _ = sandbox_system
-    first = await engineering_task(client, db)
-    second = await engineering_task(client, db)
-    assert (await client.post("/company/tasks/" + first["id"] + "/runs")).status_code == 202
-    executor, _ = await automation(system)
-    for _ in range(2):
-        with pytest.raises(_AutomationSkip, match="still active"):
-            await executor._dispatch(await _call(db, "get_task", second["id"]))
-    assert (await worker.store.list_jobs())[1] == 1
 
 
 @pytest.mark.asyncio
@@ -301,9 +238,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
     failed = await _call(db, "get_task", task["id"])
     assert failed["result"]["status"] == "ERROR"
     assert (await worker.store.get_job(job["id"]))["status"] == "completed"
-    source = await client.post(
-        "/company/sources", json={"product_id": task["product_id"], "type": "git", "reference": URL}
-    )
+    source = await client.post("/company/sources", json={"goal_id": task["goal_id"], "type": "git", "reference": URL})
     assert source.status_code == 201
     response = await client.post(path + "/runs", json={"attempt": 2})
     assert response.status_code == 202, response.text
@@ -326,7 +261,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
         "create_source",
         {
             "id": "other-repo",
-            "product_id": task["product_id"],
+            "goal_id": task["goal_id"],
             "type": "git",
             "reference": agent.repository.url,
             "created_at": 1,
@@ -339,64 +274,6 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
     assert refused.status_code == 409 and "already pinned" in refused.text, refused.text
     assert (await _call(db, "get_task", task["id"]))["metadata"] == completed["metadata"]
     agent.repository = original
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("first_deployment", [None, "named-deployment"])
-async def test_overlapping_deployments_serialize_concurrent_starts(sandbox_system, monkeypatch, first_deployment):
-    import asyncio
-
-    from httpx import ASGITransport, AsyncClient
-
-    from agno.os import AgentOS, CompanyConfig
-    from agno.os.job_queue import QueueWorker, resolve_queue_store
-
-    client, db, worker, _, agent = sandbox_system
-    first = await engineering_task(client, db)
-    second = await engineering_task(client, db)
-    worker.config.deployment_id = first_deployment
-    config = QueueConfig(
-        durable=True,
-        db=worker.config.db,
-        redis="redis://localhost:6379/0",
-        max_attempts=1,
-        deployment_id=None if first_deployment else "named-deployment",
-    )
-    replica = AgentOS(db=db, agents=[agent], company=CompanyConfig(), queue=config, telemetry=False)
-    app = replica.get_app()
-    replica_worker = QueueWorker(
-        resolve_queue_store(config, db),
-        lambda kind, id, scope=None: agent if id == agent.id else None,
-        config,
-        authorization_app=app,
-    )
-    replica_worker._company_db = db
-    app.state.queue_worker = replica_worker
-    scanned = asyncio.Event()
-    release = asyncio.Event()
-    original = worker.store.list_jobs
-
-    async def hold_snapshot(*args, **kwargs):
-        result = await original(*args, **kwargs)
-        scanned.set()
-        await release.wait()
-        return result
-
-    monkeypatch.setattr(worker.store, "list_jobs", hold_snapshot)
-    pending = asyncio.create_task(client.post("/company/tasks/" + first["id"] + "/runs"))
-    try:
-        await asyncio.wait_for(scanned.wait(), 10)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://replica") as other:
-            response = await asyncio.wait_for(other.post("/company/tasks/" + second["id"] + "/runs"), 10)
-    finally:
-        release.set()
-        started = await pending
-    assert started.status_code == 202, started.text
-    assert response.status_code == 409, response.text
-    job = await worker.store.claim_job(worker.worker_id, deployment_id="named-deployment")
-    assert job["id"] == started.json()["run_id"] and job["status"] == "running"
-    assert await worker.store.claim_job(worker.worker_id, deployment_id="named-deployment") is None
-    assert (await _call(db, "get_task", second["id"]))["status"] == "ready"
 
 
 @pytest.mark.asyncio
@@ -452,7 +329,7 @@ async def test_recovery_projects_and_verifies_checkout(sandbox_system, monkeypat
     saved = await _call(db, "get_task", task["id"])
     assert saved["metadata"]["checkout"] == checkout
     assert saved["result"]["status"] == ("COMPLETED" if second_pin == "same" else "ERROR")
-    assert saved["status"] == ("in_review" if second_pin == "same" else "in_progress")
+    assert saved["status"] == "in_review"
     if second_pin != "same":
         assert "repository pin" in saved["result"]["content"]
     # A stale recovery observation cannot replace a settled result or its pin.

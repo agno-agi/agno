@@ -818,14 +818,24 @@ def _has_async_db(team: "Team") -> bool:
 
 def _resolve_models(team: "Team") -> None:
     """Resolve model strings to Model instances."""
+    from agno.metrics import ModelType
+
     if team.model is not None:
         team.model = get_model(team.model)
+        if team.model is not None:
+            team.model.model_type = ModelType.MODEL
     if team.reasoning_model is not None:
         team.reasoning_model = get_model(team.reasoning_model)
+        if team.reasoning_model is not None:
+            team.reasoning_model.model_type = ModelType.REASONING_MODEL
     if team.parser_model is not None:
         team.parser_model = get_model(team.parser_model)
+        if team.parser_model is not None:
+            team.parser_model.model_type = ModelType.PARSER_MODEL
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+        if team.output_model is not None:
+            team.output_model.model_type = ModelType.OUTPUT_MODEL
 
     # Follow-up slots resolve strings like the siblings but keep the instance's
     # model_type: follow-up metrics are attributed explicitly at the call site, and

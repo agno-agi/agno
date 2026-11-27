@@ -183,7 +183,9 @@ class OpenAIResponses(Model):
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
-        base_params["reasoning"] = self.reasoning or {}
+        # A copy: the writes below are derived from this request, and landing them in
+        # `self.reasoning` would make them permanent state and mutate the caller's own dict.
+        base_params["reasoning"] = dict(self.reasoning or {})
 
         if self.reasoning_effort is not None:
             base_params["reasoning"]["effort"] = self.reasoning_effort
@@ -737,15 +739,18 @@ class OpenAIResponses(Model):
                 }
                 message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-                # Ignore non-string message content
-                # because we assume that the images/audio are already added to the message
                 if message.images is not None and len(message.images) > 0:
-                    # Ignore non-string message content
-                    # because we assume that the images/audio are already added to the message
-                    if isinstance(message.content, str):
-                        message_dict["content"] = [{"type": "input_text", "text": message.content}]
-                        if message.images is not None:
-                            message_dict["content"].extend(images_to_message(images=message.images))
+                    # A non-empty content list is sent as written: its parts are taken to hold the images already.
+                    # Content that is a string, None or an empty list gets the images attached here.
+                    if isinstance(message.content, str) or not message.content:
+                        parts: List[Dict[str, Any]] = []
+                        # A message with no text gets no text part
+                        if isinstance(message.content, str):
+                            parts.append({"type": "input_text", "text": message.content})
+                        parts.extend(images_to_message(images=message.images))
+                        # Images that could not be read leave no parts, and an empty content list is not sent
+                        if parts:
+                            message_dict["content"] = parts
 
                 if message.audio is not None and len(message.audio) > 0:
                     log_warning("Audio input is currently unsupported.")
@@ -1560,5 +1565,7 @@ class OpenAIResponses(Model):
 
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
+
+        metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

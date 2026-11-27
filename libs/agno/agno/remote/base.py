@@ -9,10 +9,25 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunOutput,
+    RunOutputEvent,
+    RunPausedEvent,
+    RunStartedEvent,
+)
+from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import BaseTeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import RunStartedEvent as TeamRunStartedEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from fastapi import UploadFile
@@ -33,6 +48,14 @@ if TYPE_CHECKING:
         MetricsRefreshResponse,
         MetricsRefreshStatusResponse,
         MetricsResponse,
+        OSLatencyMetricsResponse,
+        OSMetricsRefreshResponse,
+        OSMetricsRefreshStatusResponse,
+        OSModelMetricsResponse,
+        OSRunMetricsResponse,
+        OSSessionMetricsResponse,
+        OSTokenMetricsResponse,
+        OSUserMetricsResponse,
     )
     from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
     from agno.os.schema import (
@@ -40,6 +63,7 @@ if TYPE_CHECKING:
         ConfigResponse,
         PaginatedResponse,
         RunSchema,
+        RunsPage,
         SessionSchema,
         TeamRunSchema,
         TeamSessionDetailSchema,
@@ -47,6 +71,30 @@ if TYPE_CHECKING:
         WorkflowSessionDetailSchema,
     )
     from agno.tools.component import ComponentTool
+
+
+def take_local_run_options(
+    kwargs: Dict[str, Any],
+    *,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Any]]:
+    """Remove the run options that only exist in this process from kwargs bound for a remote AgentOS.
+
+    A RunContext cannot cross the wire, so its dependencies, metadata and knowledge filters fill
+    the ones the caller left unset, as they would for a local run. Returns those three values.
+    """
+    kwargs.pop("background_tasks", None)
+    kwargs.pop("debug_mode", None)
+    run_context = kwargs.pop("run_context", None)
+    if run_context is None:
+        return dependencies, metadata, knowledge_filters
+    return (
+        dependencies if dependencies is not None else run_context.dependencies,
+        metadata if metadata is not None else run_context.metadata,
+        knowledge_filters if knowledge_filters is not None else run_context.knowledge_filters,
+    )
 
 
 @dataclass
@@ -58,6 +106,7 @@ class RemoteDb:
     memory_table_name: Optional[str] = None
     learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
+    component_metrics_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
@@ -84,7 +133,7 @@ class RemoteDb:
         knowledge_table_name = None
         memory_table_name = None
         learnings_table_name = None
-        metrics_table_name = None
+        component_metrics_table_name = None
         eval_table_name = None
         traces_table_name = None
 
@@ -106,7 +155,7 @@ class RemoteDb:
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            component_metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
 
         if config and config.evals and config.evals.dbs is not None:
             eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
@@ -123,7 +172,7 @@ class RemoteDb:
             knowledge_table_name=knowledge_table_name,
             memory_table_name=memory_table_name,
             learnings_table_name=learnings_table_name,
-            metrics_table_name=metrics_table_name,
+            component_metrics_table_name=component_metrics_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )
@@ -142,7 +191,10 @@ class RemoteDb:
 
     async def get_session_runs(
         self, session_id: str, **kwargs: Any
-    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+    ) -> Union[
+        "List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+        "RunsPage[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]",
+    ]:
         return await self.client.get_session_runs(session_id, **kwargs)
 
     async def create_session(
@@ -260,6 +312,42 @@ class RemoteDb:
 
     async def get_metrics_refresh_status(self, **kwargs: Any) -> "MetricsRefreshStatusResponse":
         return await self.client.get_metrics_refresh_status(**kwargs)
+
+    async def get_os_session_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSSessionMetricsResponse":
+        return await self.client.get_os_session_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_token_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSTokenMetricsResponse":
+        return await self.client.get_os_token_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_user_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSUserMetricsResponse":
+        return await self.client.get_os_user_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_model_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSModelMetricsResponse":
+        return await self.client.get_os_model_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_run_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSRunMetricsResponse":
+        return await self.client.get_os_run_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_latency_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSLatencyMetricsResponse":
+        return await self.client.get_os_latency_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def refresh_os_metrics(self, **kwargs: Any) -> "OSMetricsRefreshResponse":
+        return await self.client.refresh_os_metrics(**kwargs)
+
+    async def get_os_metrics_refresh_status(self, **kwargs: Any) -> "OSMetricsRefreshStatusResponse":
+        return await self.client.get_os_metrics_refresh_status(**kwargs)
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:
@@ -406,13 +494,18 @@ class BaseRemote:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
         self.protocol = protocol
         self.a2a_protocol = a2a_protocol
+        if protocol == "a2a" and a2a_protocol != "rest":
+            log_warning(
+                "The `a2a_protocol` argument is deprecated and will be removed in a future release. "
+                "The protocol is negotiated from the Agent Card instead."
+            )
         self.config_ttl: float = config_ttl
         self._cached_config = None
         self._cached_agent_card = None
@@ -481,7 +574,6 @@ class BaseRemote:
         return A2AClient(
             base_url=self.base_url,
             timeout=int(self.timeout),
-            protocol=self.a2a_protocol,
         )
 
     @property
@@ -540,10 +632,89 @@ class BaseRemote:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
 
+    async def _with_run_output(
+        self, event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]
+    ) -> AsyncIterator[Any]:
+        """Yield the remote events, then the RunOutput or TeamRunOutput a caller asked for with yield_run_output, when
+        the run completes, pauses, fails or is cancelled, as a local agent or team yields it."""
+        # The status each event that ends a run leaves it in
+        final_statuses = {
+            RunCompletedEvent: RunStatus.completed,
+            RunPausedEvent: RunStatus.paused,
+            RunErrorEvent: RunStatus.error,
+            RunCancelledEvent: RunStatus.cancelled,
+            TeamRunCompletedEvent: RunStatus.completed,
+            TeamRunPausedEvent: RunStatus.paused,
+            TeamRunErrorEvent: RunStatus.error,
+            TeamRunCancelledEvent: RunStatus.cancelled,
+        }
+        # The run's own events carry the first event's run_id; a sub-team's or member's events carry their own
+        run_id = None
+        # The model the run's own started event names, which no event that ends a run carries
+        model = model_provider = None
+        run_output: Optional[Union[RunOutput, TeamRunOutput]] = None
+        try:
+            async for event in event_stream:
+                if run_output is not None:
+                    # The run has ended: read the rest, so the remote finishes writing it
+                    if final_statuses.get(type(event)) is not None and event.run_id == run_id:
+                        # A cancelled run's tokens arrive in the completed event sent after it; the status stays
+                        metrics = getattr(event, "metrics", None)
+                        member_responses = getattr(event, "member_responses", None)
+                        if metrics is not None:
+                            run_output.metrics = metrics
+                        if member_responses and isinstance(run_output, TeamRunOutput):
+                            run_output.member_responses = member_responses
+                    continue
+                yield event
+                run_id = run_id or event.run_id
+                if isinstance(event, (RunStartedEvent, TeamRunStartedEvent)) and event.run_id == run_id:
+                    model, model_provider = event.model or None, event.model_provider or None
+                status = final_statuses.get(type(event))
+                if status is not None and event.run_id == run_id:
+                    if isinstance(event, BaseTeamRunEvent):
+                        run_output = TeamRunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            team_id=event.team_id,
+                            team_name=event.team_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=getattr(event, "tools", None),
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            member_responses=getattr(event, "member_responses", None) or [],
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+                    else:
+                        run_output = RunOutput(
+                            run_id=event.run_id,
+                            session_id=event.session_id,
+                            agent_id=event.agent_id,
+                            agent_name=event.agent_name,
+                            model=model,
+                            model_provider=model_provider,
+                            content=event.content,
+                            content_type=getattr(event, "content_type", "str"),
+                            tools=event.tools,
+                            requirements=getattr(event, "requirements", None),
+                            metrics=getattr(event, "metrics", None),
+                            metadata=getattr(event, "metadata", None),
+                            status=status,
+                        )
+            if run_output is not None:
+                yield run_output
+        finally:
+            # Close the remote stream when the caller stops reading it early
+            await event_stream.aclose()  # type: ignore[attr-defined]
+
     def get_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.
@@ -570,7 +741,7 @@ class BaseRemote:
     async def aget_agent_card(self) -> Optional["AgentCard"]:
         """Get agent card for A2A protocol agents, cached with TTL.
 
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
+        Fetches the agent card from the standard /.well-known/agent-card.json endpoint
         to populate agent metadata (name, description, etc.) for A2A agents.
 
         Returns None for non-A2A protocols or if the server doesn't support agent cards.

@@ -7,7 +7,12 @@ from urllib.parse import unquote
 
 import pytest
 
-from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, SCHEDULE_OWNER_HEADER, Schedule
+from agno.db.schemas.scheduler import (
+    COMPONENT_VERSION_METADATA_KEY,
+    SCHEDULE_OWNER_HEADER,
+    SCHEDULED_RUN_METADATA_KEY,
+    Schedule,
+)
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -466,24 +471,28 @@ class TestForwardedMetadataIsAlwaysAcceptable:
                 await executor._call_endpoint(schedule)
         return captured
 
+    # These schedules carry no saved authority, so the executor adds its mark that the run is a
+    # scheduled one. A dropped metadata leaves the mark alone.
+    MARK = {SCHEDULED_RUN_METADATA_KEY: True}
+
     @pytest.mark.asyncio
     async def test_a_json_array_metadata_is_dropped(self, executor):
-        assert "metadata" not in await self._forwarded(executor, '["tag"]')
+        assert json.loads((await self._forwarded(executor, '["tag"]'))["metadata"]) == self.MARK
 
     @pytest.mark.asyncio
     async def test_a_decoded_list_metadata_is_dropped(self, executor):
-        assert "metadata" not in await self._forwarded(executor, ["tag"])
+        assert json.loads((await self._forwarded(executor, ["tag"]))["metadata"]) == self.MARK
 
     @pytest.mark.asyncio
     async def test_a_scalar_metadata_is_dropped(self, executor):
-        assert "metadata" not in await self._forwarded(executor, "hello")
+        assert json.loads((await self._forwarded(executor, "hello"))["metadata"]) == self.MARK
 
     @pytest.mark.asyncio
     async def test_an_object_metadata_still_rides(self, executor):
         forwarded = await self._forwarded(executor, {"team": "growth"})
-        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
+        assert json.loads(forwarded["metadata"]) == {"team": "growth", **self.MARK}
 
     @pytest.mark.asyncio
     async def test_the_reserved_version_key_is_still_stripped(self, executor):
         forwarded = await self._forwarded(executor, {"team": "growth", COMPONENT_VERSION_METADATA_KEY: 7})
-        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
+        assert json.loads(forwarded["metadata"]) == {"team": "growth", **self.MARK}

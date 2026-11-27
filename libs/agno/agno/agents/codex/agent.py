@@ -1,13 +1,14 @@
 import asyncio
 import json
 import os
+import re
 import warnings
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
@@ -55,6 +56,13 @@ def _sdk() -> Any:
 
 
 # Accept the CLI spellings as well as the SDK enum names for the sandbox setting.
+_ACCESS_TOKEN_REFUSED = (
+    "The Codex access token (CODEX_ACCESS_TOKEN) was refused or has expired; create a new one on the "
+    "ChatGPT Enterprise workspace's Access tokens page. No API key was used."
+)
+# Stands for "read OPENAI_API_KEY from the environment" where None means "use no API key".
+_FROM_ENV: Any = object()
+
 _SANDBOX_ALIASES: Dict[str, str] = {
     "read_only": "read-only",
     "readonly": "read-only",
@@ -177,7 +185,12 @@ class CodexAgent(BaseExternalAgent):
         instructions: Developer instructions appended to the Codex system prompt.
         base_instructions: Replaces the Codex built-in system prompt entirely.
         sandbox_mode: "read-only", "workspace-write" or "full-access". Defaults to the Codex default.
-        approval_mode: "auto_review" or "deny_all" for escalated permission requests.
+        approval_mode: Native SDK "auto_review" or "deny_all" behavior, when explicitly selected.
+        approval_policy: Native Codex policy: "on-request", "untrusted", or "never".
+            With a database, a request for user review pauses the run for confirmation in the chat.
+        hitl_timeout: Seconds a permission request waits for confirmation in the chat, and a
+            continuation client waits (default 900).
+            Also bounds cumulative human waiting within a queued or sandboxed run.
         reasoning_effort: "minimal", "low", "medium", "high" or "xhigh".
         cwd: Working directory for the agent.
         keep_uploads: Keep files attached to a run under cwd/.agno/uploads/<run_id>/ after the run.
@@ -194,6 +207,18 @@ class CodexAgent(BaseExternalAgent):
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
         env: Environment variables for the Codex process. OPENAI_API_KEY automatically
             authenticates API-key sessions; existing non-API-key logins are preserved.
+        auth_json: Run on a ChatGPT subscription instead of an API key, signed in with the ChatGPT
+            sign-in (`auth.json`): the contents of the auth.json that `codex login` writes, as
+            text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
+            because Codex replaces its tokens as it works. The agent then never uses
+            OPENAI_API_KEY and runs one piece of work at a time: a run the durable queue owns
+            waits its turn, any other is refused with AgentBusyError. The refreshed sign-in is
+            saved, encrypted, in the agent's database after every run.
+        access_token: Run on a ChatGPT Enterprise workspace instead of an API key: a Codex access
+            token created on the workspace's Access tokens page, given to Codex as
+            CODEX_ACCESS_TOKEN. The agent then never uses OPENAI_API_KEY. Codex does not replace
+            this token, so the agent is not limited to one piece of work at a time and nothing
+            is stored. Cannot be combined with auth_json.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -241,6 +266,7 @@ class CodexAgent(BaseExternalAgent):
     keep_uploads: bool = False
     sandbox_mode: Optional[str] = None
     approval_mode: Optional[str] = None
+    approval_policy: Optional[str] = None
     ephemeral: Optional[bool] = None
     # Native runtime configuration
     client_options: Optional["CodexConfig"] = None
@@ -249,12 +275,26 @@ class CodexAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
+    # The ChatGPT sign-in (auth.json), one way to run on a subscription; never shown, stored as a component config or sent to a sandbox as configuration.
+    auth_json: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
+    # A ChatGPT Enterprise Codex access token, the other way to run on a subscription; handled like auth_json.
+    access_token: Optional[str] = field(default=None, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     _supports_output_schema: ClassVar[bool] = True
     _sdk_name: ClassVar[str] = "codex"
     _sandbox_runtime: ClassVar[Optional[str]] = "codex"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "client_options": "native CodexConfig describes the host process; configure it on the serving AgentOS",
+        "codex_bin": "a host path; configure it on the serving AgentOS",
+        "env": "process credentials; set them in the serving environment",
+        "auth_json": "a credential; set it on the agent in the serving AgentOS's code",
+        "access_token": "a credential; set it on the agent in the serving AgentOS's code",
+    }
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
+    _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
     # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
 
@@ -272,6 +312,11 @@ class CodexAgent(BaseExternalAgent):
                 stacklevel=4,
             )
             self.sandbox_mode, self.sandbox = legacy_mode, None
+        if self.auth_json is not None and self.access_token is not None:
+            raise ValueError(
+                "CodexAgent takes auth_json (a ChatGPT sign-in) or access_token (a ChatGPT Enterprise "
+                "Codex access token), not both. Remove one."
+            )
         super().__post_init__()
         self._validate_options()
         if self._effective_model()[0] is None:
@@ -286,6 +331,34 @@ class CodexAgent(BaseExternalAgent):
                     DeprecationWarning,
                     stacklevel=3,
                 )
+
+    def _native_approval_settings(self) -> Tuple[str, str]:
+        thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
+        turn = self.turn_options if self.turn_options is not None else self.turn_kwargs
+        mode = self.approval_mode or turn.get("approval_mode") or thread.get("approval_mode")
+        config = self.config if self.config is not None else thread.get("config") or {}
+        policy = self.approval_policy or config.get("approval_policy")
+        reviewer = config.get("approvals_reviewer", "user")
+        if mode is not None:
+            if mode not in ("auto_review", "deny_all"):
+                raise ValueError("Codex approval_mode must be 'auto_review' or 'deny_all'")
+            if policy is not None:
+                raise ValueError("Use Codex approval_policy or approval_mode, not both")
+            policy = "never" if mode == "deny_all" else "on-request"
+            reviewer = "auto_review" if mode == "auto_review" else reviewer
+        policy = policy or "on-request"
+        if policy not in ("on-request", "untrusted", "never"):
+            raise ValueError("Unsupported native Codex approval_policy")
+        if reviewer not in ("user", "auto_review"):
+            raise ValueError("Unsupported native Codex approvals_reviewer")
+        return policy, reviewer
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        if self.db is None:
+            return False
+        policy, reviewer = self._native_approval_settings()
+        return policy != "never" and reviewer == "user"
 
     def _validate_options(self) -> None:
         for name, schema in (("thread", ThreadOptions), ("turn", TurnOptions)):
@@ -305,6 +378,67 @@ class CodexAgent(BaseExternalAgent):
                 "CodexAgent input must be a string. Native Codex input objects are not supported; "
                 "use the native SDK for images, skills or external tool messages."
             )
+
+    def acontinue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Deliver reviewed native permissions to the existing execution."""
+        from agno.agents._hitl import continue_run
+
+        if not self._uses_native_hitl:
+            raise ValueError("Codex continuation requires a pending native request")
+        return continue_run(self, run_response, **kwargs)
+
+    def continue_run(self, run_response: Any = None, **kwargs: Any) -> Any:
+        """Synchronous native permission continuation."""
+        from agno.agents._hitl import sync_events
+
+        continuation = self.acontinue_run(run_response, **kwargs)
+        return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
+
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
+        if self.access_token is not None:
+            return {"CODEX_ACCESS_TOKEN": self.access_token.strip()}
+        return {} if self.auth_json is not None else None
+
+    def _check_subscription(self) -> None:
+        if self.auth_json is not None:
+            from agno.agents.codex._subscription import check
+
+            check(self)
+        if self.access_token is not None and not self.access_token.strip():
+            raise ValueError(
+                f"{self.get_id()} is set to run on a ChatGPT Enterprise workspace, but its Codex access token "
+                "is empty. Create one on the workspace's Access tokens page. OPENAI_API_KEY was not used."
+            )
+
+    def _signed_in_with_access_token(self) -> bool:
+        """Whether Codex has only an access token to sign in with, here or inside a sandbox."""
+        if self.access_token is not None:
+            return True
+        return bool(os.environ.get("CODEX_ACCESS_TOKEN")) and not os.environ.get("OPENAI_API_KEY")
+
+    def _turn_failure(self, error: Any) -> str:
+        """The message of a failed turn, saying so when it was the access token that was refused."""
+        text = f"Codex turn failed: {error}"
+        if self._signed_in_with_access_token() and re.search(r"\b401\b|unauthori[sz]ed", text, re.IGNORECASE):
+            return f"{text.rstrip('. ')}. {_ACCESS_TOKEN_REFUSED}"
+        return text
+
+    def _sandbox_login(self) -> Any:
+        if self.auth_json is None:
+            return None
+        from agno.agents.codex._subscription import SandboxLogin
+
+        return SandboxLogin(self)
+
+    @asynccontextmanager
+    async def _asubscription_slot(self) -> AsyncIterator[None]:
+        if self.auth_json is None:
+            yield
+            return
+        from agno.agents.codex._subscription import one_at_a_time
+
+        async with one_at_a_time(self):
+            yield
 
     def _refuse_host_operation(self, operation: str) -> None:
         if self.sandbox is not None:
@@ -361,7 +495,7 @@ class CodexAgent(BaseExternalAgent):
         if not thread_id:
             return False
         self._check_no_run_in_flight(session, session_id)
-        async with self._new_client() as codex:
+        async with self._asubscription_slot(), self._new_client() as codex:
             # Resume through the high-level client: it translates the adapter's options
             # (sandbox names, approval mode, instructions) into the wire parameters that the
             # low-level thread_resume would otherwise send verbatim.
@@ -453,11 +587,58 @@ class CodexAgent(BaseExternalAgent):
     @asynccontextmanager
     async def _new_client(self) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
-        client bound to the current event loop."""
+        client bound to the current event loop.
+
+        An agent on a ChatGPT subscription must hold its slot (_asubscription_slot) around this: a run takes it
+        before it starts, so only one client uses the login at a time."""
+        subscription = self._subscription_env()
+        if subscription is None:
+            async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
+                yield codex
+            return
+        from agno.agents.codex._subscription import home, host_login
+
+        self._check_subscription()
         sdk = _sdk()
         config = self._codex_config(sdk)
-        api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-        async with sdk.AsyncCodex(config) as codex:
+        codex_home = home(self, config.env)
+        # The app-server inherits this process's environment: blank the API keys, and give the
+        # agent a CODEX_HOME of its own, so no other sign-in on this host is used or replaced.
+        config.env = {
+            **(config.env or {}),
+            **{name: "" for name in self._subscription_blocked_env},
+            **subscription,
+            "CODEX_HOME": str(codex_home),
+        }
+        # A sign-in is kept in a file there, never in the operating system's keyring.
+        config.config_overrides = (*config.config_overrides, 'cli_auth_credentials_store="file"')
+        if self.auth_json is None:
+            # The access token is the whole credential: nothing to write before or save after.
+            codex_home.mkdir(parents=True, exist_ok=True)
+            async with self._open_client(sdk, config, api_key=None) as codex:
+                yield codex
+            return
+        async with host_login(self, codex_home):
+            async with self._open_client(sdk, config, api_key=None) as codex:
+                yield codex
+
+    @asynccontextmanager
+    async def _open_client(self, sdk: Any, config: Any, api_key: Any = _FROM_ENV) -> AsyncIterator[Any]:
+        if api_key is _FROM_ENV:
+            api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+        thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
+        native_config = self.config if self.config is not None else thread.get("config") or {}
+        policy = self.approval_policy or native_config.get("approval_policy")
+        if self._uses_native_hitl or (policy is not None and policy != "never"):
+            from agno.agents._hitl import active_bridge
+            from agno.agents.codex._hitl import human_client
+
+            client = human_client(
+                config, active_bridge(), approval_policy=policy, reviewer=self._native_approval_settings()[1]
+            )
+        else:
+            client = sdk.AsyncCodex(config)
+        async with client as codex:
             if api_key:
                 # The app-server inherits the environment but requires an explicit login.
                 # Keep a user's ChatGPT or other non-API-key account, as sandbox runs do.
@@ -550,6 +731,8 @@ class CodexAgent(BaseExternalAgent):
             options["sandbox"] = self._to_sandbox(sdk, options["sandbox"])
         if "approval_mode" in options:
             options["approval_mode"] = self._to_approval_mode(sdk, options["approval_mode"])
+        if self._native_approval_settings()[0] == "never":
+            options["approval_mode"] = self._to_approval_mode(sdk, "deny_all")
 
     def _turn_kwargs(self, sdk: Any, output_schema: Optional[Any] = None) -> Dict[str, Any]:
         self._validate_options()
@@ -772,7 +955,7 @@ class CodexAgent(BaseExternalAgent):
             if result.status == "failed":
                 # The tools that completed are already in run_state for the base class to keep.
                 raise CodexTurnError(
-                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    self._turn_failure(getattr(result.error, "message", None) or result.error),
                     _error_info(result.error),
                 )
 
@@ -900,7 +1083,7 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
-            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
+            raise CodexTurnError(self._turn_failure(state.error), state.error_info)
         metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
         if metrics is not None:
             yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)

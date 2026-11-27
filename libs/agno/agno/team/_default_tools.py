@@ -70,6 +70,7 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
     get_run_response_kwarg,
@@ -89,6 +90,7 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_session_id,
 )
 from agno.utils.timer import Timer
 
@@ -134,7 +136,9 @@ async def _acascading_cancel_run(run_id: str) -> bool:
     return await _team_acancel_run(run_id)
 
 
-def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def _get_update_user_memory_function(
+    team: "Team", user_id: Optional[str] = None, run_response: Optional[TeamRunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """
         Use this function to submit a task to modify the Agent's memory.
@@ -148,7 +152,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = team.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = team.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     async def aupdate_user_memory(task: str) -> str:
@@ -164,7 +170,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = await team.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await team.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:
@@ -178,7 +186,7 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
 def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: bool = False):
     def get_chat_history(num_chats: Optional[int] = None) -> str:
         """
-        Use this function to get the team chat history in reverse chronological order.
+        Use this function to get the team chat history, oldest first.
         Leave the num_chats parameter blank to get the entire chat history.
         Example:
             - To get the last chat, use num_chats=1
@@ -187,29 +195,17 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
 
         Args:
             num_chats: The number of chats to return.
-                Each chat contains 2 messages. One from the team and one from the user.
+                Each chat contains 2 messages. One from the user and one from the team.
                 Default: None
 
         Returns:
             str: A JSON string containing a list of dictionaries representing the team chat history.
         """
-        import json
-
-        all_chats = session.get_messages(team_id=team.id)
-
-        if len(all_chats) == 0:
-            return ""
-
-        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats, team_id=team.id)
 
     async def aget_chat_history(num_chats: Optional[int] = None) -> str:
         """
-        Use this function to get the team chat history in reverse chronological order.
+        Use this function to get the team chat history, oldest first.
         Leave the num_chats parameter blank to get the entire chat history.
         Example:
             - To get the last chat, use num_chats=1
@@ -218,25 +214,13 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
 
         Args:
             num_chats: The number of chats to return.
-                Each chat contains 2 messages. One from the team and one from the user.
+                Each chat contains 2 messages. One from the user and one from the team.
                 Default: None
 
         Returns:
             str: A JSON string containing a list of dictionaries representing the team chat history.
         """
-        import json
-
-        all_chats = session.get_messages(team_id=team.id)
-
-        if len(all_chats) == 0:
-            return ""
-
-        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats, team_id=team.id)
 
     if async_mode:
         get_chat_history_func = aget_chat_history
@@ -736,8 +720,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -797,8 +781,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -922,8 +906,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -983,8 +967,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1092,8 +1076,8 @@ def _get_delegate_task_function(
                     member_agent_run_response_stream = member_agent.run(
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
@@ -1156,8 +1140,8 @@ def _get_delegate_task_function(
                     member_agent_run_response = member_agent.run(  # type: ignore
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
@@ -1267,7 +1251,7 @@ def _get_delegate_task_function(
                 member_stream = agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1401,8 +1385,8 @@ def _get_delegate_task_function(
                         member_agent_run_response = await member_agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
-                            # All members have the same session_id
-                            session_id=session.session_id,
+                            # Local members share the team's session_id; a remote member keeps its own
+                            session_id=get_member_session_id(member_agent, session.session_id),
                             session_state=member_session_state_copy,  # Send a copy to the agent
                             images=images,
                             videos=videos,

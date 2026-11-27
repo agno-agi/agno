@@ -20,16 +20,21 @@ if __name__ == "__main__":
         db = SqliteDb(db_file=directory + "/company.db")
         writer = Agent(id="writer", db=db)
         manager = CompanyManager(db, registry=Registry(agents=[writer]))
-        product = manager.create(name="SDK", user_id="alice")
-        project = manager.create_project(product_id=product["id"], name="Release")
+        goal = manager.create(name="SDK", user_id="alice")
+        project = manager.create_project(goal_id=goal["id"], name="Release")
+        manager.transition_project(
+            project_id=project["id"],
+            target="active",
+            reason="Human approved Project scope",
+        )
         first = manager.create_task(
-            product_id=product["id"],
+            goal_id=goal["id"],
             title="Ship release",
             project_id=project["id"],
             user_id="alice",
         )
         manager.create_task(
-            product_id=product["id"],
+            goal_id=goal["id"],
             title="Plan next release",
             project_id=project["id"],
             user_id="bob",

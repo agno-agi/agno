@@ -110,6 +110,20 @@ class TestContract:
         claimed = db.claim_job("w1")
         assert db.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom") == "failed"
 
+    def test_release_hands_back_the_claim_and_its_attempt(self, db):
+        db.enqueue_job(make_job("r1"))  # max_attempts=1
+        claimed = db.claim_job("w1")
+        assert not db.release_job("r1", "other-worker", claimed["attempt"])
+        assert db.release_job("r1", "w1", claimed["attempt"])
+        job = db.get_job("r1")
+        assert job["status"] == "queued" and job["attempt"] == 0
+        assert db.redis_client.zscore(db._q_key("running"), "r1") is None
+
+        # The one execution the ticket allows is still there.
+        claimed = db.claim_job("w1")
+        assert claimed["id"] == "r1" and claimed["attempt"] == 1
+        assert db.complete_job("r1", "w1", 1, "completed")
+
     def test_sweep_acquire_races_heartbeat(self, db):
         db.enqueue_job(make_job("r1"))
         db.claim_job("w1")

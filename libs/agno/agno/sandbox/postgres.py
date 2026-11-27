@@ -28,10 +28,15 @@ try:
     from sqlalchemy.dialects.postgresql import insert
     from sqlalchemy.engine import Connection
     from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import Session
 except ImportError:
     raise ImportError("Sandbox coordination requires sqlalchemy and a PostgreSQL driver")
 
 _T = TypeVar("_T")
+
+# The connection info key of the created_at of each run a transaction wrote, whose metrics days it reopens
+_METRICS_CREATED_ATS = "metrics_created_ats"
 
 # Service run statuses no sandbox turn may reopen or overwrite. REGENERATED marks a
 # completed run superseded by /continue?regenerate=true.
@@ -273,17 +278,38 @@ class _SandboxStore:
 
             async def transact_async() -> _T:
                 async with db.db_engine.begin() as connection:
-                    return await connection.run_sync(operation)
+                    try:
+                        result = await connection.run_sync(operation)
+                        created_ats = connection.info.get(_METRICS_CREATED_ATS)
+                        if created_ats:
+                            async with AsyncSession(bind=connection) as sess:
+                                await db._reopen_metrics_days(sess, created_ats)
+                        return result
+                    finally:
+                        connection.info.pop(_METRICS_CREATED_ATS, None)
 
             # A cancellation that lands while the commit is in flight would hide whether it happened.
             return await _settled(transact_async(), undo)
 
         def transact() -> _T:
             with db.db_engine.begin() as connection:
-                return operation(connection)
+                try:
+                    result = operation(connection)
+                    created_ats = connection.info.get(_METRICS_CREATED_ATS)
+                    if created_ats:
+                        with Session(bind=connection) as sess:
+                            db._reopen_metrics_days(sess, created_ats)
+                    return result
+                finally:
+                    connection.info.pop(_METRICS_CREATED_ATS, None)
 
         # Cancelling to_thread leaves the thread running; wait so a cancelled call never commits later.
         return await _settled(asyncio.to_thread(transact), undo)
+
+    @staticmethod
+    def _queue_metrics_reopen(connection: Connection, created_at: Optional[int]) -> None:
+        """Queue the day a run write changed, for _transaction to reopen."""
+        connection.info.setdefault(_METRICS_CREATED_ATS, []).append(created_at)
 
     @staticmethod
     def _json(value: Any) -> Any:
@@ -515,6 +541,7 @@ class _SandboxStore:
                     .where(self.runs.c.run_id == run_id)
                     .values(status="RUNNING", run_data=self._json(reopened), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, run["created_at"])
             elif not active and str(run["status"]).upper() in _FINISHED:
                 raise SandboxRunFinished(dict(run["run_data"]))
             if not active and str(run["status"]).upper() == "PAUSED":
@@ -562,6 +589,7 @@ class _SandboxStore:
                     generation=record["generation"] if warm else record["generation"] + 1,
                     computer=record["computer"] if warm else None,
                     computer_stopped=False,
+                    restoring=None,
                     stopped_ref=None,
                     stop_status=None,
                     stop_reason=None,
@@ -720,7 +748,11 @@ class _SandboxStore:
     def stage_result(self, lease: SandboxLease, result: Dict[str, Any]) -> SandboxState:
         return self._sync(self.astage_result, lease, result)
 
-    async def astage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
+    async def astage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        """Record a captured checkpoint for the commit; ``identity`` is the binding its manifest holds."""
+
         def stage(connection: Connection) -> SandboxState:
             row = self._locked(connection, lease)
             record = dict(row["record"])
@@ -730,12 +762,16 @@ class _SandboxStore:
             if record.get("staged_checkpoint") is not None and record["staged_checkpoint"] != value:
                 raise SandboxError("A staged checkpoint is immutable; reconcile its acknowledgement")
             record["staged_checkpoint"] = value
+            if identity is not None:
+                record["staged_identity"] = identity
             return self._write_record(connection, lease, record)
 
         return await self._transaction(stage)
 
-    def stage_checkpoint(self, lease: SandboxLease, checkpoint: CheckpointRef) -> SandboxState:
-        return self._sync(self.astage_checkpoint, lease, checkpoint)
+    def stage_checkpoint(
+        self, lease: SandboxLease, checkpoint: CheckpointRef, *, identity: Optional[Dict[str, Any]] = None
+    ) -> SandboxState:
+        return self._sync(self.astage_checkpoint, lease, checkpoint, identity=identity)
 
     async def aconfirm_stopped(self, lease: SandboxLease, provider_ref: str) -> SandboxState:
         """Record provider-confirmed shutdown, never a caller's assumption after a timeout."""
@@ -823,6 +859,7 @@ class _SandboxStore:
                     **({"repository": result["repository"]} if result.get("repository") is not None else {}),
                 },
             }
+            self._retire_native_hitl(run)
             session_data = dict(session["session_data"] or {})
             session_data["sandbox"] = {
                 "native": result["session"].get("session_data") or {},
@@ -835,6 +872,7 @@ class _SandboxStore:
                 .where(self.runs.c.run_id == lease.run_id)
                 .values(status=run["status"], run_data=self._json(run), updated_at=int(time.time()))
             )
+            self._queue_metrics_reopen(connection, previous_run["created_at"])
             connection.execute(
                 update(self.sessions)
                 .where(self.sessions.c.session_id == lease.session_id)
@@ -947,11 +985,13 @@ class _SandboxStore:
                     "retryable": record.get("stop_retryable", False),
                     "sandbox": sandbox,
                 }
+                self._retire_native_hitl(run)
                 connection.execute(
                     update(self.runs)
                     .where(self.runs.c.run_id == lease.run_id)
                     .values(status=run["status"], run_data=self._json(run), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, previous_run["created_at"])
                 if record.get("stop_retryable"):
                     # Lets the queue's next attempt of this run reopen it.
                     record["retryable_failure"] = {"run_id": lease.run_id, "queue_attempt": lease.queue_attempt}
@@ -1041,6 +1081,79 @@ class _SandboxStore:
             )
             .on_conflict_do_nothing()
         )
+
+    @staticmethod
+    def _retire_native_hitl(run: Dict[str, Any]) -> None:
+        """A finished or stopped turn leaves no native permission request pending."""
+        from agno.agents._hitl import KEY
+
+        native = (run.get("metadata") or {}).get(KEY)
+        if native is None:
+            return
+        run["metadata"][KEY] = {**native, "pending": []}
+        run["requirements"] = []
+
+    async def _anative_hitl_event(self, lease: SandboxLease, event: Dict[str, Any]) -> None:
+        """Record a native permission request, or its answer, on the run under execution fencing.
+
+        The paused run is what the chat confirms and what a continuation decides; the decision lands on
+        the same row, which the coordinator reads to deliver it to the runtime.
+        """
+        from agno.agents._hitl import KEY
+
+        def publish(connection: Connection) -> None:
+            binding = self._locked(connection, lease)
+            service, _ = self._service_run(connection, lease)
+            if str(service["status"]).upper() in _FINISHED:
+                raise SandboxLeaseLost("Native execution already finished")
+            run = dict(service["run_data"])
+            metadata = dict(run.get("metadata") or {})
+            state = dict(metadata.get(KEY) or {})
+            requests = dict(state.get("requests") or {})
+            pending = list(state.get("pending") or [])
+            decisions = dict(state.get("decisions") or {})
+            requirements = {
+                r["tool_execution"]["tool_call_id"]: r for r in run.get("requirements") or [] if r.get("tool_execution")
+            }
+            if event["event"] == "RunPaused":
+                request = dict(event["external_agent_request"])
+                tool_call_id = request["tool_call_id"]
+                state["owner"] = request["owner"]
+                # A reclaim replays the runtime's events: an already answered request does not pause again.
+                if tool_call_id not in decisions:
+                    requests[tool_call_id] = {
+                        "digest": request["digest"],
+                        "native": request["native"],
+                        "expires_at": request["expires_at"],
+                        "execution_id": binding["record"]["execution_id"],
+                        "generation": binding["record"]["computer"]["generation"],
+                    }
+                    if tool_call_id not in pending:
+                        pending.append(tool_call_id)
+                    requirements[tool_call_id] = request["requirement"]
+                    run["tools"] = event.get("tools") or [r["tool_execution"] for r in requirements.values()]
+                    if event.get("content") is not None:
+                        run["content"] = event["content"]
+            else:
+                tool_call_id = event.get("external_agent_request_id")
+                pending = [value for value in pending if value != tool_call_id]
+            run["requirements"] = [requirements[key] for key in pending if key in requirements]
+            state.update(requests=requests, pending=pending, decisions=decisions)
+            state["execution_id"] = binding["record"]["execution_id"]
+            metadata[KEY] = state
+            run.update(metadata=metadata, status="PAUSED" if pending else "RUNNING")
+            connection.execute(
+                self.runs.update()
+                .where(self.runs.c.run_id == lease.run_id)
+                .values(
+                    status=run["status"],
+                    run_data=self._json(run),
+                    updated_at=int(time.time()),
+                )
+            )
+            self._queue_metrics_reopen(connection, service["created_at"])
+
+        await self._transaction(publish)
 
     async def _apublish_events(self, run: Dict[str, Any], events: list[Dict[str, Any]]) -> None:
         """Attach transport indices without rewriting a committed recovery boundary."""
@@ -1158,6 +1271,7 @@ class _SandboxStore:
                     .where(self.runs.c.run_id == run_id)
                     .values(status=status, run_data=self._json(run), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, row["created_at"])
                 return RunPersistOutcome.UPDATED
             # Take over an interrupted stop without rewriting the status it already committed to.
             if record["phase"] != "stopping":
@@ -1184,6 +1298,26 @@ class _SandboxStore:
             return self._state(updated)
 
         return await self._transaction(stop)
+
+    async def acancelled_elsewhere(self, session_id: str, run_id: str) -> bool:
+        """Whether another writer cancelled this run: a cancel stop claimed on its binding, or a cancelled row.
+
+        The binding is read first because a stop claim commits before the computer is removed,
+        and the row only becomes CANCELLED after that.
+        """
+
+        def read(connection: Connection) -> bool:
+            binding = connection.execute(select(self.bindings).where(self._key(session_id))).mappings().one_or_none()
+            if (
+                binding is not None
+                and binding["run_id"] == run_id
+                and binding["record"].get("stop_status") == "CANCELLED"
+            ):
+                return True
+            status = connection.execute(select(self.runs.c.status).where(self.runs.c.run_id == run_id)).scalar()
+            return str(status).upper() == "CANCELLED"
+
+        return await self._transaction(read)
 
     async def aprepare(self, run: Dict[str, Any]) -> None:
         """Insert an accepted queued run without rewriting existing session recovery metadata."""
@@ -1265,18 +1399,21 @@ class _SandboxStore:
     ) -> Optional[Dict[str, Any]]:
         return self._sync(self.arelease_warm, session_id, agent_id=agent_id, user_id=user_id, before=before)
 
-    async def aexpired_warm(self, before: float) -> list:
-        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``."""
+    async def aexpired_warm(self, before: float, agent_ids: List[str]) -> list:
+        """Sessions whose idle binding keeps a computer whose warm window ended before ``before``.
+
+        Only those of ``agent_ids`` when it is not empty.
+        """
 
         def expired(connection: Connection) -> list:
-            rows = connection.execute(
-                select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
-                    (self.bindings.c.namespace == self.namespace)
-                    & (self.bindings.c.record["phase"].astext == "idle")
-                    & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
-                )
-            ).all()
-            return [tuple(row) for row in rows]
+            query = select(self.bindings.c.session_id, self.bindings.c.agent_id, self.bindings.c.user_id).where(
+                (self.bindings.c.namespace == self.namespace)
+                & (self.bindings.c.record["phase"].astext == "idle")
+                & (self.bindings.c.record["warm_until"].astext.cast(Float) < before)
+            )
+            if agent_ids:
+                query = query.where(self.bindings.c.agent_id.in_(agent_ids))
+            return [tuple(row) for row in connection.execute(query).all()]
 
         return await self._transaction(expired)
 

@@ -79,6 +79,7 @@ from agno.utils.response import check_if_run_cancelled
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_session_id,
 )
 
 # Terminal events emitted by a member (Agent or sub-Team); forwarded even when draining after cancel.
@@ -522,7 +523,7 @@ def _get_task_management_tools(
                 member_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -574,7 +575,7 @@ def _get_task_management_tools(
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -705,7 +706,7 @@ def _get_task_management_tools(
                 member_stream = member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -757,7 +758,7 @@ def _get_task_management_tools(
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=_images,
                     videos=_videos,
@@ -910,7 +911,7 @@ def _get_task_management_tools(
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=thread_images,
                     videos=thread_videos,
@@ -1115,7 +1116,7 @@ def _get_task_management_tools(
                 member_run_response = await member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,
                     images=task_images,
                     videos=task_videos,

@@ -16,7 +16,7 @@ from agno.models.litellm import LiteLLM
 
 openai_agent = Agent(
     model=LiteLLM(
-        id="huggingface/mistralai/Mistral-7B-Instruct-v0.2",
+        id="huggingface/openai/gpt-oss-120b",
         top_p=0.95,
     ),
     markdown=True,

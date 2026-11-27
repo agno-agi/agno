@@ -38,6 +38,10 @@ def test_init_requires_api_key():
             AntigravityTools()
 
 
+def test_default_agent_is_current_antigravity_preview():
+    assert AntigravityTools(api_key="dummy").agent == "antigravity-preview-09-2026"
+
+
 def test_init_registers_expected_tools():
     tools = AntigravityTools(api_key="dummy")
     tool_names = {f.name for f in tools.functions.values()}

@@ -11,6 +11,45 @@ PROJECT_TRANSITIONS = {
 }
 
 
+# The one Project every company has. It holds the Tasks that fit no other Project, has no Goal,
+# is always active and never finishes.
+DEFAULT_PROJECT_ID = "default"
+DEFAULT_PROJECT_NAME = "Default"
+
+_DEFAULT_PROJECT_REFUSALS = {
+    "edit": "The Default Project cannot be renamed or edited: it is the company's fixed place for Tasks that fit no other Project.",
+    "transition": "The Default Project is always active and cannot be approved, completed or cancelled: it never finishes.",
+    "archive": "The Default Project cannot be archived or deleted: Tasks that fit no other Project live in it.",
+}
+
+
+def is_default_project(project_id: Any) -> bool:
+    return project_id == DEFAULT_PROJECT_ID
+
+
+def default_project_row() -> Dict[str, Any]:
+    """The Default Project as it is first stored."""
+    return {
+        "id": DEFAULT_PROJECT_ID,
+        "goal_id": None,
+        "name": DEFAULT_PROJECT_NAME,
+        "outcome": "Tasks that fit no other Project.",
+        "target_date": None,
+        "status": "active",
+        "user_id": None,
+        "transitions": [],
+        "created_at": int(time.time()),
+        "updated_at": None,
+        "deleted_at": None,
+    }
+
+
+def refuse_default_project(project_id: Any, change: str) -> None:
+    """Raise when an edit, a transition or an archive names the Default Project."""
+    if is_default_project(project_id):
+        raise ValueError(_DEFAULT_PROJECT_REFUSALS[change])
+
+
 def validate_project_fields(fields: Dict[str, Any]) -> None:
     """Identity, acceptance and lifecycle are never descriptive edits."""
     unknown = set(fields) - {"target_date", "name", "outcome"}
@@ -36,6 +75,7 @@ def project_transition_fields(
     """Build lifecycle fields after validating a transition; callers persist atomically."""
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("A transition requires a non-empty reason")
+    refuse_default_project(existing.get("id"), "transition")
     if target not in PROJECT_TRANSITIONS.get(existing["status"], set()):
         raise ValueError(f"Invalid project transition from {existing['status']} to {target}")
     if target == "done":

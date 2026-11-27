@@ -1,7 +1,7 @@
 """In-memory job queue store.
 
 Implements the same contract as the Postgres queue methods (enqueue_job,
-claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
+claim_job, heartbeat_jobs, complete_job, retry_or_fail_job, release_job,
 cancel_job, continue_job, sweep_exhausted_jobs, acquire_sweep,
 settle_swept_job, get_job, count_queued_jobs) against process memory.
 
@@ -151,6 +151,32 @@ class InMemoryQueueStore:
                 return "queued"
             job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return "failed"
+
+    async def release_job(self, job_id: str, worker_id: str, attempt: int, delay_seconds: int = 0) -> bool:
+        """Put a claimed job back in the queue as if this claim had not happened.
+
+        For a claim that could not start its run, because its agent runs one piece of work at
+        a time and had another: the attempt the claim counted is given back, so waiting for
+        the agent never spends the job's attempt budget."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if (
+                job is None
+                or job.get("locked_by") != worker_id
+                or job["attempt"] != attempt
+                or job["status"] != "running"
+            ):
+                return False
+            now = int(time.time())
+            job.update(
+                status="queued",
+                attempt=max(attempt - 1, 0),
+                locked_by=None,
+                locked_at=None,
+                available_at=now + delay_seconds,
+                updated_at=now,
+            )
+            return True
 
     async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the

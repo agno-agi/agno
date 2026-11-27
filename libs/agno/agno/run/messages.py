@@ -13,6 +13,7 @@ class RunMessages:
         system_message: The system message for this run
         user_message: The user message for this run
         extra_messages: Extra messages added after the system and user messages
+        run_input_messages: Messages given as the run input in list form, when no user_message is built
         events: Events raised while assembling these messages, for the caller
             to emit. Assembly is not a generator, so anything worth streaming
             (compaction, for one) is collected here instead of yielded.
@@ -22,6 +23,7 @@ class RunMessages:
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+    run_input_messages: Optional[List[Message]] = None
     events: List[Any] = field(default_factory=list)
 
     def get_input_messages(self) -> List[Message]:

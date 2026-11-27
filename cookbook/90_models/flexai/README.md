@@ -52,7 +52,7 @@ The endpoint reports its current catalogue, with served context lengths and pric
 - `gemma-4-31b-it`, `gpt-oss-120b`, `MiniMax-M2.7`
 
 Tool calling works on every text chat model except `PaddleOCR-VL`. Image input works on
-`DeepSeek-V4.1-Flash`, `gemma-4-26B-A4B-it`, `gemma-4-31b-it`, `GLM-5.3-Flash`, `Muse-Glimmer-30B`,
+`DeepSeek-V4.1-Flash-1017`, `gemma-4-26B-A4B-it`, `gemma-4-31b-it`, `GLM-5.3-Flash`, `Muse-Glimmer-30B`,
 `Qwen3.5-9B`, `Qwen3.6-27B-FP8`, `Qwen3.6-35B-A3B-FP8`, `Qwen3.8-27B`, `Qwen3.8-Flash-Next` and
 `Step-3.7-Flash`.
 

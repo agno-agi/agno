@@ -480,18 +480,21 @@ class StepInput:
             else:
                 input_dict = str(self.input)
 
-        previous_step_content_str: Optional[str] = None
+        previous_step_content_val: Optional[Union[str, int, float, bool]] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
-            previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
+            previous_step_content_val = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
         elif isinstance(self.previous_step_content, dict):
             import json
 
-            previous_step_content_str = json.dumps(
+            previous_step_content_val = json.dumps(
                 self.previous_step_content, indent=2, default=str, ensure_ascii=False
             )
+        elif isinstance(self.previous_step_content, (str, int, float, bool)) and not self.previous_step_content:
+            # Keep falsy scalars as is so a restored 0 or False stays falsy.
+            previous_step_content_val = self.previous_step_content
         elif self.previous_step_content:
-            previous_step_content_str = str(self.previous_step_content)
+            previous_step_content_val = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
@@ -502,7 +505,7 @@ class StepInput:
         return {
             "input": input_dict,
             "previous_step_outputs": previous_steps_dict,
-            "previous_step_content": previous_step_content_str,
+            "previous_step_content": previous_step_content_val,
             "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,

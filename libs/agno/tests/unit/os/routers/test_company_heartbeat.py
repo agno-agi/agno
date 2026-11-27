@@ -7,12 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
-from agno.company import Product
+from agno.company import Goal
 from agno.company.manager import CompanyManager
 from agno.company.routines import _RoutineAuthorization, load_routine_skills
 from agno.db.schemas.scheduler import Schedule
 from agno.db.sqlite import SqliteDb
-from agno.os import AgentOS, CompanyConfig
+from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.run_context import restore_authorization
 from agno.run.authorization import AUTHORIZATION_HEADER, authorization_scope
 from agno.scheduler.executor import ScheduleExecutor
@@ -30,9 +30,9 @@ def system(tmp_path):
 
 def test_routine_scheduler_wrappers(system):
     client, os, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
     body = dict(
-        product_id=product["id"],
+        goal_id=goal["id"],
         name="intake",
         template="intake",
         executor_type="agent",
@@ -44,15 +44,15 @@ def test_routine_scheduler_wrappers(system):
     row = response.json()
     assert row["managed_by"] == "company"
     assert row["target_id"] == "reader"
-    assert row["payload"]["metadata"] == {"product_id": product["id"], "template": "intake", "auto_accept": False}
+    assert row["payload"]["metadata"] == {"goal_id": goal["id"], "template": "intake", "auto_accept": False}
     assert row["payload"]["message"].endswith(load_routine_skills().get_skill("intake").instructions)
-    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [row["id"]]
+    assert db.get_goal(goal["id"])["metadata"]["routine_ids"] == [row["id"]]
     path = "/company/routines/" + row["id"]
     assert client.post(path + "/pause").json()["enabled"] is False
     assert client.post(path + "/resume").json()["enabled"] is True
     assert client.patch(path, json={"instructions": "Check quietly"}).status_code == 200
     message = db.get_schedule(row["id"])["payload"]["message"]
-    assert product["id"] in message and message.endswith("Check quietly")
+    assert goal["id"] in message and message.endswith("Check quietly")
     assert client.patch(path, json={"auto_accept": True}).status_code == 422
     assert client.get(path + "/runs").json()["meta"]["total_count"] == 0
     assert len(client.get("/company/routines").json()["data"]) == 1
@@ -60,16 +60,14 @@ def test_routine_scheduler_wrappers(system):
 
 def test_routine_archive_restore_and_delete(system):
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
-    body = dict(
-        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
-    )
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    body = dict(goal_id=goal["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review")
     routine_id = client.post("/company/routines", json=body).json()["id"]
     path = "/company/routines/" + routine_id
     archived = client.post(path + "/archive")
     assert archived.status_code == 200, archived.text
     assert archived.json()["deleted_at"] is not None and archived.json()["enabled"] is False
-    links = lambda: client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])  # noqa: E731
+    links = lambda: client.get("/company/goals/" + goal["id"]).json()["metadata"].get("routine_ids", [])  # noqa: E731
     assert routine_id not in links()
     assert client.get(path).status_code == 404
     assert client.post(path + "/archive").status_code == 404
@@ -83,7 +81,7 @@ def test_routine_archive_restore_and_delete(system):
     assert client.post(path + "/restore").json()["detail"] == "Routine is not archived"
     assert client.delete(path).status_code == 204
     assert client.get(path, params={"include_deleted": True}).status_code == 404
-    assert routine_id not in client.get("/company/products/" + product["id"]).json()["metadata"].get("routine_ids", [])
+    assert routine_id not in client.get("/company/goals/" + goal["id"]).json()["metadata"].get("routine_ids", [])
 
 
 def test_routine_delete_requires_admin(tmp_path):
@@ -112,9 +110,9 @@ def test_routine_delete_requires_admin(tmp_path):
     admin = headers(["agent_os:admin"])
     deleter = headers(["routines:delete", "schedules:delete"])
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", json={"name": "Docs"}, headers=admin).json()
+        goal = client.post("/company/goals", json={"name": "Docs"}, headers=admin).json()
         body = dict(
-            product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
+            goal_id=goal["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
         )
         path = "/company/routines/" + client.post("/company/routines", json=body, headers=admin).json()["id"]
         denied = client.delete(path, headers=deleter)
@@ -126,13 +124,13 @@ def test_routine_delete_requires_admin(tmp_path):
 
 
 def test_routine_cancel_stops_the_running_run(system):
+    import time
+
     from agno.run.cancel import is_cancelled
 
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
-    body = dict(
-        product_id=product["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review"
-    )
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    body = dict(goal_id=goal["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review")
     routine_id = client.post("/company/routines", json=body).json()["id"]
     path = "/company/routines/" + routine_id
     assert client.post(path + "/cancel").status_code == 409
@@ -141,17 +139,18 @@ def test_routine_cancel_stops_the_running_run(system):
             "id": "schedule-run",
             "schedule_id": routine_id,
             "attempt": 1,
-            "triggered_at": 1,
+            "triggered_at": int(time.time()),
             "status": "running",
             "run_id": "routine-run",
             "session_id": "routine-session",
-            "created_at": 1,
+            "created_at": int(time.time()),
         }
     )
+    assert client.post(path + "/archive").status_code == 409
     response = client.post(path + "/cancel")
     assert response.status_code == 200, response.text
     assert is_cancelled("routine-run")
-    # No executor is left to settle this row, so the cancel records it.
+    # The run no longer exists, so no executor is left to settle this row and the cancel records it.
     assert db.get_schedule_run("schedule-run")["status"] == "cancelled"
     response = client.post(path + "/cancel")
     assert response.status_code == 409
@@ -159,22 +158,91 @@ def test_routine_cancel_stops_the_running_run(system):
     assert client.post(path + "/archive").status_code == 200
 
 
-def test_product_metadata_edits_keep_linked_routines(system):
+def test_routine_run_past_its_deadline_stops_blocking(system):
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs", "metadata": {"team": "a"}}).json()
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    body = dict(goal_id=goal["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review")
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    db.create_schedule_run(
+        {
+            "id": "stale-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": 1,
+            "status": "running",
+            "run_id": "stale-routine-run",
+            "session_id": "routine-session",
+            "created_at": 1,
+        }
+    )
+    # The scheduler stopped waiting for this run long ago, so it blocks nothing even without a cancel.
+    assert client.patch(path, json={"executor_id": "reader"}).status_code == 200
+    assert client.post(path + "/archive").status_code == 200
+    assert client.post(path + "/restore").status_code == 200
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("stale-schedule-run")["status"] == "cancelled"
+
+
+def test_routine_cancel_leaves_a_live_run_to_its_executor(system):
+    import time
+
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.cancel import is_cancelled
+    from agno.session import AgentSession
+
+    client, _, db = system
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    body = dict(goal_id=goal["id"], name="review", executor_type="agent", executor_id="reader", instructions="Review")
+    routine_id = client.post("/company/routines", json=body).json()["id"]
+    path = "/company/routines/" + routine_id
+    now = int(time.time())
+    run = RunOutput(
+        run_id="live-routine-run", agent_id="reader", session_id="routine-session", status=RunStatus.running
+    )
+    db.upsert_session(AgentSession(session_id="routine-session", agent_id="reader"))
+    db.upsert_run(run, session_id="routine-session")
+    db.create_schedule_run(
+        {
+            "id": "live-schedule-run",
+            "schedule_id": routine_id,
+            "attempt": 1,
+            "triggered_at": now,
+            "status": "running",
+            "run_id": "live-routine-run",
+            "session_id": "routine-session",
+            "created_at": now,
+        }
+    )
+    response = client.post(path + "/cancel")
+    assert response.status_code == 200, response.text
+    assert is_cancelled("live-routine-run")
+    # The run is still executing, so the row stays running until its executor stops and records the result.
+    assert db.get_schedule_run("live-schedule-run")["status"] == "running"
+    assert client.post(path + "/archive").status_code == 409
+    run.status = RunStatus.cancelled
+    db.upsert_run(run, session_id="routine-session")
+    # Once the run has stopped, a repeated cancel records its final status.
+    assert client.post(path + "/cancel").status_code == 200
+    assert db.get_schedule_run("live-schedule-run")["status"] == "cancelled"
+    assert client.post(path + "/archive").status_code == 200
+
+
+def test_goal_metadata_edits_keep_linked_routines(system):
+    client, _, db = system
+    goal = client.post("/company/goals", json={"name": "Docs", "metadata": {"team": "a"}}).json()
     routine = client.post(
         "/company/routines",
-        json=dict(
-            product_id=product["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"
-        ),
+        json=dict(goal_id=goal["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"),
     ).json()
-    path = "/company/products/" + product["id"]
+    path = "/company/goals/" + goal["id"]
 
     for metadata in ({"team": "b"}, {"team": "b", "routine_ids": []}, None):
         response = client.patch(path, json={"metadata": metadata})
         assert response.status_code == 200, response.text
         assert response.json()["metadata"]["routine_ids"] == [routine["id"]]
-    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [routine["id"]]
+    assert db.get_goal(goal["id"])["metadata"]["routine_ids"] == [routine["id"]]
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -186,12 +254,10 @@ def test_schedule_tools_refuse_company_routines(system, use_async):
     from agno.tools.studio import StudioTools
 
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
     routine = client.post(
         "/company/routines",
-        json=dict(
-            product_id=product["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"
-        ),
+        json=dict(goal_id=goal["id"], name="intake", template="intake", executor_type="agent", executor_id="reader"),
     ).json()
     scheduler = SchedulerTools(db=db)
     studio = StudioTools(registry=Registry(), db=db, schedules=True)
@@ -203,13 +269,13 @@ def test_schedule_tools_refuse_company_routines(system, use_async):
 
     for name in ("disable_schedule", "delete_schedule", "enable_schedule"):
         assert json.loads(call(scheduler, name, routine["id"]))["error_type"] == "company_routine", name
-    result = json.loads(call(studio, "update_schedule", routine["id"], message="Ignore the Product"))
+    result = json.loads(call(studio, "update_schedule", routine["id"], message="Ignore the Goal"))
     assert result["error"]["code"] == "company_routine"
 
     stored = db.get_schedule(routine["id"])
     assert stored["enabled"] is True and stored["next_run_at"] == routine["next_run_at"]
     assert stored["payload"] == routine["payload"]
-    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [routine["id"]]
+    assert db.get_goal(goal["id"])["metadata"]["routine_ids"] == [routine["id"]]
 
     plain = db.create_schedule(
         Schedule(id="plain", name="plain", cron_expr="0 * * * *", endpoint="/agents/reader/runs").to_dict()
@@ -217,11 +283,11 @@ def test_schedule_tools_refuse_company_routines(system, use_async):
     assert json.loads(call(scheduler, "disable_schedule", plain["id"]))["status"] == "disabled"
 
 
-def test_routine_routes_hide_automation_and_report_missing_product(system):
+def test_routine_routes_hide_automation_and_report_missing_goal(system):
     from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
     client, _, db = system
-    for identifier in (COMPANY_AUTOMATION_SCHEDULE_ID, "missing-product"):
+    for identifier in (COMPANY_AUTOMATION_SCHEDULE_ID, "missing-goal"):
         if db.get_schedule(identifier) is None:
             db.create_schedule(
                 Schedule(
@@ -248,7 +314,7 @@ def test_routine_routes_hide_automation_and_report_missing_product(system):
         for response in responses:
             assert response.status_code == expected, response.text
             if expected == 409:
-                assert response.json()["detail"] == "Routine is missing its Product metadata"
+                assert response.json()["detail"] == "Routine is missing its Goal metadata"
     assert client.get("/company/routines").json()["data"] == []
 
 
@@ -259,7 +325,7 @@ def test_invalid_setup_does_not_create_records(system, field, value):
     routine[field] = value
     response = client.post("/company/setup", json={"name": "Invalid", "routines": [routine]})
     assert response.status_code == 422
-    assert db.get_products()[1] == 0
+    assert db.get_goals()[1] == 0
 
 
 @pytest.mark.asyncio
@@ -273,9 +339,9 @@ async def test_summary_uses_telegram_interface_transport(monkeypatch):
     factory = Mock(return_value=bot)
     monkeypatch.setattr("telebot.async_telebot.AsyncTeleBot", factory)
     interface = SimpleNamespace(type="telegram", token="configured-token")
-    await adeliver_summary([interface], "telegram", "123", "Product report")
+    await adeliver_summary([interface], "telegram", "123", "Goal report")
     factory.assert_called_once_with("configured-token")
-    assert bot.send_message.await_args.args[:2] == (123, "Product report")
+    assert bot.send_message.await_args.args[:2] == (123, "Goal report")
     bot.close_session.assert_awaited_once()
 
 
@@ -289,8 +355,8 @@ def test_sources_setup_restart_and_diagnostics(system, tmp_path, monkeypatch):
     }
     first = client.post("/company/setup", json=body)
     assert first.status_code == 201, first.text
-    assert client.patch("/company/products/" + first.json()["id"], json={"name": "Human edit"}).status_code == 200
-    client.post("/company/products", json={"name": "Later Product"}).raise_for_status()
+    assert client.patch("/company/goals/" + first.json()["id"], json={"name": "Human edit"}).status_code == 200
+    client.post("/company/goals", json={"name": "Later Goal"}).raise_for_status()
     second = client.post("/company/setup", json=body)
     assert second.json()["id"] == first.json()["id"]
     assert second.json()["name"] == "Human edit"
@@ -321,7 +387,7 @@ async def test_company_metadata_survives_executor_scrub(monkeypatch):
 
     monkeypatch.setattr(executor, "_get_client", AsyncMock())
     monkeypatch.setattr(executor, "_background_run", capture)
-    metadata = {"product_id": "p", "template": "intake", "auto_accept": False, "agno_component_version": 99}
+    metadata = {"goal_id": "p", "template": "intake", "auto_accept": False, "agno_component_version": 99}
     schedule = Schedule(
         id="s",
         name="test",
@@ -345,11 +411,11 @@ async def test_company_metadata_survives_executor_scrub(monkeypatch):
 def test_routine_cannot_accept(system):
     _, _, db = system
     manager = CompanyManager(db)
-    product = manager.create(name="Docs")
-    project = manager.create_project(product_id=product["id"], name="Documentation")
-    project = manager.create_project(product_id=product["id"], name="Release")
+    goal = manager.create(name="Docs")
+    project = manager.create_project(goal_id=goal["id"], name="Documentation")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
-    task = manager.create_task(product_id=product["id"], title="Draft", project_id=project["id"])
+    task = manager.create_task(goal_id=goal["id"], title="Draft", project_id=project["id"])
     with authorization_scope(lambda: _RoutineAuthorization(None)):
         with pytest.raises(PermissionError, match="cannot accept"):
             manager.transition_task(
@@ -360,19 +426,19 @@ def test_routine_cannot_accept(system):
 
 def test_yaml_and_code_rehydrate_without_reset(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "declare.db"))
-    declaration = Product(name="SDK", purpose="Maintain SDK")
-    os = AgentOS(db=db, company=CompanyConfig(products=[declaration]), telemetry=False)
+    declaration = Goal(name="SDK", objective="Maintain SDK")
+    os = AgentOS(db=db, company=CompanyConfig(goals=[declaration]), telemetry=False)
     with TestClient(os.get_app()) as client:
-        first = client.get("/company/products").json()["data"][0]
-        client.patch("/company/products/" + first["id"], json={"purpose": "Human direction"})
-    with TestClient(AgentOS(db=db, company=CompanyConfig(products=[declaration]), telemetry=False).get_app()) as client:
-        rows = client.get("/company/products").json()["data"]
+        first = client.get("/company/goals").json()["data"][0]
+        client.patch("/company/goals/" + first["id"], json={"objective": "Human direction"})
+    with TestClient(AgentOS(db=db, company=CompanyConfig(goals=[declaration]), telemetry=False).get_app()) as client:
+        rows = client.get("/company/goals").json()["data"]
         assert len(rows) == 1
-        assert rows[0]["purpose"] == "Human direction"
+        assert rows[0]["objective"] == "Human direction"
     config = tmp_path / "config.yaml"
-    config.write_text("company:\n  products:\n    - name: SDK\n      purpose: stale declaration\n")
+    config.write_text("company:\n  goals:\n    - name: SDK\n      objective: stale declaration\n")
     with TestClient(AgentOS(db=db, config=str(config), telemetry=False).get_app()) as client:
-        assert client.get("/company/products").json()["data"][0]["purpose"] == "Human direction"
+        assert client.get("/company/goals").json()["data"][0]["objective"] == "Human direction"
     db.close()
 
 
@@ -386,8 +452,8 @@ def test_sources_and_routines_need_scopes_not_ownership(tmp_path, isolation):
 
     secret = "heartbeat-isolation-secret"
     scopes = [
-        "products:read",
-        "products:write",
+        "goals:read",
+        "goals:write",
         "sources:read",
         "sources:write",
         "sources:delete",
@@ -427,14 +493,14 @@ def test_sources_and_routines_need_scopes_not_ownership(tmp_path, isolation):
         ),
     )
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", headers=headers("alice"), json={"name": "Docs"}).json()
-        body = {"product_id": product["id"], "type": "markdown", "reference": "/docs"}
-        # Any member with the Source scopes may configure a reader on any Product.
+        goal = client.post("/company/goals", headers=headers("alice"), json={"name": "Docs"}).json()
+        body = {"goal_id": goal["id"], "type": "markdown", "reference": "/docs"}
+        # Any member with the Source scopes may configure a reader on any Goal.
         assert client.post("/company/sources", headers=headers("bob"), json=body).status_code == 201
         assert client.post("/company/sources", headers=headers("alice"), json=body).status_code == 201
         assert client.get("/company/sources", headers=headers("bob", ["sources:read"])).json()["data"]
         routine = {
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "name": "intake",
             "template": "intake",
             "executor_type": "agent",
@@ -546,8 +612,8 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
         db=db,
         agents=[Agent(id="reader", telemetry=False)],
         company=CompanyConfig(
-            products=[
-                Product(
+            goals=[
+                Goal(
                     id="shared",
                     name="Shared",
                     user_id=owner,
@@ -570,7 +636,7 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
     monkeypatch.setattr(executor, "_get_client", AsyncMock())
     with TestClient(os.get_app()) as client:
         client.app.state.scheduler_executor = executor
-        routine_id = db.get_product("shared")["metadata"]["routine_ids"][0]
+        routine_id = db.get_goal("shared")["metadata"]["routine_ids"][0]
         saved = db.get_schedule(routine_id)
         # A stored creator grant must never become a manual caller's authority.
         payload = {
@@ -599,7 +665,7 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
         assert snapshot["company_routine"] is True
         assert snapshot["company_routine_unscoped"] is False
         assert db.get_schedule(routine_id) == saved
-        assert db.get_product("shared")["user_id"] == owner
+        assert db.get_goal("shared")["user_id"] == owner
 
         # Generic schedule routes cannot be used to bypass the Company wrapper.
         assert client.post("/schedules/" + routine_id + "/trigger", headers=auth).status_code in (403, 404, 409)
@@ -670,8 +736,8 @@ def test_manual_trigger_without_auth_keeps_seeded_owner(tmp_path, monkeypatch):
         db=db,
         agents=[Agent(id="reader", telemetry=False)],
         company=CompanyConfig(
-            products=[
-                Product(
+            goals=[
+                Goal(
                     id="seeded",
                     name="Seeded",
                     user_id="alice",
@@ -689,7 +755,7 @@ def test_manual_trigger_without_auth_keeps_seeded_owner(tmp_path, monkeypatch):
     monkeypatch.setattr(executor, "_get_client", AsyncMock())
     with TestClient(os.get_app()) as client:
         client.app.state.scheduler_executor = executor
-        routine_id = db.get_product("seeded")["metadata"]["routine_ids"][0]
+        routine_id = db.get_goal("seeded")["metadata"]["routine_ids"][0]
         response = client.post("/company/routines/" + routine_id + "/trigger")
         assert response.status_code == 200, response.text
         # No caller identity: the run stays attributed to the saved owner, as a scheduled run would be.
@@ -700,7 +766,7 @@ def test_manual_trigger_without_auth_keeps_seeded_owner(tmp_path, monkeypatch):
     db.close()
 
 
-def test_members_manage_products_and_routines_they_did_not_create_under_isolation(tmp_path):
+def test_members_manage_goals_and_routines_they_did_not_create_under_isolation(tmp_path):
     from datetime import datetime, timedelta, timezone
 
     import jwt
@@ -709,9 +775,9 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
 
     secret = "member-routines-isolation-secret"
     scopes = [
-        "products:read",
-        "products:write",
-        "products:delete",
+        "goals:read",
+        "goals:write",
+        "goals:delete",
         "routines:read",
         "routines:write",
         "schedules:write",
@@ -731,20 +797,20 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
         id="member-routines",
         db=db,
         agents=[Agent(id="reader", telemetry=False)],
-        company=CompanyConfig(products=[Product(id="declared", name="Declared")]),
+        company=CompanyConfig(goals=[Goal(id="declared", name="Declared")]),
         telemetry=False,
         authorization=True,
         authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=True),
     )
     body = dict(name="intake", template="intake", executor_type="agent", executor_id="reader", cron_expr="0 * * * *")
     with TestClient(os.get_app()) as client:
-        owned = client.post("/company/products", headers=headers("alice"), json={"name": "Alice's"}).json()
-        for product_id in ("declared", owned["id"]):
-            created = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": product_id})
+        owned = client.post("/company/goals", headers=headers("alice"), json={"name": "Alice's"}).json()
+        for goal_id in ("declared", owned["id"]):
+            created = client.post("/company/routines", headers=headers("bob"), json={**body, "goal_id": goal_id})
             assert created.status_code == 201, created.text
             routine = created.json()
             assert routine["user_id"] == "bob"
-            assert routine["id"] in db.get_product(product_id)["metadata"]["routine_ids"]
+            assert routine["id"] in db.get_goal(goal_id)["metadata"]["routine_ids"]
             path = "/company/routines/" + routine["id"]
             assert (
                 client.patch(path, headers=headers("bob"), json={"instructions": "Report changes"}).status_code == 200
@@ -758,18 +824,18 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
             assert edited.status_code == 200, edited.text
             assert "Alice's review" in edited.json()["payload"]["message"]
             assert edited.json()["user_id"] == "bob"
-        # Product writes need the scope, not ownership; the creator stays recorded.
-        for product_id in ("declared", owned["id"]):
-            renamed = client.patch("/company/products/" + product_id, headers=headers("bob"), json={"name": "x"})
+        # Goal writes need the scope, not ownership; the creator stays recorded.
+        for goal_id in ("declared", owned["id"]):
+            renamed = client.patch("/company/goals/" + goal_id, headers=headers("bob"), json={"name": "x"})
             assert renamed.status_code == 200, renamed.text
-        assert db.get_product(owned["id"])["user_id"] == "alice"
-        client.delete("/company/products/" + owned["id"], headers=headers("bob")).raise_for_status()
-        archived = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": owned["id"]})
+        assert db.get_goal(owned["id"])["user_id"] == "alice"
+        client.delete("/company/goals/" + owned["id"], headers=headers("bob")).raise_for_status()
+        archived = client.post("/company/routines", headers=headers("bob"), json={**body, "goal_id": owned["id"]})
         assert archived.status_code == 404
     db.close()
 
 
-@pytest.mark.parametrize("failure", ["create_schedule", "add_product_routine"])
+@pytest.mark.parametrize("failure", ["create_schedule", "add_goal_routine"])
 def test_setup_retry_repairs_partial_records_and_retains_edits(system, tmp_path, monkeypatch, failure):
     client, os, db = system
     body = dict(
@@ -804,7 +870,7 @@ def test_setup_retry_repairs_partial_records_and_retains_edits(system, tmp_path,
     assert len(schedules) == 1
     assert retry.json()["metadata"]["routine_ids"] == [schedules[0]["id"]]
     assert manager.list_sources()[1] == 0
-    if failure == "add_product_routine":
+    if failure == "add_goal_routine":
         assert schedules[0]["enabled"] is False
         assert schedules[0]["payload"]["message"] == "Human instructions"
     client.post("/company/setup", json=body).raise_for_status()
@@ -824,12 +890,12 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
 
     db = SqliteDb(db_file=str(tmp_path / "permissions.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Docs")
-    project = manager.create_project(product_id=product["id"], name="Documentation")
+    goal = manager.create(name="Docs")
+    project = manager.create_project(goal_id=goal["id"], name="Documentation")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     path = tmp_path / "page.md"
     path.write_text("Document the released API")
-    source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
+    source = manager.create_source(goal_id=goal["id"], type="markdown", reference=str(path))
     tools = CompanyTools(db)
     authority = RunAuthorization(
         _default_authorization_provider(),
@@ -848,20 +914,20 @@ async def test_source_tools_only_require_source_and_proposal_scopes(tmp_path, as
     with authorization_scope(lambda: _RoutineAuthorization(authority, "routine")):
         if async_tools:
             evidence = [
-                json.loads(await tools.aread_product_source(source["id"], path=path.name, _agno_run_context=context))
+                json.loads(await tools.aread_goal_source(source["id"], path=path.name, _agno_run_context=context))
             ]
             args["evidence_hashes"] = {item["link"]: item["content_hash"] for item in evidence}
-            task = json.loads(await tools.aintake_product_source(**args))
+            task = json.loads(await tools.aintake_goal_source(**args))
         else:
-            evidence = [json.loads(tools.read_product_source(source["id"], path=path.name, _agno_run_context=context))]
+            evidence = [json.loads(tools.read_goal_source(source["id"], path=path.name, _agno_run_context=context))]
             args["evidence_hashes"] = {item["link"]: item["content_hash"] for item in evidence}
-            task = json.loads(tools.intake_product_source(**args))
+            task = json.loads(tools.intake_goal_source(**args))
     assert evidence[0]["content_hash"] == task["evidence"][0]["content_hash"]
     assert task["status"] == "backlog"
     authority.context.scopes = ["tasks:write"]
     with authorization_scope(lambda: authority):
         with pytest.raises(PermissionError):
-            tools.read_product_source(source["id"], _agno_run_context=context)
+            tools.read_goal_source(source["id"], _agno_run_context=context)
     db.close()
 
 
@@ -875,13 +941,13 @@ def test_company_yaml_rejects_unknown_keys():
 
 
 @pytest.mark.parametrize("template", ["refresh", "intake", "summary"])
-def test_each_routine_template_targets_the_product_in_its_message(system, template):
+def test_each_routine_template_targets_the_goal_in_its_message(system, template):
     client, _, _ = system
-    product = client.post("/company/products", json={"name": "Target"}).json()
+    goal = client.post("/company/goals", json={"name": "Target"}).json()
     row = client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name=template,
             template=template,
             executor_type="agent",
@@ -889,11 +955,11 @@ def test_each_routine_template_targets_the_product_in_its_message(system, templa
             cron_expr="0 * * * *",
         ),
     ).json()
-    assert row["payload"]["metadata"]["product_id"] == product["id"]
-    assert product["id"] in row["payload"]["message"]
+    assert row["payload"]["metadata"]["goal_id"] == goal["id"]
+    assert goal["id"] in row["payload"]["message"]
     instructions = load_routine_skills().get_skill(template).instructions
-    assert "Product identified in the message" in instructions
-    assert "product_id in run metadata" not in instructions
+    assert "Goal identified in the message" in instructions
+    assert "goal_id in run metadata" not in instructions
 
 
 def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, monkeypatch):
@@ -919,38 +985,40 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
         agents=[executor],
         interfaces=[interface],
         company=CompanyConfig(model=OpenAIResponses(id="offline")),
+        manager=OSManager(model=OpenAIResponses(id="offline"), access_docs=False),
         telemetry=False,
     )
     assert toolkit.interfaces is os.interfaces
-    assert "summarize_company_product" not in os.company_manager.tools[0].functions
+    # Summary Routines run on Mini Agent; Super Agent's chat tools do not deliver summaries.
+    assert "summarize_company_goal" in os._mini_agent.tools.routine[0].functions
+    leader_tools = [tool for tool in os.manager.tools if isinstance(tool, CompanyTools)]
+    assert len(leader_tools) == 1 and "summarize_company_goal" not in leader_tools[0].functions
     delivery = AsyncMock()
     monkeypatch.setattr("agno.company.summary.adeliver_summary", delivery)
     with TestClient(os.get_app()) as client:
-        product = client.post(
-            "/company/products",
+        goal = client.post(
+            "/company/goals",
             json={"name": "Summary", "metadata": {"summary": {"interface": "slack", "destination": "configured"}}},
         ).json()
-        project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+        project = client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"}).json()
         approval = {"target": "active", "reason": "Approved"}
         client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = client.post(
-            "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Human work"}
+            "/company/tasks", json={"goal_id": goal["id"], "project_id": project["id"], "title": "Human work"}
         ).json()
         assert task["origin"] == "human" and task["routine_id"] is None and task["dedupe_key"] is None
         context = RunContext(run_id="report", session_id="session", user_id="alice")
         proposed = json.loads(
             toolkit.propose_company_task(
-                product["id"], "Proposed work", project_id=project["id"], _agno_run_context=context
+                goal["id"], "Proposed work", project_id=project["id"], _agno_run_context=context
             )
         )
         assert proposed["origin"] == "product_manager"
         result = json.loads(
-            toolkit.summarize_company_product(
-                product["id"], narrative="Two items need review.", _agno_run_context=context
-            )
+            toolkit.summarize_company_goal(goal["id"], narrative="Two items need review.", _agno_run_context=context)
         )
         assert result["delivered"] is True
-        page = CompanyManager(db).read_wiki(product["id"], "summary.md").content
+        page = CompanyManager(db).read_wiki(goal["id"], "summary.md").content
         assert "Two items need review." in page and "## What changed" in page
         assert "Two items need review." in delivery.await_args.args[3]
         assert "Company summary snapshot" not in delivery.await_args.args[3]
@@ -960,9 +1028,9 @@ def test_custom_company_tools_resolve_os_interfaces_and_human_origin(tmp_path, m
 @pytest.mark.parametrize("name", ["weekday/refresh", "x" * 240])
 def test_routine_composed_name_validation_returns_422(system, name):
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
     body = dict(
-        product_id=product["id"],
+        goal_id=goal["id"],
         name=name,
         template="refresh",
         executor_type="agent",
@@ -972,8 +1040,8 @@ def test_routine_composed_name_validation_returns_422(system, name):
     response = client.post("/company/routines", json=body)
     assert response.status_code == 422, response.text
     assert "name" in response.json()["detail"]
-    assert not (db.get_product(product["id"]).get("metadata") or {}).get("routine_ids")
-    body["name"] = "x" * (255 - len(product["id"]) - 1)
+    assert not (db.get_goal(goal["id"]).get("metadata") or {}).get("routine_ids")
+    body["name"] = "x" * (255 - len(goal["id"]) - 1)
     created = client.post("/company/routines", json=body)
     assert created.status_code == 201, created.text
     assert len(created.json()["name"]) == 255
@@ -993,7 +1061,7 @@ def test_setup_invalid_composed_name_has_no_partial_writes(system, name):
         },
     )
     assert response.status_code == 422, response.text
-    assert db.get_products()[1] == 0
+    assert db.get_goals()[1] == 0
 
 
 @pytest.mark.asyncio
@@ -1005,30 +1073,28 @@ async def test_routine_cannot_use_plain_task_proposals(tmp_path, async_tools, ro
 
     db = SqliteDb(db_file=str(tmp_path / "routine-proposals.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Docs")
-    project = manager.create_project(product_id=product["id"], name="Documentation")
+    goal = manager.create(name="Docs")
+    project = manager.create_project(goal_id=goal["id"], name="Documentation")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", authorization=_RoutineAuthorization(None, routine_id))
     for _ in range(3):
-        with pytest.raises(PermissionError, match="intake_product_source"):
+        with pytest.raises(PermissionError, match="intake_goal_source"):
             if async_tools:
                 await tools.apropose_company_task(
-                    product["id"], "Repeated", project_id=project["id"], _agno_run_context=context
+                    goal["id"], "Repeated", project_id=project["id"], _agno_run_context=context
                 )
             else:
-                tools.propose_company_task(
-                    product["id"], "Repeated", project_id=project["id"], _agno_run_context=context
-                )
+                tools.propose_company_task(goal["id"], "Repeated", project_id=project["id"], _agno_run_context=context)
     assert manager.list_tasks()[1] == 0
     context.authorization = None
     if async_tools:
         result = await tools.apropose_company_task(
-            product["id"], "Human-directed", project_id=project["id"], _agno_run_context=context
+            goal["id"], "Human-directed", project_id=project["id"], _agno_run_context=context
         )
     else:
         result = tools.propose_company_task(
-            product["id"], "Human-directed", project_id=project["id"], _agno_run_context=context
+            goal["id"], "Human-directed", project_id=project["id"], _agno_run_context=context
         )
     assert json.loads(result)["origin"] == "product_manager"
     db.close()
@@ -1099,18 +1165,18 @@ async def test_refresh_requires_routine_and_saved_delete_authority(tmp_path, asy
 
     db = SqliteDb(db_file=str(tmp_path / "refresh.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Docs", user_id="owner")
+    goal = manager.create(name="Docs", user_id="owner")
     tools = CompanyTools(db, user_isolation=True)
     context = RunContext(run_id="refresh", session_id="session", user_id="owner")
 
     async def invoke():
         if async_tools:
-            return await tools.arefresh_company_product(product["id"], _agno_run_context=context)
-        return await asyncio.to_thread(tools.refresh_company_product, product["id"], _agno_run_context=context)
+            return await tools.arefresh_company_goal(goal["id"], _agno_run_context=context)
+        return await asyncio.to_thread(tools.refresh_company_goal, goal["id"], _agno_run_context=context)
 
     with pytest.raises(PermissionError, match="Routine authority"):
         await invoke()
-    scopes = ["products:read", "projects:read", "tasks:read", "wiki:read", "wiki:write"]
+    scopes = ["goals:read", "projects:read", "tasks:read", "wiki:read", "wiki:write"]
     authority = RunAuthorization(
         _default_authorization_provider(), AuthorizationContext(principal_id="owner", scopes=scopes)
     )
@@ -1128,18 +1194,20 @@ async def test_refresh_requires_routine_and_saved_delete_authority(tmp_path, asy
 
 @pytest.mark.parametrize("failure", ["link", "enable"])
 @pytest.mark.parametrize("pause_pending", [False, True])
-def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, failure, pause_pending, enabled):
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Docs"}).json()
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
     body = dict(
-        product_id=product["id"],
+        goal_id=goal["id"],
         name="refresh",
         template="refresh",
         executor_type="agent",
         executor_id="reader",
         cron_expr="0 * * * *",
+        enabled=enabled,
     )
-    method = "add_product_routine" if failure == "link" else "update_schedule"
+    method = "add_goal_routine" if failure == "link" else "update_schedule"
     original = getattr(db, method)
 
     def fail(*args, **kwargs):
@@ -1157,18 +1225,20 @@ def test_routine_create_recovers_disabled_pending_schedule(system, monkeypatch, 
     monkeypatch.setattr(db, method, original)
     # A changed request must not repurpose an interrupted creation.
     assert client.post("/company/routines", json={**body, "cron_expr": "30 * * * *"}).status_code == 409
+    assert client.post("/company/routines", json={**body, "enabled": not enabled}).status_code == 409
+    assert db.get_schedule(pending["id"])["enabled"] is False
     if pause_pending:
         assert client.post("/company/routines/" + pending["id"] + "/pause").status_code == 200
         assert client.post("/company/routines", json=body).status_code == 409
         assert db.get_schedule(pending["id"])["enabled"] is False
         assert client.post("/company/routines/" + pending["id"] + "/resume").status_code == 200
-        assert db.get_product(product["id"])["metadata"]["routine_ids"] == [pending["id"]]
+        assert db.get_goal(goal["id"])["metadata"]["routine_ids"] == [pending["id"]]
         return
     result = client.post("/company/routines", json=body)
     assert result.status_code == 201, result.text
-    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is True
+    assert result.json()["id"] == pending["id"] and result.json()["enabled"] is enabled
     assert "_agno_pending_creation" not in result.json()["payload"]
-    assert db.get_product(product["id"])["metadata"]["routine_ids"] == [pending["id"]]
+    assert db.get_goal(goal["id"])["metadata"]["routine_ids"] == [pending["id"]]
     assert db.get_schedules()[1] == 1
     # A later duplicate POST must not reactivate a deliberate pause.
     assert client.post("/company/routines/" + pending["id"] + "/pause").status_code == 200
@@ -1205,7 +1275,7 @@ def test_pending_routine_creation_cannot_be_recovered_by_another_creator(tmp_pat
                 {
                     "sub": user,
                     "aud": "pending-routines",
-                    "scopes": ["products:write", "routines:write", "schedules:write", "agents:reader:run"],
+                    "scopes": ["goals:write", "routines:write", "schedules:write", "agents:reader:run"],
                     "exp": datetime.now(timezone.utc) + timedelta(hours=1),
                 },
                 secret,
@@ -1213,27 +1283,27 @@ def test_pending_routine_creation_cannot_be_recovered_by_another_creator(tmp_pat
             )
         }
 
-    original = db.add_product_routine
+    original = db.add_goal_routine
 
     def fail(*args, **kwargs):
         raise RuntimeError("Link interrupted")
 
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", json={"name": "Docs"}, headers=headers("alice")).json()
+        goal = client.post("/company/goals", json={"name": "Docs"}, headers=headers("alice")).json()
         body = dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="refresh",
             template="refresh",
             executor_type="agent",
             executor_id="reader",
             cron_expr="0 * * * *",
         )
-        monkeypatch.setattr(db, "add_product_routine", fail)
+        monkeypatch.setattr(db, "add_goal_routine", fail)
         with pytest.raises(RuntimeError, match="Link interrupted"):
             client.post("/company/routines", json=body, headers=headers("alice"))
         pending = db.get_schedules()[0][0]
         assert pending["user_id"] == "alice"
-        monkeypatch.setattr(db, "add_product_routine", original)
+        monkeypatch.setattr(db, "add_goal_routine", original)
         bob = client.post("/company/routines", json=body, headers=headers("bob"))
         # Scheduler names are per creator: Bob can create his own, but cannot recover Alice's.
         assert bob.status_code == 201, bob.text
@@ -1248,11 +1318,11 @@ def test_pending_routine_creation_cannot_be_recovered_by_another_creator(tmp_pat
 @pytest.mark.parametrize("instructions", [None, "", "  "])
 def test_custom_routine_requires_instructions(system, instructions):
     client, _, _ = system
-    product = client.post("/company/products", json={"name": "Custom"}).json()
+    goal = client.post("/company/goals", json={"name": "Custom"}).json()
     response = client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="custom",
             executor_type="agent",
             executor_id="reader",
@@ -1265,11 +1335,11 @@ def test_custom_routine_requires_instructions(system, instructions):
 
 def test_custom_routine_edits_and_frozen_template(system, monkeypatch):
     client, _, db = system
-    product = client.post("/company/products", json={"name": "Custom"}).json()
+    goal = client.post("/company/goals", json={"name": "Custom"}).json()
     response = client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="custom",
             executor_type="agent",
             executor_id="reader",
@@ -1283,7 +1353,7 @@ def test_custom_routine_edits_and_frozen_template(system, monkeypatch):
     path = "/company/routines/" + routine["id"]
     changed = client.patch(path, json={"name": "renamed", "instructions": "New instructions", "cron_expr": "0 9 * * *"})
     assert changed.status_code == 200, changed.text
-    assert changed.json()["name"] == product["id"] + ".renamed"
+    assert changed.json()["name"] == goal["id"] + ".renamed"
     assert changed.json()["payload"]["message"].endswith("New instructions")
     assert client.patch(path, json={"instructions": " "}).status_code == 422
     assert client.patch(path, json={"name": "!"}).status_code == 422
@@ -1293,7 +1363,7 @@ def test_custom_routine_edits_and_frozen_template(system, monkeypatch):
     templated = client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="template",
             template="summary",
             executor_type="agent",
@@ -1330,8 +1400,8 @@ def test_isolated_company_reads_require_subject_and_executor_edits_require_run_s
         authorization_config=AuthorizationConfig(verification_keys=[secret], algorithm="HS256", user_isolation=True),
     )
     scopes = [
-        "products:read",
-        "products:write",
+        "goals:read",
+        "goals:write",
         "projects:read",
         "tasks:read",
         "sources:read",
@@ -1350,11 +1420,11 @@ def test_isolated_company_reads_require_subject_and_executor_edits_require_run_s
         return {"Authorization": "Bearer " + jwt.encode(claims, secret, algorithm="HS256")}
 
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", json={"name": "Identity"}, headers=headers("owner")).json()
+        goal = client.post("/company/goals", json={"name": "Identity"}, headers=headers("owner")).json()
         routine = client.post(
             "/company/routines",
             json=dict(
-                product_id=product["id"],
+                goal_id=goal["id"],
                 name="custom",
                 instructions="Quiet",
                 executor_type="agent",
@@ -1366,8 +1436,8 @@ def test_isolated_company_reads_require_subject_and_executor_edits_require_run_s
         assert routine.status_code == 201, routine.text
         path = "/company/routines/" + routine.json()["id"]
         for route in [
-            "/company/products",
-            "/company/products/" + product["id"],
+            "/company/goals",
+            "/company/goals/" + goal["id"],
             "/company/projects",
             "/company/tasks",
             "/company/sources",
@@ -1395,15 +1465,15 @@ async def test_source_tool_requires_write_scope_and_hides_injected_identity(tmp_
     from agno.tools.company import CompanyTools
 
     db = SqliteDb(db_file=str(tmp_path / "scoped-source.db"))
-    product = CompanyManager(db).create(name="Owned", user_id="owner")
+    goal = CompanyManager(db).create(name="Owned", user_id="owner")
     toolkit = CompanyTools(db, user_isolation=True)
     authority = RunAuthorization(
         _default_authorization_provider(), AuthorizationContext(principal_id="owner", scopes=["sources:read"])
     )
     context = RunContext(run_id="run", session_id="session", authorization=authority)
-    fn = toolkit.aadd_product_source if async_tools else toolkit.add_product_source
+    fn = toolkit.aadd_goal_source if async_tools else toolkit.add_goal_source
     arguments = dict(
-        product_id=product["id"],
+        goal_id=goal["id"],
         reference="https://example.test/page",
         _agno_run_context=context,
         _agno_agent=SimpleNamespace(id="finder"),
@@ -1416,7 +1486,7 @@ async def test_source_tool_requires_write_scope_and_hides_injected_identity(tmp_
     authority.context.scopes = ["sources:write"]
     result = json.loads(await fn(**arguments) if async_tools else fn(**arguments))
     assert result["config"]["metadata"] == {"agent_id": "finder", "run_id": "run"}
-    function = (toolkit.get_async_functions() if async_tools else toolkit.functions)["add_product_source"]
+    function = (toolkit.get_async_functions() if async_tools else toolkit.functions)["add_goal_source"]
     function.process_entrypoint()
     assert not any(key.startswith("_agno") for key in function.parameters["properties"])
     assert "type" not in function.parameters["properties"]
@@ -1429,7 +1499,7 @@ def test_summary_failure_predicate_matches_attention(task_status, run_status):
     from agno.company.summary import _summary_report
 
     report = _summary_report(
-        {"name": "Product"},
+        {"name": "Goal"},
         {},
         [
             {
@@ -1442,7 +1512,8 @@ def test_summary_failure_predicate_matches_attention(task_status, run_status):
         "Observed state",
         "",
     )
-    unresolved = task_status == "in_progress" and run_status in {"ERROR", "CANCELLED"}
+    # A failed run moves its Task to review. One stored before that is still In progress.
+    unresolved = task_status in {"in_progress", "in_review"} and run_status in {"ERROR", "CANCELLED"}
     assert ("No failed Tasks." not in report) == unresolved
 
 
@@ -1474,11 +1545,11 @@ def test_executor_edit_reauthorizes_existing_policy_and_restamps_grant(tmp_path,
 
     admin = headers(["agent_os:admin"])
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", json={"name": "Policy"}, headers=admin).json()
+        goal = client.post("/company/goals", json={"name": "Policy"}, headers=admin).json()
         created = client.post(
             "/company/routines",
             json=dict(
-                product_id=product["id"],
+                goal_id=goal["id"],
                 name="custom",
                 instructions="Inspect",
                 executor_type="agent",
@@ -1491,7 +1562,7 @@ def test_executor_edit_reauthorizes_existing_policy_and_restamps_grant(tmp_path,
         assert created.status_code == 201, created.text
         routine_id = created.json()["id"]
         before = db.get_schedule(routine_id)
-        scopes = ["products:read", "routines:write", "schedules:write", "tasks:write", "wiki:read", "agents:other:run"]
+        scopes = ["goals:read", "routines:write", "schedules:write", "tasks:write", "wiki:read", "agents:other:run"]
         denied = client.patch("/company/routines/" + routine_id, json={"executor_id": "other"}, headers=headers(scopes))
         assert denied.status_code == 403, denied.text
         assert db.get_schedule(routine_id) == before
@@ -1513,11 +1584,11 @@ def test_executor_edit_reauthorizes_existing_policy_and_restamps_grant(tmp_path,
 
 def test_managed_schedule_mutations_use_company_routes(system):
     client, os, db = system
-    product = client.post("/company/products", json={"name": "SDK"}).json()
+    goal = client.post("/company/goals", json={"name": "SDK"}).json()
     created = client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="check",
             instructions="Check",
             executor_type="agent",
@@ -1530,14 +1601,14 @@ def test_managed_schedule_mutations_use_company_routes(system):
     assert client.patch("/schedules/" + identifier, json={"payload": {"message": "Break metadata"}}).status_code == 409
     assert client.delete("/schedules/" + identifier).status_code == 409
     assert client.post("/schedules/" + identifier + "/enable").status_code == 409
-    assert client.delete("/company/products/" + product["id"]).status_code == 204
+    assert client.delete("/company/goals/" + goal["id"]).status_code == 204
     assert client.post("/company/routines/" + identifier + "/pause").status_code == 200
     assert client.post("/company/routines/" + identifier + "/resume").status_code == 404
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("automation", [False, True])
-async def test_archived_product_prevents_executor_dispatch(tmp_path, monkeypatch, automation):
+async def test_archived_goal_prevents_executor_dispatch(tmp_path, monkeypatch, automation):
     from types import SimpleNamespace
 
     from agno.company.routines import _CompanyScheduleExecutor
@@ -1546,15 +1617,15 @@ async def test_archived_product_prevents_executor_dispatch(tmp_path, monkeypatch
 
     db = SqliteDb(db_file=str(tmp_path / "archive-dispatch.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     schedule = ScheduleManager(db).create(
         name="check",
         cron="0 * * * *",
         endpoint="/agents/reader/runs",
-        payload={"message": "check", "metadata": {"product_id": product["id"]}},
+        payload={"message": "check", "metadata": {"goal_id": goal["id"]}},
         provenance={"managed_by": "company", "target_type": "agent", "target_id": "reader"},
     )
-    manager.delete(product["id"])
+    manager.delete(goal["id"])
     dispatch = AsyncMock()
     monkeypatch.setattr(ScheduleExecutor, "_call_endpoint", dispatch)
     options = dict(company_db=db, schedule_db=db, base_url="http://test", internal_service_token="internal")
@@ -1567,7 +1638,7 @@ async def test_archived_product_prevents_executor_dispatch(tmp_path, monkeypatch
     assert result["status"] == "failed" and "archived" in result["error"]
     dispatch.assert_not_awaited()
     assert db.get_schedule(schedule.id)["enabled"] is False
-    assert db.get_schedule(schedule.id)["disabled_reason"] == "company_product_archived"
+    assert db.get_schedule(schedule.id)["disabled_reason"] == "company_goal_archived"
     db.close()
 
 
@@ -1580,11 +1651,11 @@ async def test_team_source_uses_injected_team_identity(tmp_path, async_tools):
     from agno.tools.company import CompanyTools
 
     db = SqliteDb(db_file=str(tmp_path / "team.db"))
-    product = CompanyManager(db).create(name="SDK")
+    goal = CompanyManager(db).create(name="SDK")
     toolkit = CompanyTools(db)
-    fn = toolkit.aadd_product_source if async_tools else toolkit.add_product_source
+    fn = toolkit.aadd_goal_source if async_tools else toolkit.add_goal_source
     kwargs = dict(
-        product_id=product["id"],
+        goal_id=goal["id"],
         reference="https://example.com",
         _agno_team=SimpleNamespace(id="team-finder"),
         _agno_run_context=RunContext(run_id="team-run", session_id="session"),
@@ -1616,14 +1687,12 @@ def test_internal_scheduler_owner_is_provisioned_without_company(monkeypatch):
     assert provision.call_count == 1
 
 
-def test_yaml_products_with_runtime_config_are_not_silently_discarded(tmp_path):
+def test_yaml_goals_with_runtime_config_are_not_silently_discarded(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "yaml-runtime.db"))
     config = tmp_path / "config.yaml"
-    config.write_text("company:\n  products:\n    - name: YAML product\n")
+    config.write_text("company:\n  goals:\n    - name: YAML goal\n")
     os = AgentOS(db=db, config=str(config), company=CompanyConfig(db=db), telemetry=False)
-    assert os.company.db is db and os.company.products[0].name == "YAML product"
+    assert os.company.db is db and os.company.goals[0].name == "YAML goal"
     with pytest.raises(ValueError, match="not both"):
-        AgentOS(
-            db=db, config=str(config), company=CompanyConfig(products=[Product(name="Code product")]), telemetry=False
-        )
+        AgentOS(db=db, config=str(config), company=CompanyConfig(goals=[Goal(name="Code goal")]), telemetry=False)
     db.close()

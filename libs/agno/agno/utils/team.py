@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
+from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug
@@ -54,6 +55,20 @@ def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
         return url_safe_string(member.name)
     else:
         return None
+
+
+def get_member_session_id(member: Any, session_id: str) -> str:
+    """The session a member runs in: a remote member keeps its own session on its AgentOS, apart from the team's."""
+    if isinstance(member, BaseRemote):
+        # RemoteAgent and RemoteTeam, the two remote members, each have an id
+        return f"{session_id}:{member.id}"  # type: ignore[attr-defined]
+    return session_id
+
+
+def is_remote_member_run(member_run: Any, session_id: Optional[str]) -> bool:
+    """Whether a member run is a remote member's, kept in the session get_member_session_id gives it."""
+    member_session_id = getattr(member_run, "session_id", None)
+    return member_session_id is not None and member_session_id.startswith(f"{session_id}:")
 
 
 def add_interaction_to_team_run_context(

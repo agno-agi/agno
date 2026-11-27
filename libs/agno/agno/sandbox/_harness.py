@@ -42,6 +42,10 @@ _RUNTIME_OWNED = frozenset(
         "exponential_backoff",
         # Shown to a team leader on the host; the harness inside the sandbox never reads it.
         "role",
+        # Subscription credentials reach the sandbox as its environment or its login file, never in a request.
+        "oauth_token",
+        "auth_json",
+        "access_token",
     }
 )
 # Host paths, process settings and native option objects have no meaning inside the sandbox.
@@ -64,7 +68,10 @@ _HARNESS_ENV_KEYS = {"claude": ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
 _CLAUDE_CLOUD_FLAGS = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
 _DEFAULT_CHECKPOINTS = Path.home() / ".agno" / "sandbox" / "checkpoints"
 
-_coordinators: "weakref.WeakKeyDictionary[Sandbox, List[Tuple[Any, SandboxCoordinator]]]" = weakref.WeakKeyDictionary()
+# Coordinators per sandbox, keyed by the database they coordinate on (see _db_key).
+_coordinators: "weakref.WeakKeyDictionary[Sandbox, Dict[Tuple[Any, ...], SandboxCoordinator]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _is_default(item: Any, value: Any) -> bool:
@@ -86,6 +93,39 @@ def _check_db(agent: "BaseExternalAgent") -> None:
 
     if not isinstance(agent.db, (PostgresDb, AsyncPostgresDb)):
         raise ValueError("A sandboxed agent requires a PostgresDb or AsyncPostgresDb, on the agent or its AgentOS")
+
+
+def _db_key(db: Any) -> Tuple[Any, ...]:
+    """What identifies the database a coordinator runs on: its adapter, id, connection and table names.
+
+    A stored agent is rebuilt for every request, and a config with table-name overrides
+    gives each rebuild its own db instance over the registry db's engine, so the instance
+    cannot be the key: every rebuild would otherwise get a coordinator of its own.
+    """
+    serialized = dict(db.to_dict())
+    # An engine-only db serializes no connection, and the async adapter does not serialize the
+    # bindings table; the engine and the attribute always know them.
+    engine = getattr(db, "db_engine", None)
+    if engine is not None:
+        serialized["db_url"] = engine.url.render_as_string(hide_password=True)
+    serialized["sandbox_table"] = getattr(db, "sandbox_table_name", None)
+    return (type(db), *sorted((key, str(value)) for key, value in serialized.items()))
+
+
+def _existing_coordinator(agent: "BaseExternalAgent") -> Optional["SandboxCoordinator"]:
+    if agent.db is None:
+        return None
+    return _coordinators.get(_sandbox(agent), {}).get(_db_key(agent.db))
+
+
+def _register_on_db(db: Any, result: "SandboxCoordinator") -> None:
+    """The db's session delete asks every coordinator registered on it what the cascade would orphan."""
+    registered = getattr(db, "sandbox_coordinators", None)
+    if registered is None:
+        registered = []
+        db.sandbox_coordinators = registered
+    if result not in registered:
+        registered.append(result)
 
 
 async def acheck_tables(agent: "BaseExternalAgent", create: bool = True) -> None:
@@ -141,9 +181,9 @@ def store(agent: "BaseExternalAgent") -> "CheckpointStore":
     reader opens exactly the store its turns commit to.
     """
     sandbox = _sandbox(agent)
-    for db, existing in _coordinators.get(sandbox, []):
-        if db is agent.db:
-            return existing.transfer.store
+    existing = _existing_coordinator(agent)
+    if existing is not None:
+        return existing.transfer.store
     if sandbox.checkpoints is not None:
         return sandbox.checkpoints
     from agno.os.job_queue import get_active_queue_worker
@@ -164,25 +204,24 @@ def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
 
     sandbox = _sandbox(agent)
     _check_db(agent)
-    built = _coordinators.setdefault(sandbox, [])
-    for db, existing in built:
-        if db is agent.db:
-            existing.agent_ids.add(agent.get_id())
-            return existing
-    result = SandboxCoordinator(
-        agent.db,  # type: ignore[arg-type]
-        sandbox,
-        sandbox.checkpoint_transfer(store(agent)),
-        retain_checkpoints=sandbox.retain_checkpoints,
-    )
+    built = _coordinators.setdefault(sandbox, {})
+    key = _db_key(agent.db)
+    result = built.get(key)
+    if result is None:
+        result = SandboxCoordinator(
+            agent.db,  # type: ignore[arg-type]
+            sandbox,
+            sandbox.checkpoint_transfer(store(agent)),
+            retain_checkpoints=sandbox.retain_checkpoints,
+        )
+        built[key] = result
     result.agent_ids.add(agent.get_id())
-    built.append((agent.db, result))
-    # The db's session delete asks every coordinator registered on it what the cascade would orphan.
-    registered = getattr(agent.db, "sandbox_coordinators", None)
-    if registered is None:
-        registered = []
-        agent.db.sandbox_coordinators = registered  # type: ignore[union-attr]
-    registered.append(result)
+    login = agent._sandbox_login()
+    if login is not None:
+        result.logins[agent.get_id()] = login
+    else:
+        result.logins.pop(agent.get_id(), None)
+    _register_on_db(agent.db, result)
     return result
 
 
@@ -193,10 +232,17 @@ def env(agent: "BaseExternalAgent") -> Dict[str, str]:
         raise ValueError("Sandbox repository access requires GITHUB_READ_TOKEN; remove GITHUB_TOKEN")
     # Claude Code on Bedrock or Vertex authenticates with cloud credentials, so a host key
     # would go unused while agent code inside the sandbox could still read it.
-    if runtime == "claude" and any(configured.get(flag) for flag in _CLAUDE_CLOUD_FLAGS):
+    subscription = agent._subscription_env()
+    if subscription is None and runtime == "claude" and any(configured.get(flag) for flag in _CLAUDE_CLOUD_FLAGS):
         return configured
     values = {key: os.environ[key] for key in _HARNESS_ENV_KEYS.get(runtime, ()) if key in os.environ}
     values.update(configured)
+    if subscription is not None:
+        # An agent on a subscription is signed in with the subscription only: nothing that would bill an API key
+        # or a cloud account reaches its sandbox, whether the host or the sandbox's env sets it.
+        for key in agent._subscription_blocked_env:
+            values.pop(key, None)
+        values.update(subscription)
     return values
 
 
@@ -242,6 +288,8 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
         )
     if output_schema is not None:
         config["output_schema"] = output_schema
+    if agent._uses_native_hitl:
+        config["_native_hitl"] = True
     return config
 
 
@@ -260,6 +308,13 @@ SANDBOX_RUN_OPTIONS = frozenset(
         "metadata",
     }
 )
+
+
+async def asubmission_input(
+    agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+) -> Any:
+    """The input with run dependencies added as the block an Agent adds, for a sandbox that takes none."""
+    return await agent._asandbox_input(input, kwargs, run_id, session_id, user_id)
 
 
 def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,9 +383,13 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     from agno.run.concurrency import get_worker_ownership
     from agno.sandbox.media import decode_media
 
+    agent._check_subscription()
     # Metadata for the session the turn creates, set by the host for a team member; not a run option.
     session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
+    config = _config(agent, options.get("output_schema"))
+    if session_metadata and (session_metadata.get("team_id") or session_metadata.get("workflow_id")):
+        config["_nested_native_hitl"] = True
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
     return dict(
@@ -340,7 +399,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         sdk=agent._sandbox_runtime,
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
-        config=_config(agent, options.get("output_schema")),
+        config=config,
         env=env(agent),
         queue_attempt=owner.attempt if owner is not None else None,
         execution_timeout=_sandbox(agent).execution_timeout,
@@ -361,7 +420,8 @@ async def arun(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> RunOutp
     execution = _execution(agent, input, kwargs)
     await aregister_run(execution["run_id"])
     try:
-        run = await coordinator(agent).arun(kwargs.get("session_id") or str(uuid4()), **execution)
+        async with agent._asubscription_slot():
+            run = await coordinator(agent).arun(kwargs.get("session_id") or str(uuid4()), **execution)
     finally:
         await acleanup_run(execution["run_id"])
     # The runtime returns structured output as JSON; parse it into the caller's schema as the host path does.
@@ -379,16 +439,17 @@ async def astream(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> Asyn
     events: List[Dict[str, Any]] = []
     skipped = {event.value for event in agent.events_to_skip or []}
     try:
-        async for value in iterator:
-            if isinstance(value, RunOutput):
-                if agent.store_events:
-                    await runner.store._apublish_events(value.to_dict(), events)
-                agent._apply_output_schema(value, _output_schema(agent, kwargs))
-            if not isinstance(value, RunOutput) or kwargs.get("yield_run_output", False):
-                yield value
-            # The queue publisher stamps the same object before resuming us.
-            if agent.store_events and not isinstance(value, RunOutput) and value.event not in skipped:
-                events.append(value.to_dict())
+        async with agent._asubscription_slot():
+            async for value in iterator:
+                if isinstance(value, RunOutput):
+                    if agent.store_events:
+                        await runner.store._apublish_events(value.to_dict(), events)
+                    agent._apply_output_schema(value, _output_schema(agent, kwargs))
+                if not isinstance(value, RunOutput) or kwargs.get("yield_run_output", False):
+                    yield value
+                # The queue publisher stamps the same object before resuming us.
+                if agent.store_events and not isinstance(value, RunOutput) and value.event not in skipped:
+                    events.append(value.to_dict())
     finally:
         try:
             await iterator.aclose()

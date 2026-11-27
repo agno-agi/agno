@@ -26,6 +26,8 @@ from agno.run.requirement import RunRequirement
 from agno.team import Team
 from agno.tools import tool
 from agno.tools.studio_runner import StudioRunnerTools
+from agno.workflow import Step, Workflow
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 
 _CHAIN = DISPATCH_CHAIN_METADATA_KEY
 _DEPTH = DISPATCH_DEPTH_METADATA_KEY
@@ -249,3 +251,165 @@ class TestGuardHoldsAcrossAPause:
         run2 = await _pause_then_resume(component, "agent", use_async, self_run)
         assert run2.status.value == "COMPLETED"
         assert solo.seen is None, "'once' recharged across a pause"
+
+
+def _capture_metadata(step_input: StepInput, run_context: Optional[RunContext] = None) -> StepOutput:
+    """A workflow step that records the metadata its run carries."""
+    metadata = getattr(run_context, "metadata", None)
+    _CAPTURED.append(dict(metadata) if isinstance(metadata, dict) else None)
+    return StepOutput(content="captured")
+
+
+def _write_metadata(step_input: StepInput, run_context: Optional[RunContext] = None) -> StepOutput:
+    """A workflow step that writes to the metadata of its run."""
+    assert run_context is not None and run_context.metadata is not None
+    run_context.metadata["written_by_step"] = True
+    return StepOutput(content="written")
+
+
+@tool
+def read_metadata(run_context: Optional[RunContext] = None) -> str:
+    """Records the metadata of the step agent's run."""
+    metadata = getattr(run_context, "metadata", None)
+    _CAPTURED.append(dict(metadata) if isinstance(metadata, dict) else None)
+    return "read"
+
+
+async def _pause_then_resume_workflow(workflow: Workflow, use_async: bool, stream: bool, run_metadata):
+    """Pause on the step's confirmation, then continue from storage the way a later request does."""
+    run1 = workflow.run("go", session_id="s-wf", metadata=dict(run_metadata) if run_metadata else None)
+    assert run1.is_paused, "the confirmation should pause the workflow before its step"
+    for requirement in run1.step_requirements or []:
+        requirement.confirm()
+    kwargs: Dict[str, Any] = dict(run_id=run1.run_id, session_id="s-wf", step_requirements=run1.step_requirements)
+    if stream and use_async:
+        async for _ in await workflow.acontinue_run(stream=True, **kwargs):
+            pass
+    elif stream:
+        for _ in workflow.continue_run(stream=True, **kwargs):
+            pass
+    elif use_async:
+        await workflow.acontinue_run(**kwargs)
+    else:
+        workflow.continue_run(**kwargs)
+    run2 = workflow.get_run_output(run_id=run1.run_id, session_id="s-wf")
+    assert run2 is not None
+    return run2
+
+
+class TestWorkflowLineageSurvivesContinue:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("stream", [False, True], ids=["run", "stream"])
+    async def test_dispatch_lineage_reaches_the_steps_of_a_continued_workflow(self, tmp_path, use_async, stream):
+        _CAPTURED.clear()
+        db = SqliteDb(db_file=str(tmp_path / "wf-resume.db"))
+        step = Step(name="gated", executor=_capture_metadata, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        run2 = await _pause_then_resume_workflow(workflow, use_async, stream, _DISPATCHED)
+        assert run2.status.value == "COMPLETED"
+        # The lineage, and the caller's own metadata with it.
+        assert _CAPTURED == [_DISPATCHED]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize(
+        "workflow_metadata,run_metadata,expected",
+        [
+            ({"owner": "wf"}, _DISPATCHED, {"owner": "wf", **_DISPATCHED}),
+            ({"owner": "wf"}, {"tenant": "acme"}, {"owner": "wf", "tenant": "acme"}),
+            # A fresh run hands its steps an empty dict when nothing sets metadata, so the step
+            # agent's own metadata is applied in neither run.
+            (None, None, {}),
+        ],
+        ids=["dispatched", "top-level", "no-metadata"],
+    )
+    async def test_a_continued_step_sees_the_metadata_a_fresh_step_sees(
+        self, tmp_path, use_async, workflow_metadata, run_metadata, expected
+    ):
+        # A step agent takes its own metadata only when the run carries none, so a continued run
+        # that carried part of the stored metadata would change what its tools and hooks read.
+        def workflow(name: str, review: Optional[HumanReview]) -> Workflow:
+            script = [("tool", "read_metadata", {}, "tc-read"), ("content", "finished")]
+            agent = Agent(
+                id="stepper",
+                model=_ScriptedModel("m-step", script),
+                tools=[read_metadata],
+                metadata={"agent_default": "x"},
+                telemetry=False,
+            )
+            db = SqliteDb(db_file=str(tmp_path / f"{name}.db"))
+            step = Step(name="read", agent=agent, human_review=review)
+            return Workflow(id="wf", name="WF", db=db, steps=[step], metadata=workflow_metadata, telemetry=False)
+
+        _CAPTURED.clear()
+        fresh = workflow("fresh", None).run("go", session_id="s-wf", metadata=run_metadata and dict(run_metadata))
+        assert fresh.status.value == "COMPLETED"
+        paused = workflow("paused", HumanReview(requires_confirmation=True))
+        run2 = await _pause_then_resume_workflow(paused, use_async, False, run_metadata)
+        assert run2.status.value == "COMPLETED"
+
+        assert _CAPTURED == [expected, expected]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_a_step_metadata_write_on_a_continued_leg_reaches_the_stored_run(self, tmp_path, use_async):
+        # The run context and the stored run share one metadata dict on a fresh run, so a step's
+        # write is stored with the run. A continued leg has to keep that link.
+        def workflow(name: str, review: Optional[HumanReview]) -> Workflow:
+            db = SqliteDb(db_file=str(tmp_path / f"{name}.db"))
+            step = Step(name="write", executor=_write_metadata, human_review=review)
+            return Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        fresh = workflow("fresh", None)
+        fresh.run("go", session_id="s-wf", metadata={"tenant": "acme"})
+        stored = fresh.get_session(session_id="s-wf").runs[-1]
+        assert stored.metadata == {"tenant": "acme", "written_by_step": True}
+
+        paused = workflow("paused", HumanReview(requires_confirmation=True))
+        run2 = await _pause_then_resume_workflow(paused, use_async, False, {"tenant": "acme"})
+        assert run2.status.value == "COMPLETED"
+        assert run2.metadata == {"tenant": "acme", "written_by_step": True}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["never", "once"])
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    @pytest.mark.parametrize("stream", [False, True], ids=["run", "stream"])
+    async def test_cycle_guard_holds_across_a_workflow_pause(self, tmp_path, mode, use_async, stream):
+        # Team 'a' dispatched this workflow. After the pause its step dispatches 'a' back:
+        # A -> workflow -> A must stay refused.
+        db = SqliteDb(db_file=str(tmp_path / "wf-cycle.db"))
+        a = _StubTeam("a")
+        runner = StudioRunnerTools(include_teams=[a], self_dispatch=mode)  # type: ignore[arg-type]
+        script = [
+            ("tool", "run_team", {"team_id": "a", "message": "go deeper"}, "tc-dispatch"),
+            ("content", "finished"),
+        ]
+        agent = Agent(id="stepper", model=_ScriptedModel("m-step", script), tools=[runner], telemetry=False)
+        step = Step(name="gated", agent=agent, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        nested = {_CHAIN: ["team:a", "workflow:wf"], _DEPTH: 1}
+        run2 = await _pause_then_resume_workflow(workflow, use_async, stream, nested)
+        assert run2.status.value == "COMPLETED"
+        assert a.seen is None, "the continued workflow re-entered its own dispatcher"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_depth_cap_holds_across_a_workflow_pause(self, tmp_path, use_async):
+        db = SqliteDb(db_file=str(tmp_path / "wf-depth.db"))
+        c = _StubTeam("c")
+        runner = StudioRunnerTools(include_teams=[c])  # type: ignore[arg-type]
+        script = [
+            ("tool", "run_team", {"team_id": "c", "message": "go deeper"}, "tc-dispatch"),
+            ("content", "finished"),
+        ]
+        agent = Agent(id="stepper", model=_ScriptedModel("m-step", script), tools=[runner], telemetry=False)
+        step = Step(name="gated", agent=agent, human_review=HumanReview(requires_confirmation=True))
+        workflow = Workflow(id="wf", name="WF", db=db, steps=[step], telemetry=False)
+
+        at_cap = {_CHAIN: ["team:x", "team:y"], _DEPTH: 2}
+        run2 = await _pause_then_resume_workflow(workflow, use_async, False, at_cap)
+        assert run2.status.value == "COMPLETED"
+        assert c.seen is None, "the continued workflow dispatched past the depth cap"

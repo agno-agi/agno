@@ -31,7 +31,7 @@ async def test_collaborators_share_task_owner_and_preserve_actor_authority(
 ):
     _, db, worker, _, components = system
     secret = "company-task-identity-secret-at-least-32-bytes"
-    scopes = [f"{resource}:{action}" for resource in ("products", "projects", "tasks") for action in ("read", "write")]
+    scopes = [f"{resource}:{action}" for resource in ("goals", "projects", "tasks") for action in ("read", "write")]
     scopes += [kind + "s:run", "wiki:read"]
     auth_db = SqliteDb(db_file=str(tmp_path / "identity.db"))
     authz = Authorization(db=auth_db if managed else None, verification_keys=[secret], algorithm="HS256")
@@ -217,7 +217,7 @@ async def test_failure_streaks_attention_and_retention(system, monkeypatch):
     from agno.db.base import AsyncBaseDb
 
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    result = await _call(manager, "refresh", task["product_id"])
+    result = await _call(manager, "refresh", task["goal_id"])
     assert result["deleted_automation_runs"] == 1
     assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 2
 
@@ -254,8 +254,8 @@ async def test_refresh_tool_applies_company_history_retention(system, days):
                 status="success" if finished else "running",
             ).to_dict(),
         )
-    with authorization_scope(lambda: _RoutineAuthorization(None, product_id=task["product_id"])):
-        result = json.loads(await tool.arefresh_company_product(task["product_id"]))
+    with authorization_scope(lambda: _RoutineAuthorization(None, goal_id=task["goal_id"])):
+        result = json.loads(await tool.arefresh_company_goal(task["goal_id"]))
     assert result["deleted_automation_runs"] == 1
     rows, count = await _call(db, "get_schedule_runs", schedule["id"])
     assert count == 2 and {row["id"] for row in rows} == {recent_id, running_id}
@@ -338,7 +338,7 @@ async def test_competing_terminal_results_preserve_one_winner(system, statuses):
     assert len(winners) == 1
     saved = await _call(db, "get_task", task["id"])
     assert saved["result"] == winners[0]["result"]
-    assert saved["status"] == ("in_review" if saved["result"]["status"] == "COMPLETED" else "in_progress")
+    assert saved["status"] == "in_review"
 
 
 @pytest.mark.asyncio

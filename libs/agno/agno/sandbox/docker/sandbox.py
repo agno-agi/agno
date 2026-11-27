@@ -78,6 +78,7 @@ class DockerSandbox(Sandbox):
         self,
         image: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         cpus: float = 2.0,
         memory_mb: int = 2048,
@@ -115,6 +116,9 @@ class DockerSandbox(Sandbox):
             or any(char.isspace() or char in ":/\x00" for char in runtime_host)
         ):
             raise ValueError("Sandbox runtime host must be a bare IP address or host name")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.image = image
         self.namespace = namespace
         self.cpus = float(cpus)
@@ -537,6 +541,13 @@ class DockerSandbox(Sandbox):
                     code, err = 1, b"Creation response timed out"
                 # A concurrent creator or lost response is resolved by the deterministic name.
                 current = await self.aget(name)
+                if current is None and code and b"already in use" in err:
+                    # Docker reserves the name before the container is inspectable; wait for it.
+                    for _ in range(50):
+                        await asyncio.sleep(0.1)
+                        current = await self.aget(name)
+                        if current is not None:
+                            break
                 if current is None:
                     raise SandboxError("Docker creation failed: " + err.decode(errors="replace")[:500])
             except Exception:
@@ -577,8 +588,12 @@ class DockerSandbox(Sandbox):
 
         A failed or lost reply never touches compute: the coordinator reconciles.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         if handle.runtime_url is None:
             # Exec fallback: fixed runtime argv, bounded, and never stopping compute on a failed or
             # lost reply. A control request is not a command that could run forever.
@@ -586,7 +601,7 @@ class DockerSandbox(Sandbox):
                 wait = float(json.loads(payload).get("wait", 0) or 0)
             except (ValueError, AttributeError):
                 wait = 0.0
-            return await self._aexec(
+            result = await self._aexec(
                 handle,
                 ["python", "-I", "-m", "agno.sandbox.runtime", operation],
                 timeout=15 + min(max(wait, 0.0), 30.0),
@@ -594,6 +609,16 @@ class DockerSandbox(Sandbox):
                 stdin=payload,
                 stop_on_failure=False,
             )
+            if result.exit_code < 0 and not result.stderr and not result.timed_out:
+                # The request died from a signal and left no message.
+                note = await self._memory_note(handle)
+                if note:
+                    return ExecResult(
+                        exit_code=result.exit_code,
+                        stdout=result.stdout,
+                        stderr=f"the runtime request was killed (signal {-result.exit_code}); {note}",
+                    )
+            return result
         import httpx
 
         # No daemon call on this path: the published port belongs to this container alone, so a
@@ -610,6 +635,21 @@ class DockerSandbox(Sandbox):
         if response.status_code != 200:
             return ExecResult(exit_code=1, stdout="", stderr=body)
         return ExecResult(exit_code=0, stdout=body, stderr="")
+
+    async def _memory_note(self, handle: SandboxHandle) -> str:
+        """Says that Docker recorded an out-of-memory kill in the sandbox, else nothing.
+
+        A container at its memory limit has no room for a new process, so a command or runtime
+        request sent to it is killed without a message. Docker's record does not say which memory
+        ran out (the sandbox's limit or the host's) or when, so the note states the record and
+        the limit and leaves the cause to the reader."""
+        code, out, _ = await self._docker("container", "inspect", "-f", "{{.State.OOMKilled}}", handle.provider_ref)
+        if code or out.strip() != b"true":
+            return ""
+        return (
+            f"Docker recorded an out-of-memory kill in this sandbox. Its memory limit is {self.memory_mb} MB, "
+            "which also counts files in /workspace, /runtime and /tmp"
+        )
 
     async def aexec(
         self,
@@ -681,7 +721,12 @@ class DockerSandbox(Sandbox):
         if code:
             if stop_on_failure:
                 await self.astop(handle)
-            raise SandboxError("Sandbox command transport failed: " + err.decode(errors="replace")[:500])
+            detail = err.decode(errors="replace")[:500]
+            if code == 137 and not detail.strip():
+                # Docker reports 137 when the command runner itself was killed, and nothing else.
+                note = await self._memory_note(handle)
+                detail = "the command runner was killed (signal 9)" + ("; " + note if note else "")
+            raise SandboxError("Sandbox command transport failed: " + detail)
         try:
             result = ExecResult(**json.loads(out))
             if stop_on_failure and (result.timed_out or result.output_limited):

@@ -40,12 +40,12 @@ def _manager_member_refusal(endpoint: str) -> Optional[str]:
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
-        return "Manager specialists are internal. Schedule OS Manager instead."
+        return "Manager specialists are internal. Schedule Super Agent instead."
     return None
 
 
 def _company_routine_refusal(schedule: Any) -> Optional[str]:
-    """Company Routines stay linked to their Product, so only Company may change them."""
+    """Company Routines stay linked to their Goal, so only Company may change them."""
     if (
         schedule is None
         or getattr(schedule, "managed_by", None) != "company"
