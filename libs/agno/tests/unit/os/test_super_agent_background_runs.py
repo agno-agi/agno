@@ -264,8 +264,11 @@ def test_a_plain_runner_still_runs_in_the_turn(tmp_path):
 
 
 def test_the_prompt_says_when_to_start_in_the_background():
-    assert "start it with start_background_run and carry on" in MANAGER_INSTRUCTIONS
-    assert "never say it completed before you have been shown that it ended" in MANAGER_INSTRUCTIONS
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    assert "start it with start_background_run and carry on" in said
+    assert "never say it completed before you have been shown that it ended" in said
+    # A named component run is a run: it is a Task only when the person asks for the record.
+    assert "that is a run, and becomes a Task only when the person asks for a Task" in said
     # What it is shown depends on the model, so the block is described outside the fixed text.
     assert _HEADER not in MANAGER_INSTRUCTIONS and f'under "{_HEADER}"' in " ".join(SHOWN.split())
     assert "you are not shown their state" in NOT_SHOWN and _HEADER not in NOT_SHOWN
