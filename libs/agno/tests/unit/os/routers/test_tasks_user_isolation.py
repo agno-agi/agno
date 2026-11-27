@@ -351,7 +351,12 @@ async def test_run_target_permission_with_async_managed_roles(tmp_path, resource
         company=CompanyConfig(),
         telemetry=False,
         authorization=Authorization(
-            db=db, roles_claim="roles", verification_keys=[SECRET], algorithm="HS256", audience=OS_ID
+            db=db,
+            roles_claim="roles",
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            audience=OS_ID,
+            trust_token_scopes=False,
         ),
     ).get_app()
     # Token admin claims must not override the stored executor permissions.

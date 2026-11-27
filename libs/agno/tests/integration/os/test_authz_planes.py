@@ -71,9 +71,10 @@ def test_accessible_ids_union_with_wildcard_winning():
     ctx = AuthorizationContext(principal_id="u", scopes=["agents:a2:read"], resource_type="agents", action="read")
     assert comp.accessible_resource_ids(ctx) == {"a1", "a2"}
 
-    # a global/wildcard scope on the token -> {"*"} wins
+    # a global/wildcard scope on the token -> "*", beside the id the store names: "*" leaves the
+    # built-in components out, so an id named by another plane is kept
     ctx_all = AuthorizationContext(principal_id="u", scopes=["agents:read"], resource_type="agents", action="read")
-    assert comp.accessible_resource_ids(ctx_all) == {"*"}
+    assert comp.accessible_resource_ids(ctx_all) == {"*", "a1"}
 
 
 def _token(sub, scopes):
@@ -362,7 +363,7 @@ def test_job_queue_admin_gate_is_provider_aware():
 
     from agno.os.routers.job_queue.router import _require_queue_admin
 
-    store = Authorization(db_url=_db_url())
+    store = Authorization(db_url=_db_url(), trust_token_scopes=False)
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role("real-admin", "admin")
 

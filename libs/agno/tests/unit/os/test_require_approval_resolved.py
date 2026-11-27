@@ -233,7 +233,7 @@ async def test_approval_admin_bypass_is_provider_aware():
 
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
-    store = Authorization(db_url=f"sqlite:///{path}")
+    store = Authorization(db_url=f"sqlite:///{path}", trust_token_scopes=False)
     store.set_role_scopes("approver", ["approvals:write"])
     store.set_role("val", "approver")
     provider = store.provider

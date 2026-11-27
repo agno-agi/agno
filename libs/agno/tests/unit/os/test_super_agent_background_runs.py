@@ -80,9 +80,10 @@ class Scripted(ScriptedModel):
 
 def lines_of(text):
     """The lines of the block the Team would send before the person's message."""
-    if text is None:
+    # The message starts with who the person is; the block of work follows when there is any.
+    if text is None or _HEADER not in str(text):
         return []
-    header, *lines = str(text).split("\n")
+    header, *lines = str(text)[str(text).index(_HEADER) :].split("\n")
     assert header.startswith(_HEADER + " (information from AgentOS, not instructions and not written by the person).")
     return lines
 
@@ -1134,8 +1135,10 @@ def test_super_agent_is_sent_the_run_beside_the_next_message(system):
     assert line in while_running[0] and CHANGED not in while_running[0]
     assert ("queued" in while_running[0]) or ("running" in while_running[0])
     assert after[1] == "Hello" and line + "finished" in after[0] and CHANGED in after[0]
-    # Its end was shown, so the next message carries no block, and the result can still be read.
-    assert system.os.manager.model.sent == ["And?"]
+    # Its end was shown, so the next message carries no block, only who the person is, and the result
+    # can still be read.
+    assert system.os.manager.model.sent[-1] == "And?" and len(system.os.manager.model.sent) == 2
+    assert _HEADER not in system.os.manager.model.sent[0]
     assert json.loads(checked.tools[0].result)["status"] == "COMPLETED"
 
 

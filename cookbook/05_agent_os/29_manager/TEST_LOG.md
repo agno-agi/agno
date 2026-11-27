@@ -33,6 +33,22 @@ turn called `check_background_run` once and said the Investigator finished, with
 
 ---
 
+## Token scopes count beside roles by default, 2026-11-24
+
+### check_manager_permissions.py
+
+**Status:** PASS
+
+**Description:** `manager_user_access.py` now sets `trust_token_scopes=False`. Token scopes count
+beside managed roles unless that is set, and this example's point is that the role decides alone.
+Re-ran the in-process HTTP checker with a temporary development signing key and no model API key.
+
+**Result:** All seven checks pass, including "An unassigned user cannot discover Super Agent"
+(403) and "An admin token claim cannot grant Alice publishing access" (403). Without the setting
+the first of these returned 200, because the checker's tokens carry `agent_os:admin`. No model calls.
+
+---
+
 ## PR #11394 review, 2026-10-30
 
 ### manager_discovery.py

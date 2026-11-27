@@ -79,7 +79,8 @@ def test_admin_scope_allows_everything():
     assert eng.check_resource("agents", "any", "run", subject="alice") is True
     assert eng.check_resource("teams", "any", "delete", subject="alice") is True
     assert eng.check_scope("sessions:delete", subject="alice") is True
-    assert eng.accessible_resource_ids("agents", "read", subject="alice") == {"*"}
+    # Admin reaches the built-in agents too, which "*" alone leaves out
+    assert eng.accessible_resource_ids("agents", "read", subject="alice") == {"*", "platform-builder", "miniagent"}
 
 
 def test_scope_read_back_is_canonical():
