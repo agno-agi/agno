@@ -885,6 +885,10 @@ class Workflow:
                 if resolved_metadata is None:
                     resolved_metadata = {}
                 merge_dictionaries(resolved_metadata, deepcopy(layer))
+                if "repository" in layer:
+                    # What a sandboxed agent checks out is one choice, a commit or a branch, and the sandbox
+                    # refuses both. So a later layer's replaces an earlier one's whole instead of joining it.
+                    resolved_metadata["repository"] = deepcopy(layer["repository"])
 
         return {
             "dependencies": resolved_dependencies,

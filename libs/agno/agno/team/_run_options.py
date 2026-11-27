@@ -164,6 +164,10 @@ def resolve_run_options(
             if resolved_metadata is None:
                 resolved_metadata = {}
             merge_dictionaries(resolved_metadata, deepcopy(layer))
+            if "repository" in layer:
+                # What a sandboxed member checks out is one choice, a commit or a branch, and the sandbox
+                # refuses both. So a later layer's replaces an earlier one's whole instead of joining it.
+                resolved_metadata["repository"] = deepcopy(layer["repository"])
 
     # output_schema: call-site > team.output_schema
     resolved_output_schema = output_schema if output_schema is not None else team.output_schema
