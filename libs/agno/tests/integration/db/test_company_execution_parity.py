@@ -313,7 +313,8 @@ async def test_legacy_ready_task_waits_for_project_approval_before_run(system, q
         response = await client.post(f"/company/tasks/{task['id']}/runs")
         assert response.status_code == 409, response.text
         assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
-    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
+    # A queued run the worker refused has ended: its Task waits in review with the refusal as its result.
+    assert (await _call(db, "get_task", task["id"]))["status"] == ("in_review" if queued else before["status"])
 
 
 @pytest.mark.asyncio
@@ -341,7 +342,8 @@ async def test_cancelled_project_refuses_new_task_execution(system, queued):
         response = await client.post(path)
         assert response.status_code == 409, response.text
         assert await worker.store.get_job(task_run_id(task["id"], 1)) is None
-    assert (await _call(db, "get_task", task["id"]))["status"] == before["status"]
+    # A queued run the worker refused has ended: its Task waits in review with the refusal as its result.
+    assert (await _call(db, "get_task", task["id"]))["status"] == ("in_review" if queued else before["status"])
 
 
 @pytest.mark.asyncio
@@ -654,7 +656,7 @@ async def test_bounded_failure_visible_without_changing_lifecycle(system, monkey
     second = await execute(worker)
     assert second["status"] == "failed" and second["attempt"] == 2
     saved = (await client.get(path)).json()
-    assert saved["status"] == "in_progress" and saved["result"]["status"] == "ERROR"
+    assert saved["status"] == "in_review" and saved["result"]["status"] == "ERROR"
     assert (await client.get("/company/attention")).json()["failed"] == 1
     rows = (await client.get("/company/tasks", params={"failed": "true"})).json()
     assert rows["meta"]["total_count"] == 1 and rows["data"][0]["id"] == value["id"]
@@ -1000,7 +1002,7 @@ async def test_nonfailed_filter_includes_sql_and_json_null_results(system):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", ["cancelled", "backlog", "ready", "in_review", "done"])
+@pytest.mark.parametrize("target", ["cancelled", "backlog", "ready", "done"])
 @pytest.mark.parametrize("result_status", ["ERROR", "CANCELLED"])
 async def test_attention_clears_acted_on_failures_and_preserves_results(system, target, result_status):
     from agno.company.execution import _call
@@ -1019,7 +1021,8 @@ async def test_attention_clears_acted_on_failures_and_preserves_results(system, 
     goal_filter = {"goal_id": value["goal_id"]}
     assert (await client.get("/company/attention", params=goal_filter)).json()["failed"] == 1
     assert (await client.get("/company/attention")).json()["failed"] == 2
-    steps = ["backlog", "ready"] if target == "ready" else ["in_review", "done"] if target == "done" else [target]
+    # The failed run left the Task in review, where it still counts as failed until a person acts on it.
+    steps = ["backlog", "ready"] if target == "ready" else [target]
     for step in steps:
         body = {"target": step, "reason": "Human acted on failure"}
         if step == "ready":
@@ -1027,7 +1030,7 @@ async def test_attention_clears_acted_on_failures_and_preserves_results(system, 
         response = await client.post(path + "/transitions", json=body)
         assert response.status_code == 200, response.text
         attention = (await client.get("/company/attention", params=goal_filter)).json()
-        assert attention == {"proposals": int(step == "backlog"), "in_review": int(step == "in_review"), "failed": 0}
+        assert attention == {"proposals": int(step == "backlog"), "in_review": 0, "failed": 0}
     assert (await client.get(path)).json()["result"] == {"status": result_status, "content": "Failure"}
     assert (await client.get("/company/attention")).json()["failed"] == 1
     failed = (await client.get("/company/tasks", params={"failed": "true", "limit": 1})).json()
@@ -1261,7 +1264,7 @@ async def test_cancelled_task_is_visible_and_can_start_another_attempt(system, k
     assert (await client.post(f"/company/runs/{run_id}/cancel")).status_code == 200
     assert (await worker.store.get_job(run_id))["status"] == "cancelled"
     saved = (await client.get(path)).json()
-    assert saved["status"] == "in_progress"
+    assert saved["status"] == "in_review"
     assert saved["result"]["status"] == "CANCELLED" and saved["result"]["run_id"] == run_id
     assert saved["result"]["content"]
     assert (await client.get("/company/attention", params={"goal_id": value["goal_id"]})).json()["failed"] == 1
@@ -1305,7 +1308,7 @@ async def test_cancellation_during_execution_projects_task_result(system, monkey
         release.set()
     assert (await running)["status"] == "cancelled"
     saved = (await client.get(path)).json()
-    assert saved["status"] == "in_progress" and saved["result"]["status"] == "CANCELLED"
+    assert saved["status"] == "in_review" and saved["result"]["status"] == "CANCELLED"
     assert (await client.get("/company/attention")).json()["failed"] == 1
     assert (await client.post(path + "/transitions", json={"target": "backlog", "reason": "Replan"})).status_code == 200
     assert (await client.get("/company/attention")).json() == {"proposals": 1, "in_review": 0, "failed": 0}
@@ -2520,7 +2523,7 @@ async def test_all_task_and_project_writes_stamp_updated_at(system, monkeypatch)
     ready = await write("transition_task", task["id"], "ready", "Accept", executor_type="agent", executor_id="writer")
     running = await write("start_task_run", task["id"], 1, ready["transitions"])
     failed = await write("complete_task_run", task["id"], running["job_id"], {"status": "ERROR"})
-    assert failed["status"] == "in_progress"
+    assert failed["status"] == "in_review"
     assert await _call(db, "complete_task_run", task["id"], running["job_id"], {"status": "COMPLETED"}) is None
     assert await _call(db, "get_task", task["id"]) == failed
     running = await write("start_task_run", task["id"], 2, failed["transitions"])
@@ -3811,7 +3814,9 @@ async def test_automation_cancels_reserved_attempt_without_job_or_result(system)
     assert result["output"]["tasks"][0]["status"] == "CANCELLED"
     assert result["output"]["tasks"][0]["action"] == "reconciled"
     assert await worker.store.get_job(reserved["job_id"]) is None
-    assert (await _call(db, "get_task", task["id"]))["transitions"] == reserved["transitions"]
+    # The reservation is kept, followed by the step into review that the lost attempt's end added.
+    assert (await _call(db, "get_task", task["id"]))["transitions"][:-1] == reserved["transitions"]
+    assert (await _call(db, "get_task", task["id"]))["status"] == "in_review"
     assert (await _call(db, "get_task", task["id"]))["result"]["status"] == "CANCELLED"
     assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 1
     retry = await client.post(f"/company/tasks/{task['id']}/runs", json={"attempt": 2})
@@ -3982,7 +3987,7 @@ async def test_automation_reconciles_durable_run_without_resubmission(system, mo
     enqueue.assert_not_called()
     saved = await _call(db, "get_task", task["id"])
     terminal = status in {"COMPLETED", "ERROR", "CANCELLED"}
-    assert saved["status"] == ("in_review" if status == "COMPLETED" else "in_progress")
+    assert saved["status"] == ("in_review" if terminal else "in_progress")
     assert saved["result"] == (
         {"run_id": run.run_id, "status": status, "content": run.content, "content_type": run.content_type}
         if terminal

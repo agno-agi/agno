@@ -446,7 +446,7 @@ async def test_summary_preserves_narrative_changes_and_failure_detail(heartbeat,
     )
     page = (await call("read_wiki", goal["id"], "summary.md")).content
     assert "The accepted guide failed its build" in page
-    assert "backlog → in_progress" in page
+    assert "backlog → in_review" in page
     assert "Documentation build failed" in page
     assert "## Failed Tasks" in page
     assert "Documentation build failed" in delivery.await_args.args[3]
@@ -898,7 +898,7 @@ async def test_summary_omits_acknowledged_failures(heartbeat, monkeypatch, ackno
     await call("summarize", goal_id=goal["id"], run_id="failed", interfaces=[], narrative="Failure needs review")
     assert "Historical failure" in delivery.await_args.args[-1]
     if acknowledgment in {"done", "archived"}:
-        await call("transition_task", task_id=task["id"], target="in_review", reason="Reviewed result")
+        # The failed run left the Task in review.
         await call("transition_task", task_id=task["id"], target="done", reason="Accepted result")
         if acknowledgment == "archived":
             await call("delete_task", task["id"])
