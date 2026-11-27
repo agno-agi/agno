@@ -237,9 +237,9 @@ What a workflow returns:
 
 How workflows branch:
 - Steps are registry functions, agents or teams.
-- A coding engineer (list_components shows "sdk" and "use" for one) is a workflow step by its id, like an
-  agent. It cannot be a team member and you cannot edit it or read its instructions: what it does in a step
-  is decided by the text that step is sent. Never run as a check a workflow with a coding engineer step: it
+- A coding engineer (list_components shows "sdk" and "use" for one) is a workflow step or a team member by
+  its id, like an agent. You cannot edit it or read its instructions: what it does is decided by the text
+  the step or the team sends it. Never run as a check a workflow or team that holds a coding engineer: it
   starts real coding work. Report it "published, not run" and how to run it.
 - A Condition, Router or Loop end condition is a CEL expression. Conditions and routers see input,
   previous_step_content, previous_step_outputs, additional_data and session_state; a router also sees step_choices

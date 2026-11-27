@@ -507,8 +507,11 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Members ---
     if team.members and isinstance(team.members, list):
         serialized_members = []
+        from agno.agents.base import BaseExternalAgent
+
         for member in team.members:
-            if isinstance(member, Agent):
+            # A coding engineer (Claude Code, Codex) is referenced by id like an Agent.
+            if isinstance(member, (Agent, BaseExternalAgent)):
                 serialized_members.append({"type": "agent", "agent_id": member.id})
             elif isinstance(member, Team):
                 serialized_members.append({"type": "team", "team_id": member.id})
@@ -878,23 +881,6 @@ def _team_type() -> type:
     return Team
 
 
-def _refuse_external_member(agent: Any, label: str, strict: bool) -> Any:
-    """None in place of an external adapter resolved as a member; strict loads raise.
-
-    Teams delegate to Agents: an external harness agent has no member protocol,
-    so a stored reference to one can never be honoured.
-    """
-    from agno.agents.base import BaseExternalAgent
-
-    if not isinstance(agent, BaseExternalAgent):
-        return agent
-    message = f"{label} is a {agent.sdk!r} external agent; external agents cannot be team members."
-    if strict:
-        raise ComponentRehydrationError(message)
-    log_warning(message)
-    return None
-
-
 def _registry_copy(component: Any, label: str, strict: bool, expected_type: type) -> Any:
     """An isolated copy of a code-defined registry component.
 
@@ -976,7 +962,7 @@ def from_dict(
         config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle Members reconstruction ---
-    members: Optional[List[Union[Agent, "Team"]]] = None
+    members: Optional[List[Any]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
     from agno.utils.component_scope import get_component_owner_scope
@@ -1045,21 +1031,24 @@ def from_dict(
                         agent = get_agent_by_id(
                             id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
                         )
-                agent = _refuse_external_member(agent, f"{component_label} member agent '{agent_id}'", strict)
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
                 # Deep copy so the shared registry singleton isn't mutated when the
                 # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
-                    registered_agent = _refuse_external_member(
-                        registry.get_agent(agent_id), f"{component_label} member agent '{agent_id}'", strict
-                    )
-                    agent = (
-                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
-                        if registered_agent is not None
-                        else None
-                    )
+                    from agno.agents.base import BaseExternalAgent
+
+                    registered_agent = registry.get_agent(agent_id)
+                    if isinstance(registered_agent, BaseExternalAgent):
+                        # A coding engineer (Claude Code, Codex) is not copied: the team sets nothing
+                        # on it and passes its own id on each member call, so the registry's instance
+                        # is the member, as it is in a team written in code.
+                        agent = registered_agent
+                    elif registered_agent is not None:
+                        agent = _registry_copy(
+                            registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent
+                        )
                 if agent is not None:
                     members.append(agent)
                 elif strict:
@@ -1455,7 +1444,6 @@ def save(
     Returns:
         Optional[int]: The version number of the saved config.
     """
-    from agno.agent.agent import Agent
 
     db_ = db or team.db
     if not db_:
@@ -1484,7 +1472,7 @@ def save(
                     "child_component_id": member.id,
                     "child_version": member_version,
                     "position": position,
-                    "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    "meta": {"type": "team" if isinstance(member, _team_type()) else "agent"},
                 }
             )
 

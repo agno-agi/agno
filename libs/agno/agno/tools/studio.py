@@ -138,16 +138,8 @@ def _not_found(identifier: str, noun: str = "Component") -> str:
     return message
 
 
-def _refuse_external_agent(component: Any, label: str) -> None:
-    """A team delegates to Agents; an external adapter runs on its own or as a workflow step."""
-    from agno.agents.base import BaseExternalAgent
-
-    if isinstance(component, BaseExternalAgent):
-        raise ValueError(f"{label} is a {component.sdk!r} external agent; external agents cannot be team members.")
-
-
 # What a listing or a read says of a coding engineer, so a builder knows where it fits.
-_ENGINEER_USE = "A coding engineer. Use it as a workflow step by its id. It cannot be a team member or be edited here."
+_ENGINEER_USE = "A coding engineer. Use it by its id as a workflow step or a team member. It cannot be edited here."
 
 
 # How many same-name rows a display-name lookup pulls before calling it
@@ -941,7 +933,7 @@ class StudioTools(Toolkit):
         return cast(List["Agent"], self._runner_tools._iter_agents())
 
     def _iter_engineers(self) -> List[Any]:
-        """Code-defined coding engineers (ClaudeAgent, CodexAgent): workflow steps, never team members."""
+        """Code-defined coding engineers (ClaudeAgent, CodexAgent): workflow steps and team members, never edited here."""
         from agno.agents.base import BaseExternalAgent
         from agno.registry._reserved import RESERVED_MEMBER_IDS
 
@@ -953,8 +945,8 @@ class StudioTools(Toolkit):
             if isinstance(agent, BaseExternalAgent) and getattr(agent, "id", None) not in RESERVED_MEMBER_IDS
         ]
 
-    def _iter_step_agents(self) -> List[Any]:
-        """Every code-defined agent a workflow step may name: Agents and coding engineers."""
+    def _iter_composable_agents(self) -> List[Any]:
+        """Every code-defined agent a workflow step or a team may name: Agents and coding engineers."""
         return [*self._iter_agents(), *self._iter_engineers()]
 
     def _iter_teams(self) -> List["Team"]:
@@ -966,14 +958,8 @@ class StudioTools(Toolkit):
     def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
         return cast(Optional["Agent"], self._runner_tools._find_agent(agent_id, actor=actor))
 
-    def _find_step_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
-        """The agent a workflow step names: an Agent, or a coding engineer by exact id, then display name.
-
-        A stored engineer is found by exact id at its published version.
-        """
-        found: Optional[Any] = self._find_agent(agent_id, actor=actor)
-        if found is not None:
-            return found
+    def _find_engineer(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
+        """A coding engineer by exact id, then display name. A stored one is found by exact id at its published version."""
         engineers = self._iter_engineers()
         for engineer in engineers:
             if getattr(engineer, "id", None) == agent_id:
@@ -982,6 +968,11 @@ class StudioTools(Toolkit):
         if len(named) == 1:
             return named[0]
         return self._runner_tools._load_agent_from_db(agent_id, for_dispatch=True, actor=actor)
+
+    def _find_step_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
+        """The agent a workflow step names: an Agent, else a coding engineer."""
+        found: Optional[Any] = self._find_agent(agent_id, actor=actor)
+        return found if found is not None else self._find_engineer(agent_id, actor=actor)
 
     def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._find_team(team_id, actor=actor)
@@ -5120,7 +5111,7 @@ class StudioTools(Toolkit):
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
         if component_id in self.registry.excluded_component_ids:
             return True
-        for component in [*self._iter_step_agents(), *self._iter_teams(), *self._iter_workflows()]:
+        for component in [*self._iter_composable_agents(), *self._iter_teams(), *self._iter_workflows()]:
             component_name = getattr(component, "name", None)
             if (
                 getattr(component, "id", None) == component_id
@@ -5162,9 +5153,7 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} has no id and cannot be stored as a reference.")
         is_team = isinstance(child, Team)
         expected_type = ComponentType.TEAM if is_team else ComponentType.AGENT
-        # A step may name a coding engineer; a member may not.
-        for_step = noun.startswith("Step")
-        candidates = self._iter_teams() if is_team else (self._iter_step_agents() if for_step else self._iter_agents())
+        candidates = self._iter_teams() if is_team else self._iter_composable_agents()
         code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
         db_label = getattr(target_db, "id", None) or type(target_db).__name__
 
@@ -5238,8 +5227,6 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:
             raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
-        if not for_step:
-            _refuse_external_agent(rebound, f"{noun} '{child_id}'")
         return rebound, (resolved_version if isinstance(resolved_version, int) else None)
 
     def _bind_members_to_target_db(
@@ -5323,7 +5310,6 @@ class StudioTools(Toolkit):
             member = loader(db=target_db, id=identifier, registry=self.registry, strict=True)
         except ComponentRehydrationError as e:
             raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
-        _refuse_external_agent(member, f"Member '{identifier}'")
         return member
 
     def _resolve_members(
@@ -5368,6 +5354,8 @@ class StudioTools(Toolkit):
                         f"Ambiguous member name: '{mid}' matches both an agent and a team. Use an exact id."
                     )
                 member = agent_named or team_named
+            if member is None:
+                member = self._find_engineer(mid, actor=actor)
             if member is None:
                 missing.append(mid)
             else:
@@ -5630,9 +5618,7 @@ class StudioTools(Toolkit):
 
         links: List[Dict[str, Any]] = []
         if isinstance(component, Team):
-            from agno.agent.agent import Agent
-
-            code_agents = list(self._iter_agents())
+            code_agents = list(self._iter_composable_agents())
             code_teams = list(self._iter_teams())
             members = component.members if isinstance(component.members, list) else []
             for position, member in enumerate(members):
@@ -5651,11 +5637,11 @@ class StudioTools(Toolkit):
                         "child_component_id": member.id,
                         "child_version": child_version,
                         "position": position,
-                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                        "meta": {"type": "team" if is_member_team else "agent"},
                     }
                 )
         elif isinstance(component, Workflow):
-            code_agents = list(self._iter_step_agents())
+            code_agents = list(self._iter_composable_agents())
             code_teams = list(self._iter_teams())
 
             def walk(step: Any, position: int, key_suffix: str = "") -> None:

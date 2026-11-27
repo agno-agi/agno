@@ -624,28 +624,44 @@ class TestPersistence:
 
 
 # ---------------------------------------------------------------------------
-# Composition refuses external agents
+# Composition: an engineer is a team member and a workflow step
 # ---------------------------------------------------------------------------
 
 
 class TestComposition:
-    def test_team_from_dict_refuses_a_stored_external_member(self, db, registry, agno_logs):
+    def test_team_from_dict_loads_a_stored_external_member(self, db, registry):
         ClaudeAgent(id="coder").save(db=db)
         config = {"id": "crew", "name": "Crew", "members": [{"type": "agent", "agent_id": "coder"}]}
 
-        with pytest.raises(ComponentRehydrationError, match="external agents cannot be team members"):
-            Team.from_dict(config, db=db, registry=registry, strict=True)
+        team = Team.from_dict(config, db=db, registry=registry, strict=True)
 
-        team = Team.from_dict(config, db=db, registry=registry, strict=False)
-        assert team.members == []
-        assert "cannot be team members" in agno_logs.text
+        assert [type(member) for member in team.members] == [ClaudeAgent]  # type: ignore[union-attr]
+        assert team.members[0].id == "coder"  # type: ignore[index, union-attr]
 
-    def test_team_from_dict_refuses_a_registry_external_member(self, db):
-        registry = Registry(agents=[ClaudeAgent(id="coder")])
-        config = {"id": "crew", "name": "Crew", "members": [{"type": "agent", "agent_id": "coder"}]}
+    def test_team_from_dict_uses_the_registry_engineer_as_a_member(self, db):
+        """An engineer defined in code is the member itself, as in a team written in code."""
+        coder = ClaudeAgent(id="coder")
+        registry = Registry(agents=[coder, Agent(id="writer")])
+        config = {
+            "id": "crew",
+            "name": "Crew",
+            "members": [{"type": "agent", "agent_id": "coder"}, {"type": "agent", "agent_id": "writer"}],
+        }
 
-        with pytest.raises(ComponentRehydrationError, match="external agents cannot be team members"):
-            Team.from_dict(config, db=db, registry=registry, strict=True)
+        team = Team.from_dict(config, db=db, registry=registry, strict=True)
+
+        assert team.members[0] is coder  # type: ignore[index]
+        # An Agent is still copied out of the registry.
+        assert isinstance(team.members[1], Agent) and team.members[1] is not registry.get_agent("writer")  # type: ignore[index]
+
+    def test_a_team_keeps_its_engineer_member_when_stored(self, db):
+        """to_dict names an engineer member by id; it used to be left out of the stored team."""
+        team = Team(id="crew", name="Crew", members=[ClaudeAgent(id="coder"), Agent(id="writer")])
+
+        assert team.to_dict()["members"] == [
+            {"type": "agent", "agent_id": "coder"},
+            {"type": "agent", "agent_id": "writer"},
+        ]
 
     def test_workflow_from_dict_loads_a_stored_external_step(self, db, registry):
         ClaudeAgent(id="coder").save(db=db)
@@ -720,7 +736,7 @@ class TestComposition:
         app.include_router(get_components_router(os_db=db, settings=AgnoAPISettings(), registry=registry))
         return TestClient(app)
 
-    def test_components_api_refuses_a_stored_external_member(self, db, components_client):
+    def test_components_api_accepts_a_stored_external_member(self, db, components_client):
         ClaudeAgent(id="coder").save(db=db)
 
         response = components_client.post(
@@ -733,8 +749,9 @@ class TestComposition:
             },
         )
 
-        assert response.status_code == 400
-        assert "External agents cannot be team members: coder" in response.json()["detail"]
+        assert response.status_code == 201, response.text
+        links = db.get_links(component_id="crew", version=1)
+        assert [(link["link_kind"], link["child_component_id"]) for link in links] == [("member", "coder")]
 
     def test_components_api_accepts_a_stored_external_step(self, db, components_client):
         ClaudeAgent(id="coder").save(db=db)
@@ -1089,7 +1106,7 @@ class TestAgentOS:
 
 
 # ---------------------------------------------------------------------------
-# Studio tools: an engineer is a workflow step, never a team member
+# Studio tools: an engineer is a workflow step or a team member
 # ---------------------------------------------------------------------------
 
 
@@ -1102,7 +1119,13 @@ class TestStudioEngineerSteps:
     def studio(self, db, engineers):
         from agno.tools.studio import StudioTools
 
-        registry = Registry(agents=[*engineers, Agent(id="triage", name="Triage", db=db)], dbs=[db])
+        from agno.models.openai import OpenAIResponses
+
+        registry = Registry(
+            agents=[*engineers, Agent(id="triage", name="Triage", db=db)],
+            dbs=[db],
+            models=[OpenAIResponses(id="gpt-5.6-luna")],
+        )
         return StudioTools(
             registry=registry, db=db, create_agents=True, create_teams=True, create_workflows=True, versions=True
         )
@@ -1114,6 +1137,7 @@ class TestStudioEngineerSteps:
         assert set(rows) == {"triage", "claude-1", "codex-1"}
         assert rows["claude-1"]["sdk"] == "claude-agent-sdk" and rows["codex-1"]["sdk"] == "codex"
         assert "workflow step" in rows["codex-1"]["use"] and "team member" in rows["codex-1"]["use"]
+        assert "cannot be edited" in rows["codex-1"]["use"]
         assert "sdk" not in rows["triage"]
         # Teams and workflows are not given engineer rows.
         assert json.loads(studio.list_components("team"))["data"]["components"] == []
@@ -1166,12 +1190,29 @@ class TestStudioEngineerSteps:
         assert runnable is not None
         assert runnable.steps[0].steps[0].steps[0].agent is claude  # type: ignore[index, union-attr]
 
-    def test_an_engineer_is_still_refused_as_a_team_member(self, studio):
+    def test_a_team_is_built_with_an_engineer_member_and_loads_it(self, studio, db, engineers):
         import json
 
-        result = json.loads(
-            studio.create_team(name="Crew", instructions="Work together.", member_ids=["claude-1"], publish=True)
-        )
+        from agno.team.team import get_team_by_id
 
-        assert result["ok"] is False
-        assert json.loads(studio.list_components("team"))["data"]["components"] == []
+        claude, _ = engineers
+        created = json.loads(
+            studio.create_team(
+                name="Crew",
+                instructions="Work together.",
+                # By display name, and by id.
+                member_ids=["Claude 1", "triage"],
+                model_id="gpt-5.6-luna",
+                publish=True,
+            )
+        )
+        assert created["ok"], created
+        assert created["data"]["member_ids"] == ["claude-1", "triage"]
+        assert json.loads(studio.get_component("crew"))["data"]["member_ids"] == ["claude-1", "triage"]
+
+        team = get_team_by_id(db=db, id="crew", registry=studio.registry, strict=True)
+        assert team.members[0] is claude and isinstance(team.members[1], Agent)  # type: ignore[index, union-attr]
+
+        # The runner refuses a member that is the registry's shared Agent; an engineer is shared by design.
+        runnable = studio._runner_tools._team_for_run("crew")
+        assert runnable is not None and runnable.members[0] is claude  # type: ignore[index]
