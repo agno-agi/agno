@@ -503,13 +503,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
     from agno.os.manager.person import Person, TurnContext
 
-    def role_store() -> Any:
-        authorization = getattr(agent_os, "authorization", None)
-        return authorization if hasattr(authorization, "aroles_of") else None
-
-    # Who the person is, then that work, in one message right before theirs.
+    # Who the person is, then that work, in one message right before theirs. The role store is the
+    # Authorization object when it manages roles; agent_os.authorization itself is only a switch.
     team._message_context = TurnContext(
-        Person(lambda: getattr(agent_os, "user_directory", None), role_store),
+        Person(
+            lambda: getattr(agent_os, "user_directory", None),
+            lambda: getattr(agent_os, "_authz_role_store", None),
+        ),
         work,
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
+from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY, SCHEDULED_RUN_METADATA_KEY
 from agno.os.manager.person import Person, TurnContext
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
@@ -92,6 +92,33 @@ def test_a_schedule_and_a_service_account_are_not_called_a_person(mode):
     assert "user id sa:ci, a service account, not a person." in read(
         Person(), context(principal="sa:ci", service_account=True), mode
     )
+    # With authorization off a schedule has no authority to mark, so the run's metadata carries the mark.
+    assert read(Person(), context(user="jonah", metadata={SCHEDULED_RUN_METADATA_KEY: True}), mode) == (
+        HEADER + "nobody. A schedule started this run for user id jonah."
+    )
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_a_role_from_managed_roles_is_told(tmp_path, mode):
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+    from agno.os import AgentOS, OSManager
+    from agno.os.authz.authorization import Authorization
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    authorization = Authorization(verification_keys=["k" * 40], algorithm="HS256", audience="person-test")
+    authorization.define_role("reviewer", ["teams:run"])
+    authorization.assign("u-1", "reviewer")
+    agent_os = AgentOS(
+        db=db,
+        manager=OSManager(model=OpenAIResponses(id="x", api_key="k"), access_docs=False),
+        authorization=authorization,
+        telemetry=False,
+    )
+    # A signed request carries the principal and no roles: the roles are read from the role store.
+    note = read(agent_os.manager._message_context.person, context(principal="u-1"), mode)
+    assert note == HEADER + "user id u-1, role reviewer. AgentOS verified this sign-in."
+    db.close()
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])

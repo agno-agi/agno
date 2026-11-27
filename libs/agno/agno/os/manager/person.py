@@ -9,6 +9,7 @@ user directory's name and email and the caller's roles where those exist.
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.run.authorization import _caller_authorization, in_finished_work_report
 from agno.utils.log import log_debug, log_warning
 
@@ -32,11 +33,15 @@ def _identity(run_context: Any) -> Dict[str, Any]:
     context = getattr(authority, "context", None)
     principal = getattr(context, "principal_id", None)
     user_id = principal or getattr(run_context, "user_id", None)
+    # A schedule with a saved authority marks the run on it. One with none, as when authorization is
+    # off, marks the run's metadata.
+    metadata = getattr(run_context, "metadata", None)
+    marked = isinstance(metadata, dict) and bool(metadata.get(SCHEDULED_RUN_METADATA_KEY))
     return {
         "user_id": _clean(user_id),
         "verified": bool(principal),
         "service_account": bool(getattr(authority, "service_account", False)),
-        "scheduled": bool(getattr(authority, "scheduled", False)),
+        "scheduled": bool(getattr(authority, "scheduled", False)) or marked,
         "roles": list(getattr(context, "roles", None) or []),
         "report": in_finished_work_report(run_context),
     }
