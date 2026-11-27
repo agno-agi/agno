@@ -19,6 +19,8 @@ ACTION_REJECT_REASON = "reject_reason"
 ACTION_FEEDBACK_SELECT = "feedback_select"
 ACTION_EXTERNAL_RESULT = "external_result"
 ACTION_INPUT_FIELD_PREFIX = "input_field:"
+# A link button opens its URL in the browser; Slack still sends the click, which is only acknowledged
+ACTION_LINK_ACCOUNT = "link_account"
 
 
 # --- Block ID builders/parsers ---

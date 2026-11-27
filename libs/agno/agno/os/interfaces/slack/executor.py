@@ -39,7 +39,7 @@ from agno.os.interfaces.slack.helpers import (
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.pause import finalize_pause, pause_labels, post_pause_card
-from agno.os.interfaces.slack.security import can_act
+from agno.os.interfaces.slack.security import can_act, delegation
 from agno.os.interfaces.slack.state import StreamState
 from agno.os.interfaces.slack.stream import SlackStream, StreamStopped
 from agno.os.interfaces.slack.types import tool_args, tool_name, truncate
@@ -126,6 +126,7 @@ def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple
                 # A sandbox request carries run metadata, which agent code inside the sandbox could read
                 "action_token": None if sandboxed else event_context.action_token,
                 "message_ts": event_context.message_ts,
+                "act": delegation(event_context.authority),
             },
         ),
         "dependencies": _slack_dependencies(event_context),
