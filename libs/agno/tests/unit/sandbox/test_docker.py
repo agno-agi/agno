@@ -1052,7 +1052,12 @@ async def test_killed_runtime_request_says_when_the_sandbox_is_out_of_memory(exi
     result = await provider.arpc(handle, "poll", b"{}")
     assert result.exit_code == exit_code
     if expected == "out of memory":
-        assert "killed (signal 9)" in result.stderr and "1024 MB memory limit" in result.stderr
+        # Docker's record does not say which memory ran out, so the message names the record and
+        # the limit without saying the sandbox reached it.
+        assert result.stderr == (
+            "the runtime request was killed (signal 9); Docker recorded an out-of-memory kill in this sandbox. "
+            "Its memory limit is 1024 MB, which also counts files in /workspace, /runtime and /tmp"
+        )
     else:
         assert result.stderr == expected
     # A failed reply never touches compute, whatever the reason.
@@ -1063,7 +1068,7 @@ async def test_killed_runtime_request_says_when_the_sandbox_is_out_of_memory(exi
 @pytest.mark.parametrize(
     "code, err, oom_killed, expected",
     [
-        (137, b"", b"true\n", "the command runner was killed [(]signal 9[)]; the sandbox is out of memory"),
+        (137, b"", b"true\n", "the command runner was killed [(]signal 9[)]; Docker recorded an out-of-memory kill"),
         (137, b"", b"false\n", "Sandbox command transport failed: the command runner was killed [(]signal 9[)]$"),
         (1, b"daemon error", b"true\n", "Sandbox command transport failed: daemon error$"),
     ],

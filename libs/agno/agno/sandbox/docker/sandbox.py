@@ -637,15 +637,18 @@ class DockerSandbox(Sandbox):
         return ExecResult(exit_code=0, stdout=body, stderr="")
 
     async def _memory_note(self, handle: SandboxHandle) -> str:
-        """Says the sandbox is out of memory when Docker records that the kernel has killed
-        processes in it, else nothing. A container at its memory limit has no room for a new
-        process, so a command or runtime request sent to it is killed without a message."""
+        """Says that Docker recorded an out-of-memory kill in the sandbox, else nothing.
+
+        A container at its memory limit has no room for a new process, so a command or runtime
+        request sent to it is killed without a message. Docker's record does not say which memory
+        ran out (the sandbox's limit or the host's) or when, so the note states the record and
+        the limit and leaves the cause to the reader."""
         code, out, _ = await self._docker("container", "inspect", "-f", "{{.State.OOMKilled}}", handle.provider_ref)
         if code or out.strip() != b"true":
             return ""
         return (
-            f"the sandbox is out of memory: the kernel has killed processes in it at its {self.memory_mb} MB "
-            "memory limit, which also counts files in /workspace, /runtime and /tmp"
+            f"Docker recorded an out-of-memory kill in this sandbox. Its memory limit is {self.memory_mb} MB, "
+            "which also counts files in /workspace, /runtime and /tmp"
         )
 
     async def aexec(
