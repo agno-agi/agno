@@ -179,12 +179,13 @@ def test_context_size_is_estimated_locally_when_not_supplied():
 
 def test_a_threshold_without_replayed_history_is_warned_about(caplog):
     """Compaction folds replayed history; with none, compact_at_tokens never fires."""
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     def warnings_for(**kwargs):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="agno"):
-            _init.set_compaction(Agent(**kwargs))
+            set_compaction(Agent(**kwargs))
         return [r.message for r in caplog.records if "add_history_to_context" in r.message]
 
     assert warnings_for(add_history_to_context=False, compaction=Compaction())
@@ -195,12 +196,13 @@ def test_a_threshold_without_replayed_history_is_warned_about(caplog):
 
 def test_compaction_alongside_session_summaries_is_warned_about(caplog):
     """Both put a summary of the same history into the context."""
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     def warnings_for(**kwargs):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="agno"):
-            _init.set_compaction(Agent(add_history_to_context=True, compaction=Compaction(), **kwargs))
+            set_compaction(Agent(add_history_to_context=True, compaction=Compaction(), **kwargs))
         return [r.message for r in caplog.records if "session summaries" in r.message]
 
     assert warnings_for(add_session_summary_to_context=True)
@@ -210,13 +212,14 @@ def test_compaction_alongside_session_summaries_is_warned_about(caplog):
 def test_a_small_replay_window_is_not_a_misconfiguration(caplog):
     """num_history_runs bounds only what a run sends; compaction reads its own window. A window at
     or below the kept tail overrides nothing, so there is nothing to warn about."""
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     for window, keep in ((2, 5), (5, 5), (20, 5)):
         caplog.clear()
         agent = Agent(num_history_runs=window, compaction=Compaction(uncompacted_runs=keep))
         with caplog.at_level(logging.WARNING, logger="agno"):
-            _init.set_compaction(agent)
+            set_compaction(agent)
         assert not [r for r in caplog.records if "num_history_runs" in r.message], (window, keep)
         assert agent.num_history_runs == window
 
@@ -224,14 +227,15 @@ def test_a_small_replay_window_is_not_a_misconfiguration(caplog):
 def test_an_agentos_copy_plans_over_the_same_window(caplog):
     """AgentOS deep-copies the agent per request, passing num_history_runs=3 back as if the user had
     set it. Nothing depends on telling the default from a choice, so the copy behaves the same."""
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
     from agno.agent._messages import _compaction_history_runs
+    from agno.compaction._setup import set_compaction
 
     original = Agent(compaction=Compaction())
     copy = original.deep_copy()
 
     with caplog.at_level(logging.WARNING, logger="agno"):
-        _init.set_compaction(copy)
+        set_compaction(copy)
 
     assert _compaction_history_runs(copy) == _compaction_history_runs(original) == 500
     assert not [r for r in caplog.records if "num_history_runs" in r.message]
@@ -1692,20 +1696,21 @@ def test_reactive_recovery_is_opt_in_on_a_configured_compaction():
     compaction=True is the exception: with no threshold to rely on, the rejection is the
     only thing that can fold, so it is turned on there.
     """
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     bare = Agent(compaction=True)
-    _init.set_compaction(bare)
+    set_compaction(bare)
     assert bare.compaction.compact_at_tokens is None
     assert bare.compaction.on_context_overflow is True
 
     configured = Agent(compaction=Compaction())
-    _init.set_compaction(configured)
+    set_compaction(configured)
     assert configured.compaction.compact_at_tokens == 150_000
     assert configured.compaction.on_context_overflow is False
 
     opted_in = Agent(compaction=Compaction(on_context_overflow=True))
-    _init.set_compaction(opted_in)
+    set_compaction(opted_in)
     assert opted_in.compaction.on_context_overflow is True
 
 
@@ -1718,24 +1723,26 @@ def test_compaction_true_is_reactive_only():
     Passing a Compaction object opts into the threshold, because someone configuring it has a
     size in mind.
     """
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     bare = Agent(compaction=True)
-    _init.set_compaction(bare)
+    set_compaction(bare)
     assert bare.compaction.compact_at_tokens is None
     assert bare.compaction.on_context_overflow is True
 
     configured = Agent(compaction=Compaction())
-    _init.set_compaction(configured)
+    set_compaction(configured)
     assert configured.compaction.compact_at_tokens == 150_000
 
 
 def test_compaction_true_never_fires_the_proactive_trigger():
     """The threshold is off, not merely large - a 200k context still does not trip it."""
-    from agno.agent import Agent, _init
+    from agno.agent import Agent
+    from agno.compaction._setup import set_compaction
 
     agent = Agent(compaction=True)
-    _init.set_compaction(agent)
+    set_compaction(agent)
 
     assert agent.compaction.should_compact(_transcript(), context_tokens=200_000, model=None) is False
 

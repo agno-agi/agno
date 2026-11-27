@@ -34,6 +34,7 @@ from agno.agent import (
     _utils,
 )
 from agno.agent.followup import FollowupConfig, resolve_followup_settings
+from agno.compaction._setup import disable_compaction_without_records
 from agno.compaction.compaction import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
@@ -745,7 +746,7 @@ class Agent:
         self._callable_knowledge_cache: Dict[str, Any] = {}
 
         _init.get_models(self)
-        _init.disable_compaction_without_records(self)
+        disable_compaction_without_records(self)
 
     # ---------------------------------------------------------------
     # Properties

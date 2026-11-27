@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent.followup import FollowupConfig, resolve_followup_settings
+from agno.compaction._setup import disable_compaction_without_records, set_compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
@@ -441,8 +442,6 @@ def __init__(
     _resolve_models(
         team,
     )
-    from agno.agent._init import disable_compaction_without_records
-
     disable_compaction_without_records(team)
 
 
@@ -917,8 +916,6 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
     if team.compaction is not None:
-        from agno.agent._init import set_compaction
-
         set_compaction(team)
     # Offloading and tool-result compression cannot run together: compression
     # rewrites the tool messages that hold stored-result envelopes. Refuse the
