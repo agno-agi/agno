@@ -345,6 +345,21 @@ def test_harness_state_session_is_not_counted_but_an_agent_with_team_metadata_is
     assert [(row["component_id"], row["sessions_count"]) for row in rows] == [("agent-1", 1)]
 
 
+def test_harness_state_session_of_a_checkout_is_not_counted():
+    """A sandboxed harness agent told what to check out keeps one session per checkout, named after the
+    parent's session, the agent and the checkout. None of them is a conversation of its own."""
+    sessions = [
+        {**_session("alice", "agent", "claude"), "session_id": session_id, "metadata": {"workflow_id": "wf"}}
+        for session_id in ("w1:claude@pr-7", "w1:claude@branch-release-3.3", "alice@acme.com:claude@pr-7")
+    ]
+    # Not a state session: the part before the checkout does not name this agent.
+    other = {**_session("alice", "agent", "claude"), "session_id": "w1:codex@pr-7", "metadata": {"workflow_id": "wf"}}
+
+    rows = calculate_date_component_metrics(TARGET_DATE, [*sessions, other], [], set(), [])
+
+    assert [(row["component_id"], row["sessions_count"]) for row in rows] == [("claude", 1)]
+
+
 def test_remote_member_run_and_session_are_counted_under_the_team_on_a_shared_database():
     """A remote member's AgentOS stores its run with no parent, in a session named after the team's session; on a
     shared database the team's run names the parent, so the team's run is the one root run and session."""

@@ -1816,12 +1816,17 @@ def calculate_date_component_metrics(
             continue
         metadata = session.get("metadata")
         # A harness agent run for a team or workflow keeps its native state in a session of its own, named after the
-        # parent's session and the agent; the parent's session counts the conversation
+        # parent's session and the agent; the parent's session counts the conversation. A sandboxed one that was
+        # told what to check out has one such session per checkout, named "<parent>:<agent>@<checkout>".
+        state_session_id, _, checkout = (session.get("session_id") or "").rpartition("@")
         if (
             session.get("session_type") == "agent"
             and isinstance(metadata, dict)
             and metadata.keys() & {"team_id", "workflow_id"}
-            and (session.get("session_id") or "").endswith(f":{session.get('agent_id')}")
+            and (
+                (session.get("session_id") or "").endswith(f":{session.get('agent_id')}")
+                or (bool(checkout) and state_session_id.endswith(f":{session.get('agent_id')}"))
+            )
         ):
             continue
         component = _metrics_component(session)
