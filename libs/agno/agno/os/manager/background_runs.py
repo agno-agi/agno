@@ -99,9 +99,11 @@ def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None, of
 
     The archive is restored into a temporary directory on this host and compared there with git, which
     must be installed. Everything the agent did since the commit counts, committed or not; new files its
-    .gitignore excludes do not. git runs on a new, empty repository directory that borrows only the
-    objects of the saved checkout, so no configuration, hook, filter or diff driver written inside the
-    sandbox is read or run. Nothing is written outside the temporary directory, which is removed.
+    .gitignore excludes do not. git tracks what it tracked in the sandbox: a file the agent removed from
+    git is deleted although it is still on disk. git runs on a new repository directory that borrows only
+    the objects and the index of the saved checkout, so no configuration, hook, filter or diff driver
+    written inside the sandbox is read or run. Nothing is written outside the temporary directory, which
+    is removed.
     """
     if shutil.which("git") is None:
         raise _Unreadable("Reading a sandbox checkout needs git on the AgentOS host, and it is not installed.")
@@ -160,10 +162,16 @@ def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None, of
                 f"The saved checkout does not hold commit {commit[:12]}, the one its sandbox started from, "
                 "so there is nothing to compare it with."
             )
-        # The new repository's index starts as the commit, so what git tracks stays tracked: a tracked file
-        # that .gitignore also matches, or a submodule the sandbox never fetched, is not taken for a deleted
-        # one. It then takes the checkout as it is; the saved checkout is not written.
-        git("read-tree", commit)
+        # The new repository's index starts as a copy of the saved checkout's, so git tracks here what it
+        # tracked in the sandbox. A tracked file that .gitignore also matches, or a submodule the sandbox
+        # never fetched, is not taken for a deleted one; a file the agent removed from git is deleted
+        # although it is still on disk; a file it added past .gitignore is added. The index then takes the
+        # checkout as it is; the saved checkout is not written.
+        index = checkout / ".git" / "index"
+        if index.is_file() and not index.is_symlink():
+            shutil.copyfile(index, gitdir / "index")
+        else:
+            git("read-tree", commit)
         git("add", "--all")
         compare = ["diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"]
         files: Dict[str, Dict[str, Any]] = {}
@@ -892,13 +900,19 @@ class BackgroundRunTools(StudioRunnerTools):
                 f"A later run ({later[0].get('run_id')}) is {status} and saved no checkout: these are the files "
                 f"as run {run_id} left them."
             )
-        if not files:
+        # The sandbox keeps one checkout for the whole session, and base_commit never moves. So after an
+        # earlier run the diff is the session's, and says nothing of which run changed what.
+        if not files and earlier:
+            notes.append(
+                "No file differs from base_commit: the checkout now matches the commit this session's sandbox "
+                "started from, so anything an earlier run changed has been put back."
+            )
+        elif not files:
             notes.append("No file differs from base_commit: this agent changed nothing in its checkout.")
         elif earlier:
-            # The sandbox keeps one checkout for the whole session, and base_commit never moves.
             notes.append(
-                f"Run {run_id} is not the first run of this session: the diff is everything changed since "
-                f"base_commit, earlier runs' changes included, not only what run {run_id} changed."
+                f"Run {run_id} is not the first run of this session: the diff is everything changed in the "
+                f"session since base_commit, not only what run {run_id} changed."
             )
         if files and path and not length:
             notes.append(f"{path} is not among the changed files.")

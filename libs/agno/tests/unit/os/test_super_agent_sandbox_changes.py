@@ -267,9 +267,71 @@ def test_a_second_run_says_the_diff_holds_the_first_runs_changes(reader, saved, 
     result = reader.read(run_context, mode, agent_id="engineer")
     assert result["run_id"] == "run-2" and "+Reviewed." in result["diff"]
     assert result["note"] == (
-        "Run run-2 is not the first run of this session: the diff is everything changed since base_commit, "
-        "earlier runs' changes included, not only what run run-2 changed."
+        "Run run-2 is not the first run of this session: the diff is everything changed in the session since "
+        "base_commit, not only what run run-2 changed."
     )
+
+
+@modes
+def test_a_run_that_undid_an_earlier_runs_change_is_not_said_to_have_changed_nothing(reader, saved, mode):
+    edit(saved)
+    run_context = person()
+    session = reader.session(run_context)
+    reader.rows.append(saved.row(saved.capture(), session=session))
+    # The second run is asked to undo the first, and does.
+    git(saved.checkout, "reset", "--quiet", "--hard", saved.commit)
+    git(saved.checkout, "clean", "--quiet", "-fdx")
+    reader.rows.append(saved.row(saved.capture(), run_id="run-2", session=session, index=2))
+    result = reader.read(run_context, mode, agent_id="engineer")
+    assert result["run_id"] == "run-2" and result["changed_files"] == [] and result["diff"] == ""
+    assert result["note"] == (
+        "No file differs from base_commit: the checkout now matches the commit this session's sandbox started "
+        "from, so anything an earlier run changed has been put back."
+    )
+
+
+@modes
+def test_a_first_run_that_failed_is_not_said_to_have_changed_anything(reader, saved, mode):
+    run_context = person()
+    session = reader.session(run_context)
+    reader.rows.append(saved.row(None, session=session, status="ERROR"))
+    edit(saved)
+    reader.rows.append(saved.row(saved.capture(), run_id="run-2", session=session, index=2))
+    note = reader.read(run_context, mode, agent_id="engineer")["note"]
+    assert note.startswith("Run run-2 is not the first run of this session: the diff is everything changed in")
+    assert "earlier run" not in note
+
+
+@modes
+def test_what_the_agent_removed_from_git_or_added_past_gitignore_is_reported_as_git_does(reader, saved, mode):
+    """git tracks in the comparison what it tracked in the sandbox, whatever is on disk and in .gitignore."""
+    (saved.checkout / "dist").mkdir()
+    (saved.checkout / "dist" / "bundle.js").write_text("built\n")
+    (saved.checkout / "local.env").write_text("KEY=placeholder\n")
+    git(saved.checkout, "add", "--all")
+    git(saved.checkout, "commit", "--quiet", "-m", "a built file and a local file, both tracked")
+    saved.commit = git(saved.checkout, "rev-parse", "HEAD")
+    # The engineer stops tracking both, committed for one and not for the other, and both stay on disk.
+    git(saved.checkout, "rm", "--quiet", "-r", "--cached", "dist")
+    (saved.checkout / ".gitignore").write_text("build/\ndist/\nlocal.env\n")
+    git(saved.checkout, "commit", "--quiet", "-am", "stop tracking dist/")
+    git(saved.checkout, "rm", "--quiet", "--cached", "local.env")
+    (saved.checkout / "local.env").write_text("KEY=a-value-of-this-machine\n")
+    # And adds a file .gitignore excludes, on purpose.
+    (saved.checkout / "build").mkdir()
+    (saved.checkout / "build" / "README.md").write_text("why build/ exists\n")
+    git(saved.checkout, "add", "--force", "build/README.md")
+    run_context = person()
+    reader.rows.append(saved.row(saved.capture(), session=reader.session(run_context)))
+    result = reader.read(run_context, mode, agent_id="engineer")
+    assert {entry["path"]: entry["change"] for entry in result["changed_files"]} == {
+        ".gitignore": "modified",
+        "build/README.md": "added",
+        "dist/bundle.js": "deleted",
+        "local.env": "deleted",
+    }
+    # What is on disk in a file git no longer tracks is not in the diff.
+    assert "a-value-of-this-machine" not in result["diff"]
 
 
 @modes
