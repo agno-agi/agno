@@ -1110,6 +1110,39 @@ class UserFeedbackQuestion:
         )
 
 
+def _add_null_branches(parameters: Dict[str, Any], entrypoint: Optional[Callable]) -> None:
+    """Give a null branch to each property that strict mode made required but the callable can leave as None.
+
+    Only a parameter whose type admits None and whose default is None (or that has no default) qualifies:
+    leaving out `max_results: Optional[int] = 5` means 5, so a null there would change the call.
+    """
+    from inspect import signature
+
+    properties = parameters.get("properties")
+    if entrypoint is None or not isinstance(properties, dict):
+        return
+    try:
+        hints = get_type_hints(entrypoint)
+        params = signature(entrypoint).parameters
+    except Exception:
+        return
+    for name, schema in list(properties.items()):
+        param = params.get(name)
+        if param is None or not isinstance(schema, dict) or not _admits_none(hints.get(name)):
+            continue
+        # Identity checks: a default whose __eq__ misbehaves (a numpy array) must not raise here.
+        if param.default is not param.empty and param.default is not None:
+            continue
+        if _schema_accepts_null(schema):
+            continue
+        nullable: Dict[str, Any] = {
+            "anyOf": [{k: v for k, v in schema.items() if k != "description"}, {"type": "null"}]
+        }
+        if "description" in schema:
+            nullable["description"] = schema["description"]
+        properties[name] = nullable
+
+
 def _admits_none(hint: Any) -> bool:
     return hint is type(None) or (is_origin_union_type(get_origin(hint)) and type(None) in get_args(hint))
 
@@ -1603,6 +1636,8 @@ class Function(BaseModel):
             # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
             # get_json_schema, so requiring it would describe a property that does not exist.
             parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
+            if strict:
+                _add_null_branches(parameters, c)
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
@@ -1905,29 +1940,7 @@ class Function(BaseModel):
             and name not in AGNO_INJECTED_PARAMS
         ]
 
-        # Every parameter is now required, so one whose type admits None must accept null.
-        for name in self._parameters_admitting_none(properties):
-            schema = properties[name]
-            nullable: Dict[str, Any] = {
-                "anyOf": [{k: v for k, v in schema.items() if k != "description"}, {"type": "null"}]
-            }
-            if "description" in schema:
-                nullable["description"] = schema["description"]
-            properties[name] = nullable
-
-    def _parameters_admitting_none(self, properties: Dict[str, Any]) -> List[str]:
-        """Names of the properties whose Python annotation admits None but whose schema rejects null."""
-        if self.entrypoint is None:
-            return []
-        try:
-            hints = get_type_hints(self.entrypoint)
-        except Exception:
-            return []
-        return [
-            name
-            for name, schema in properties.items()
-            if isinstance(schema, dict) and _admits_none(hints.get(name)) and not _schema_accepts_null(schema)
-        ]
+        _add_null_branches(self.parameters, self.entrypoint)
 
     @staticmethod
     def _get_run_context_identity(entrypoint_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:

@@ -416,16 +416,33 @@ def test_strict_keeps_a_decorated_optional_parameter_nullable(source):
     assert function.parameters["properties"]["item_id"] == {"type": "string", "description": "The item id."}
 
 
-def test_strict_does_not_make_a_parameter_with_a_non_none_default_nullable():
-    """A null for `limit: int = 10` would reach the function as None, which its type rejects."""
+def _search_with_defaults(query: str, limit: int = 10, max_results: Optional[int] = 5) -> str:
+    """Search.
 
-    def search(query: str, limit: int = 10) -> str:
-        return query
+    Args:
+        query: Text.
+        limit: Row limit.
+        max_results: Result count.
+    """
+    return query
 
-    function = Function(name="search", entrypoint=search)
-    function.process_entrypoint(strict=True)
 
-    assert function.parameters["properties"]["limit"] == {"type": "integer"}
+@pytest.mark.parametrize("source", ["process_entrypoint", "from_callable", "decorated"])
+def test_strict_does_not_make_a_parameter_with_a_non_none_default_nullable(source):
+    """Leaving out `max_results: Optional[int] = 5` means 5; a null would reach the function as None instead."""
+    if source == "process_entrypoint":
+        function = Function(name="search", entrypoint=_search_with_defaults)
+        function.process_entrypoint(strict=True)
+    elif source == "from_callable":
+        function = Function.from_callable(_search_with_defaults, strict=True)
+    else:
+        function = tool(_search_with_defaults)._per_run_copy()
+        function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    assert function.parameters["required"] == ["query", "limit", "max_results"]
+    assert properties["limit"] == {"type": "integer", "description": "Row limit."}
+    assert properties["max_results"] == {"type": "integer", "description": "Result count."}
 
 
 def test_strict_leaves_a_schema_without_python_types_unchanged():
