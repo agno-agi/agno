@@ -1289,7 +1289,7 @@ class QueueWorker:
         # "why did my durable run not re-execute?" - not just state facts
         allowed = job.get("max_attempts", 1)
         error = (
-            "Worker lost and attempt budget exhausted; run was not re-executed. "
+            "Worker lost and attempt budget exhausted; the run will not be executed again. "
             f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent"
         )
         if (job.get("payload") or {}).get("company_task_id"):

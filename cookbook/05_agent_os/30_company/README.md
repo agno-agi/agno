@@ -659,7 +659,11 @@ attached to the Task it also holds that, under `context`; see "What a Task run i
 given". No executor receives a wiki page or a Goal page that was not attached. Queue retries use the
 existing queue policy. A Task run whose worker was lost, by a crash or a shutdown, is executed once
 more from the Task's input, so a tool call the lost execution made is made again; a run lost a second
-time is failed. With `QueueConfig(max_attempts=...)` of 2 or more, that setting governs instead.
+time is failed. Two kinds of run are failed at the first loss and not executed again: a run that was
+continued after a pause, and a run of a Claude or Codex agent that asks a person for permission and
+runs outside a sandbox. The second execution is only for a lost worker: a run that fails by itself
+is failed on its first execution. With `QueueConfig(max_attempts=...)` of 2 or more, that setting
+governs every failure instead.
 Results are saved on the Task, and every ended run moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
@@ -1432,7 +1436,8 @@ Every field has a default:
 - **The bound.** The review queue is the brake. When five of the Routine's Tasks
   are open, the next proposal waits in Backlog until a person completes or
   cancels one. A Task whose run failed waits In review, so it still counts
-  until a person retries it, returns it to Backlog or cancels it.
+  until a person completes it, returns it to Backlog or cancels it. Retrying it does not free
+  its place: the Task is In progress again.
   `get_company_goal` and a Backlog or unfiltered listing from `list_company_tasks` return
   `auto_accept_at_limit` for a Routine that is waiting this way.
 - **Projects.** A Routine's Project takes its ID from the Goal, the Routine

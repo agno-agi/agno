@@ -196,6 +196,8 @@ def test_a_task_run_lost_twice_is_failed_and_the_task_waits_in_review(system):
     assert "Worker lost" in saved["result"]["content"] and system.model.calls == 0
     # The result tells a person what retries a Task. A requeue of this ticket would not run it again.
     assert "Start the Task's next attempt" in saved["result"]["content"]
+    # It was executed twice, so the result does not say that it was never run again.
+    assert "will not be executed again" in saved["result"]["content"]
     assert "requeue" not in saved["result"]["content"] and "QueueConfig" not in saved["result"]["content"]
 
 
