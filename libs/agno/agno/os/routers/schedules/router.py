@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.utils import is_unique_violation
-from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
+from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
@@ -100,6 +100,69 @@ def get_schedule_router(
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
 
+    async def _administers(request: Request) -> bool:
+        """Whether the caller may stop any schedule. Where nothing checks permissions, every caller may."""
+        from agno.os.auth import _authorization_enforced
+
+        if caller_is_admin(request) or not _authorization_enforced(request.app):
+            return True
+        if agent_os is None:
+            return False
+        # An administrator can also hold the admin scope through a stored role, with none on the token.
+        from agno.os.router import _caller_is_admin
+
+        return await _caller_is_admin(agent_os, request)
+
+    async def _owner_scope(request: Request) -> Optional[str]:
+        """The owner the caller's schedules are filtered to. None for a caller who sees every schedule.
+
+        User isolation drops the filter for the admin scope on a token. An administrator by a stored
+        role has no such scope, and would not find Company automation or another person's schedule to stop.
+        """
+        owner = get_scoped_user_id(request)
+        if owner is None or agent_os is None or managed_by == "company":
+            return owner
+        if not getattr(request.state, "authenticated", False):
+            # With no sign-in the caller only declares who they are, and stays filtered to that user.
+            return owner
+        from agno.os.router import _caller_is_admin
+
+        return None if await _caller_is_admin(agent_os, request) else owner
+
+    async def _require_changeable(
+        existing: Dict[str, Any], request: Request, action: Literal["update", "delete", "enable", "disable", "trigger"]
+    ) -> None:
+        """Refuse a change to a schedule that Company manages, with what does work.
+
+        A Routine is changed through /company/routines. Company automation is the built-in hourly
+        schedule: it is only paused and resumed. An administrator can also pause, resume and delete a
+        Routine here, and pause and resume Company automation, so that no schedule is left running
+        with nobody able to stop it.
+        """
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, _require_mutable_schedule
+
+        if managed_by == "company" or existing.get("managed_by") != "company":
+            try:
+                _require_mutable_schedule(existing["id"])
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+            return
+        automation = existing["id"] == COMPANY_AUTOMATION_SCHEDULE_ID
+        pause_how = (
+            f"Pause it with POST /schedules/{COMPANY_AUTOMATION_SCHEDULE_ID}/disable and resume it with "
+            f"POST /schedules/{COMPANY_AUTOMATION_SCHEDULE_ID}/enable."
+        )
+        if action in ("update", "trigger") or (automation and action == "delete"):
+            if automation:
+                raise HTTPException(409, f"Company automation can only be paused and resumed. {pause_how}")
+            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
+        if not await _administers(request):
+            if automation:
+                raise HTTPException(403, "Only an administrator can pause or resume Company automation")
+            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
+        if action == "enable" and getattr(agent_os, "_routine_api_resume", None) is None:
+            raise HTTPException(409, "Company is off on this AgentOS, so this schedule cannot run")
+
     # ------------------------------------------------------------------
     # Endpoints
     # ------------------------------------------------------------------
@@ -113,7 +176,7 @@ def get_schedule_router(
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ScheduleResponse]:
         # ``None`` means no scoping (admin / isolation off); a string filters to that owner.
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         schedules, total_count = await _db_call(
             "get_schedules", enabled=enabled, limit=limit, page=page, user_id=scoped_user_id
         )
@@ -283,7 +346,7 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        owner = get_scoped_user_id(request)
+        owner = await _owner_scope(request)
         schedule = await _db_call("get_schedule", schedule_id, user_id=None if company_reads else owner)
         if schedule is None or (company_reads and schedule.get("managed_by") != "company"):
             raise HTTPException(status_code=404, detail="Schedule not found")
@@ -302,15 +365,7 @@ def get_schedule_router(
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        if existing.get("managed_by") == "company" and managed_by != "company":
-            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
-
-        from agno.db.schemas.scheduler import _require_mutable_schedule
-
-        try:
-            _require_mutable_schedule(schedule_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+        await _require_changeable(existing, request, "update")
 
         updates = body.model_dump(exclude_unset=True)
         if not updates:
@@ -413,22 +468,35 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        if existing.get("managed_by") == "company" and managed_by != "company":
-            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
-        from agno.db.schemas.scheduler import _require_mutable_schedule
-
-        try:
-            _require_mutable_schedule(schedule_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+        await _require_changeable(existing, request, "delete")
+        routine = managed_by != "company" and existing.get("managed_by") == "company"
+        live_runs = getattr(agent_os, "_routine_api_live_runs", None)
+        if routine and live_runs is not None and await live_runs(schedule_id, request):
+            # Deleting the schedule deletes its runs, and cancel finds a live run through them.
+            raise HTTPException(
+                409, f"Wait for the run to stop, or cancel it with POST /company/routines/{schedule_id}/cancel"
+            )
         deleted = await _db_call("delete_schedule", schedule_id, user_id=owner_filter)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete schedule")
+        metadata = (existing.get("payload") or {}).get("metadata") if routine else None
+        goal_id = metadata.get("goal_id") if isinstance(metadata, dict) else None
+        company_db = getattr(agent_os, "_company_db", None)
+        if goal_id and company_db is not None:
+            # A deleted Routine leaves its Goal's list of Routines, as it does through the Routine API.
+            from agno.company.execution import _call
+            from agno.company.manager import AsyncCompanyManager, CompanyManager
+            from agno.db.base import AsyncBaseDb
+
+            company = (
+                AsyncCompanyManager(company_db) if isinstance(company_db, AsyncBaseDb) else CompanyManager(company_db)
+            )
+            await _call(company, "_unlink_routine", goal_id, schedule_id)
 
     @router.post("/schedules/{schedule_id}/enable", response_model=ScheduleStateResponse)
     async def enable_schedule(
@@ -436,23 +504,23 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        if existing.get("managed_by") == "company" and managed_by != "company":
-            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
+        await _require_changeable(existing, request, "enable")
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
-        from agno.db.schemas.scheduler import _require_mutable_schedule
-
-        try:
-            _require_mutable_schedule(schedule_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-
-        # Re-arming puts the endpoint back on the poller, so it needs the same permission as creating it.
-        await _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
+        if managed_by != "company" and existing.get("managed_by") == "company":
+            if schedule_id != COMPANY_AUTOMATION_SCHEDULE_ID:
+                # A Routine runs only with an active Goal and an executor that exists. Its own resume checks both.
+                return await agent_os._routine_api_resume(schedule_id, request)
+            # Company automation is built in and only an administrator gets this far. The endpoint check
+            # below would ask for the admin scope on the token, which an admin role in the store does not put there.
+        else:
+            # Re-arming puts the endpoint back on the poller, so it needs the same permission as creating it.
+            await _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         # A schedule aimed at an archived component can only 404 at fire time;
         # refuse the re-arm until the component is restored. Identical
@@ -511,22 +579,19 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
-        if existing.get("managed_by") == "company" and managed_by != "company":
-            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
-
-        from agno.db.schemas.scheduler import _require_mutable_schedule
-
-        try:
-            _require_mutable_schedule(schedule_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+        await _require_changeable(existing, request, "disable")
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
         updates: Dict[str, Any] = {"enabled": False}
+        if schedule_id == COMPANY_AUTOMATION_SCHEDULE_ID:
+            # A pause by a person carries no reason. Startup turns the schedule back on only when its
+            # reason says Company was off, so this pause stays across a restart.
+            updates["disabled_reason"] = None
         if defer_activation and pending_key in (existing.get("payload") or {}):
             # An explicit pause overrides automatic recovery of an interrupted creation.
             updates["payload"] = {key: value for key, value in existing["payload"].items() if key != pending_key}
@@ -547,15 +612,7 @@ def get_schedule_router(
         existing = await _db_call("get_schedule", schedule_id, user_id=None if company_trigger else owner)
         if existing is None or (company_trigger and existing.get("managed_by") != "company"):
             raise HTTPException(status_code=404, detail="Schedule not found")
-        if existing.get("managed_by") == "company" and managed_by != "company":
-            raise HTTPException(409, "Company-managed schedules must be changed through /company/routines")
-
-        from agno.db.schemas.scheduler import _require_mutable_schedule
-
-        try:
-            _require_mutable_schedule(schedule_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+        await _require_changeable(existing, request, "trigger")
 
         if not existing.get("enabled", True):
             raise HTTPException(status_code=409, detail="Schedule is disabled")
