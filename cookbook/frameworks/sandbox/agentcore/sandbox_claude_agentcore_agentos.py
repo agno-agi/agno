@@ -2,10 +2,9 @@
 
 The same agent as sandbox_claude_agentcore.py, served over HTTP like sandbox_claude_agentos.py.
 Deploy a runtime with agentcore_setup.py, set AGENTCORE_RUNTIME_ARN to the ARN it printed, set
-AWS_PROFILE and AWS_REGION, and run Postgres and Redis:
+AWS_PROFILE and AWS_REGION, and run Postgres:
 
     ./cookbook/scripts/run_pgvector.sh
-    docker run -d --name agno-redis -p 6379:6379 redis
     .venv/bin/python cookbook/frameworks/sandbox/agentcore/sandbox_claude_agentcore_agentos.py
 
 Then send a turn and poll it:
@@ -16,7 +15,10 @@ Then send a turn and poll it:
 
 AgentOS, the queue and the database stay on this host; each turn runs Claude Code in an AgentCore
 microVM, which reaches Bedrock through the runtime's execution role. With a queue, any replica may
-run the next attempt, so every replica must read the same checkpoint directory.
+run the next attempt, so every replica must read the same checkpoints: set
+AGNO_SANDBOX_CHECKPOINT_BUCKET to keep them in S3 (needs agno[s3]). Unset, they stay in a directory
+on this host, which only a single replica can use. Redis is optional: set AGNO_SANDBOX_REDIS_URL to add
+live streams and resume from any replica.
 """
 
 import os
@@ -28,8 +30,19 @@ from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.os import AgentOS
 from agno.sandbox.agentcore import AgentCoreSandbox
 from agno.sandbox.checkpoint import FileCheckpointStore
+from agno.sandbox.s3 import S3CheckpointStore
 
 runtime_arn = os.environ["AGENTCORE_RUNTIME_ARN"]
+
+# Every replica must restore every other replica's checkpoints. With AGNO_SANDBOX_CHECKPOINT_BUCKET
+# set they live in that S3 bucket, which any number of replicas share. Without it they stay in a
+# directory on this host, which is only safe while this one process is the deployment's only replica.
+bucket = os.getenv("AGNO_SANDBOX_CHECKPOINT_BUCKET")
+checkpoints = (
+    S3CheckpointStore(bucket, prefix="sandbox/checkpoints")
+    if bucket
+    else FileCheckpointStore(Path.home() / ".agno" / "sandbox" / "checkpoints")
+)
 
 db = PostgresDb(
     db_url=os.getenv(
@@ -43,11 +56,11 @@ agent = ClaudeAgent(
     sandbox=AgentCoreSandbox(
         runtime_arn,
         env={"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": runtime_arn.split(":")[3]},
-        checkpoints=FileCheckpointStore(
-            Path.home() / ".agno" / "sandbox" / "checkpoints"
-        ),
+        checkpoints=checkpoints,
     ),
 )
+# Optional: adds live streams and resume from any replica.
+redis_url = os.getenv("AGNO_SANDBOX_REDIS_URL")
 agent_os = AgentOS(
     id="sandbox-claude-agentcore",
     agents=[agent],
@@ -55,9 +68,7 @@ agent_os = AgentOS(
     queue=QueueConfig(
         durable=True,
         db=db,
-        redis=RedisCoordination(
-            url=os.getenv("AGNO_SANDBOX_REDIS_URL", "redis://localhost:6379/0")
-        ),
+        redis=RedisCoordination(url=redis_url) if redis_url else None,
     ),
     telemetry=False,
 )

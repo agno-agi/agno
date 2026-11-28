@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+from agno.os.scopes import accessible_ids_cover
 
 # A scope with its effect, e.g. ("agents:*:read", "allow") / ("agents:x:run", "deny").
 ScopeEntry = Tuple[str, str]
@@ -132,8 +133,9 @@ class PolicyEngine(ABC):
         subject: Optional[str] = None,
         roles: Optional[List[str]] = None,
     ) -> Set[str]:
-        """Resource ids of ``resource_type`` the identity may access for ``action``
-        (``{"*"}`` = all)."""
+        """Resource ids of ``resource_type`` the identity may access for ``action``. ``"*"`` in
+        the set stands for every resource of the type that is not a built-in component; a
+        built-in is in the set only by its own id."""
 
     def denied_resource_ids(
         self,
@@ -252,10 +254,10 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         self._roles_claim = roles_claim
 
     def _identity(self, ctx: AuthorizationContext) -> Tuple[Optional[str], Optional[List[str]]]:
-        """(subject, roles) for the engine. ``roles`` is the token-carried list
-        when a ``roles_claim`` is configured and present; otherwise None so the
-        subject's stored assignments decide."""
-        return ctx.principal_id, normalize_roles_claim(ctx.claims, self._roles_claim)
+        """(subject, roles) for the engine. ``roles`` is the context's roles when the
+        application set them, else the token-carried list when a ``roles_claim`` is
+        configured and present; otherwise None so the subject's stored assignments decide."""
+        return ctx.principal_id, ctx.roles or normalize_roles_claim(ctx.claims, self._roles_claim)
 
     def check(self, ctx: AuthorizationContext) -> bool:
         subject, roles = self._identity(ctx)
@@ -314,11 +316,11 @@ class EngineAuthorizationProvider(AuthorizationProvider):
             # answer the per-resource gate gives (deny-overrides). Handled before the
             # wildcard-allow branch below, which would otherwise mask it.
             return []
-        wildcard = "*" in accessible
         return [
             r
             for r in resources
-            if getattr(r, "id", None) not in denied and (wildcard or getattr(r, "id", None) in accessible)
+            if getattr(r, "id", None) not in denied
+            and accessible_ids_cover(ctx.resource_type, getattr(r, "id", None), accessible)
         ]
 
     # --- async variants (mirror the sync methods, awaiting the engine's async path) ---
@@ -364,9 +366,9 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         denied = await self._engine.adenied_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
         if "*" in denied:
             return []
-        wildcard = "*" in accessible
         return [
             r
             for r in resources
-            if getattr(r, "id", None) not in denied and (wildcard or getattr(r, "id", None) in accessible)
+            if getattr(r, "id", None) not in denied
+            and accessible_ids_cover(ctx.resource_type, getattr(r, "id", None), accessible)
         ]

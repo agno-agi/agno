@@ -18,7 +18,7 @@ from agno.db.base import (
     project_config_identity,
 )
 from agno.db.base import ComponentType as DbComponentType
-from agno.db.utils import DB_TABLE_NAME_KEYS
+from agno.db.utils import TABLE_NAME_KEYS, with_current_goals_table
 from agno.exceptions import AgnoError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -202,7 +202,8 @@ def _resolve_db_in_config(
             # whitelisted table-name keys are taken from the caller.
             if resolved_db is not None:
                 resolved_dict = resolved_db.to_dict()
-                table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
+                component_db = with_current_goals_table(component_db)
+                table_overrides = {key: component_db[key] for key in TABLE_NAME_KEYS if key in component_db}
                 config["db"] = {**resolved_dict, **table_overrides}
             else:
                 log_error(f"Could not resolve db with id: {component_db_id}")
@@ -478,6 +479,63 @@ def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[
         raise HTTPException(status_code=403, detail=f"Cannot {verb} component owned by another user")
 
 
+def _config_agent_sdk(config: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The adapter a stored agent config names, or None for an Agent config."""
+    from agno.agents._storage import is_external_agent_config
+
+    if config is None or not is_external_agent_config(config):
+        return None
+    return str(config["sdk"])
+
+
+def _keep_agent_sdk(db: BaseDb, existing: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Row metadata for a component update, keeping the adapter its stored config names."""
+    if str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return metadata
+    from agno.agents._storage import stored_agent_sdk, with_agent_sdk
+
+    stored = stored_agent_sdk(db, str(existing["component_id"]))
+    return with_agent_sdk(metadata, stored[1] if stored else None)
+
+
+def _describe_agent_kind(sdk: Optional[str]) -> str:
+    return "an Agent" if sdk is None else f"a {sdk!r} external agent"
+
+
+def _require_agent_kind_kept(db: BaseDb, existing: Dict[str, Any], config: Optional[Dict[str, Any]]) -> None:
+    """Refuse a config version that would change what an agent component loads as.
+
+    The SDK save() refuses an Agent over a stored external agent and the
+    reverse; the config routes write versions of the same catalog and hold the
+    same rule, so an id never switches runtime through a config write.
+    """
+    if config is None or str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return
+    from agno.agents._storage import require_same_agent_kind
+
+    require_same_agent_kind(db, str(existing["component_id"]), _config_agent_sdk(config))
+
+
+def _require_version_kind_kept(db: BaseDb, existing: Dict[str, Any], version: int) -> None:
+    """Refuse making current a version whose agent kind differs from the live one."""
+    if str(existing.get("component_type")) != ComponentType.AGENT.value:
+        return
+    live_version = existing.get("current_version")
+    if not isinstance(live_version, int) or live_version == version:
+        return
+    target = db.get_config(component_id=str(existing["component_id"]), version=version)
+    live = db.get_config(component_id=str(existing["component_id"]), version=live_version)
+    if not isinstance(target, dict) or not isinstance(live, dict):
+        return
+    target_sdk = _config_agent_sdk(target.get("config"))
+    live_sdk = _config_agent_sdk(live.get("config"))
+    if target_sdk != live_sdk:
+        raise ValueError(
+            f"Version {version} of {existing['component_id']!r} is stored as {_describe_agent_kind(target_sdk)} "
+            f"while the live version is {_describe_agent_kind(live_sdk)}; a component cannot change kind."
+        )
+
+
 def _resolve_member_links(
     config: Dict[str, Any],
     db: BaseDb,
@@ -512,10 +570,7 @@ def _resolve_member_links(
         member_type = member.get("type")
         if member_type == "agent":
             child_id = member.get("agent_id")
-            from agno.agents.base import BaseExternalAgent
-
-            registered = registry.get_agent(child_id) if registry and isinstance(child_id, str) else None
-            in_registry = registered is not None
+            in_registry = bool(registry and isinstance(child_id, str) and registry.get_agent(child_id) is not None)
         elif member_type == "team":
             child_id = member.get("team_id")
             in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
@@ -545,9 +600,6 @@ def _resolve_member_links(
             # A draft-only component (no current_version) still exists; leave it
             # to be resolved at load time rather than flagging it as unresolved.
             continue
-
-        if member_type == "agent" and isinstance(registered, BaseExternalAgent):
-            raise ValueError("External agents cannot be team members: " + child_id)
 
         # Not a DB component. If it is a code-defined component it will be
         # resolved from the registry at load time; otherwise it is unresolved.
@@ -866,12 +918,16 @@ def attach_routes(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
 
+            from agno.agents._storage import with_agent_sdk
+
             component, _config = db.create_component_with_config(
                 component_id=component_id,
                 component_type=DbComponentType(body.component_type.value),
                 name=body.name,
                 description=body.description,
-                metadata=body.metadata,
+                metadata=with_agent_sdk(
+                    body.metadata, _config_agent_sdk(config) if body.component_type == ComponentType.AGENT else None
+                ),
                 config=config,
                 label=body.label,
                 stage=body.stage or "draft",
@@ -972,7 +1028,7 @@ def attach_routes(
             if body.description is not None:
                 update_kwargs["description"] = body.description
             if body.metadata is not None:
-                update_kwargs["metadata"] = body.metadata
+                update_kwargs["metadata"] = _keep_agent_sdk(db, existing, body.metadata)
             if body.component_type is not None:
                 update_kwargs["component_type"] = DbComponentType(body.component_type)
             # Whether this request changes anything of its own decides how a
@@ -1203,6 +1259,7 @@ def attach_routes(
             _require_write_ownership(existing, scoped_user_id)
             # Resolve db from config if present
             config_data = body.config or {}
+            _require_agent_kind_kept(db, existing, config_data)
             config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
@@ -1270,6 +1327,7 @@ def attach_routes(
             # Resolve db from config if present
             config_data = body.config
             if config_data is not None:
+                _require_agent_kind_kept(db, existing, config_data)
                 config_data = _resolve_db_in_config(config_data, db, registry)
 
             _validate_referenced_component_ownership(
@@ -1447,6 +1505,7 @@ def attach_routes(
             # Reads share on publish; writes stay owner-scoped.
             _require_write_ownership(existing, scoped_user_id)
             _reject_unsupported_guard(body.guard if body else None, "current_version")
+            _require_version_kind_kept(db, existing, version)
             success = db.set_current_version(
                 component_id,
                 version=version,

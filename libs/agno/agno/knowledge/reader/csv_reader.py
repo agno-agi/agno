@@ -151,11 +151,11 @@ class CSVReader(Reader):
             List of Document objects.
 
         Raises:
-            ValueError: If page_size is less than zero.
+            ValueError: If page_size is not positive.
             FileNotFoundError: If the file path doesn't exist.
         """
-        if page_size < 0:
-            raise ValueError("page_size cannot be a negative value.")
+        if page_size <= 0:
+            raise ValueError("page_size must be a positive value.")
 
         try:
             if isinstance(file, (Path, str)):

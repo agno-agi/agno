@@ -1,16 +1,128 @@
 """Shared detached run execution and resumable SSE transport."""
 
 import asyncio
+import json
 from contextlib import suppress
-from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
 
 from agno.exceptions import RunCancelledException
+from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunEvent,
+    RunOutput,
+    RunOutputEvent,
+    RunPausedEvent,
+)
 from agno.run.base import CancellationStage, RunStatus
 from agno.run.cancel import acleanup_run, araise_if_cancelled
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
+from agno.utils.events import (
+    create_run_completed_event,
+    create_run_paused_event,
+    create_team_run_completed_event,
+    create_team_run_paused_event,
+)
 from agno.utils.log import log_error, log_warning
 
 _background_tasks: set[asyncio.Task[None]] = set()
+
+_RUN_EVENT_NAMES = frozenset({e.value for e in RunEvent} | {e.value for e in TeamRunEvent})
+
+# The events that end a run; a stream that stops without one stopped before its run finished
+TERMINAL_RUN_EVENT_TYPES = (
+    RunCompletedEvent,
+    RunCancelledEvent,
+    RunErrorEvent,
+    RunPausedEvent,
+    TeamRunCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunErrorEvent,
+    TeamRunPausedEvent,
+)
+
+
+# What AgentOS calls when work a conversation asked for ends. Each takes the conversation that asked,
+# what ended and the saved authority of whoever started it.
+_requester_listeners: List[Callable[[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]], Awaitable[None]]] = []
+_requester_notices: set[asyncio.Task[None]] = set()
+
+
+def notify_requester(requested_from: Any, work: Dict[str, Any], authority: Optional[Dict[str, Any]] = None) -> None:
+    """Tell the conversation that asked for a piece of work that it ended or paused for a person.
+
+    Called by the durable queue and by a run executing in this process, after the final state is
+    stored. It returns at once: each listener runs as a task of its own, so nothing a listener does
+    can fail, delay or repeat the work it is told about. Work that names no conversation does nothing.
+    """
+    if not isinstance(requested_from, dict) or not requested_from.get("session_id") or not _requester_listeners:
+        return
+
+    async def tell(listener: Any) -> None:
+        try:
+            await listener(dict(requested_from), dict(work), authority)
+        except Exception:
+            log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
+
+    try:
+        for listener in list(_requester_listeners):
+            task = asyncio.ensure_future(tell(listener))
+            _requester_notices.add(task)
+            task.add_done_callback(_requester_notices.discard)
+    except Exception:
+        log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
+
+
+def _notify_run_requester(run: Any, started_with: Any = None, continued: bool = False) -> None:
+    """Tell the conversation that started this in-process run, if one did, how the run ended.
+
+    started_with is the metadata the run was started with, for a run object that holds none of its
+    own: a WorkflowAgent that runs its workflow stores such a run. continued says the run was paused
+    and has been continued, so a pause is a new one.
+    """
+    try:
+        if not _requester_listeners:
+            return
+        from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
+
+        requested_from = None
+        for metadata in (getattr(run, "metadata", None), started_with):
+            if isinstance(metadata, dict) and metadata.get(REQUESTED_FROM_METADATA_KEY):
+                requested_from = metadata[REQUESTED_FROM_METADATA_KEY]
+                break
+        status = getattr(run.status, "value", run.status)
+        if not requested_from or status not in ("COMPLETED", "ERROR", "CANCELLED", "PAUSED"):
+            return
+        from agno.run.authorization import authorization_snapshot
+
+        # This task was started inside the request that started the run, so it holds that caller's authority.
+        work = {"kind": "run", "id": run.run_id, "status": status, **({"continued": True} if continued else {})}
+        notify_requester(requested_from, work, authorization_snapshot())
+    except Exception:
+        log_error("Could not tell a conversation that its background run ended", exc_info=True)
+
+
+async def anotify_continued_run_requester(component: Any, run_id: str, session_id: Optional[str]) -> None:
+    """After a paused run was continued in the foreground, tell the conversation that started it.
+
+    A run continued through the durable queue is told about by the queue. One continued in the
+    request that approved it ends here, so its stored state is read once, and only while something
+    listens. The authority is that of the person who continued it.
+    """
+    if not _requester_listeners:
+        return
+    try:
+        run = await component.aget_run_output(run_id=run_id, session_id=session_id)
+        if run is not None:
+            _notify_run_requester(run, continued=True)
+    except Exception:
+        log_error(f"Could not tell a conversation that continued run {run_id} ended", exc_info=True)
 
 
 def _spawn_background(coro: Awaitable[None]) -> None:
@@ -79,20 +191,26 @@ async def _execute_background(
             log_error(f"Failed to persist error for background run {run.run_id}", exc_info=True)
         await acleanup_run(run.run_id)
     finally:
-        if on_terminal is not None:
-            await on_terminal()
+        try:
+            if on_terminal is not None:
+                await on_terminal()
+        finally:
+            _notify_run_requester(run)
 
 
 class _BackgroundStream:
     """Publish indexed events and feed the attached client independently."""
 
-    def __init__(self, run: Any, *, yield_run_output: bool = False):
+    def __init__(self, run: Any, *, yield_run_output: bool = False, end_at_pause: bool = False):
         from agno.os.event_streams import get_event_stream
 
         self.run = run
         self.event_stream = get_event_stream()
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.yield_run_output = yield_run_output
+        # A harness's native permission request pauses a run that keeps executing: the attached client's
+        # stream ends at the pause, as for an Agno agent, and the continuation follows the reopened stream.
+        self.end_at_pause = end_at_pause
         self.attached = True
 
     async def register(self) -> None:
@@ -113,6 +231,12 @@ class _BackgroundStream:
             log_warning(f"Failed to buffer event for run {self.run.run_id}")
         if self.attached:
             await self.queue.put(format_sse_event_with_index(event, event_index=index, run_id=self.run.run_id))
+        if self.end_at_pause and getattr(event, "event", None) == "RunPaused":
+            if self.attached:
+                self.attached = False
+                await self.queue.put(None)
+            with suppress(Exception):
+                await self.event_stream.complete_run(self.run.run_id, RunStatus.paused)
 
     async def complete(self) -> None:
         # Release the primary client before waiting for coordination storage.
@@ -142,3 +266,89 @@ class _BackgroundStream:
             self.attached = False
             while not self.queue.empty():
                 self.queue.get_nowait()
+
+
+def terminal_run_event_from_run_output(
+    run_output: Union[RunOutput, TeamRunOutput],
+) -> Optional[Union[RunOutputEvent, TeamRunOutputEvent]]:
+    """Get the event that ends a stored run, or None while the run has not ended."""
+    if run_output.status == RunStatus.completed:
+        if isinstance(run_output, TeamRunOutput):
+            return create_team_run_completed_event(run_output)
+        return create_run_completed_event(run_output)
+    if run_output.status == RunStatus.paused:
+        if isinstance(run_output, TeamRunOutput):
+            return create_team_run_paused_event(
+                run_output, tools=run_output.tools, requirements=run_output.requirements
+            )
+        return create_run_paused_event(run_output, tools=run_output.tools, requirements=run_output.requirements)
+    if run_output.status == RunStatus.error:
+        if isinstance(run_output, TeamRunOutput):
+            return TeamRunErrorEvent(
+                run_id=run_output.run_id,
+                session_id=run_output.session_id,
+                content=str(run_output.content or "Run failed"),
+            )
+        return RunErrorEvent(
+            run_id=run_output.run_id, session_id=run_output.session_id, content=str(run_output.content or "Run failed")
+        )
+    if run_output.status == RunStatus.cancelled:
+        if isinstance(run_output, TeamRunOutput):
+            return TeamRunCancelledEvent(run_id=run_output.run_id, session_id=run_output.session_id)
+        return RunCancelledEvent(run_id=run_output.run_id, session_id=run_output.session_id)
+    return None
+
+
+async def map_background_stream_to_run_events(
+    event_stream: AsyncIterator[Any],
+    entity: Any,
+    run_id: str,
+    session_id: str,
+) -> AsyncIterator[Any]:
+    """Map the stream of a background run back to Agno events.
+
+    A background run streams its events as SSE strings, the form they are buffered in for
+    clients that reconnect. A run that ends without a final event (one cancelled before it
+    started) is given the one its stored run calls for. A transport frame that carries no
+    run event (stream_expired, error) ends the stream.
+
+    Args:
+        event_stream: The async iterator from agent/team.arun(stream=True, background=True)
+        entity: The Agno Agent or Team being run
+        run_id: The id of the run
+        session_id: The id of the session the run belongs to
+
+    Yields:
+        The Agno events of the run
+    """
+    is_finished = False
+    try:
+        async for event in event_stream:
+            if isinstance(event, str):
+                # Keepalive comments carry no event
+                data_line = next((line for line in event.splitlines() if line.startswith("data: ")), None)
+                if data_line is None:
+                    continue
+                data = json.loads(data_line[len("data: ") :])
+                # Transport frames (stream_expired, error) carry no run event
+                event_type = data.get("event", "")
+                if event_type not in _RUN_EVENT_NAMES:
+                    break
+                event = team_run_output_event_from_dict(data)
+            elif isinstance(event, (RunOutput, TeamRunOutput)):
+                # Terminal RunOutput is not an SSE event; skip it like the background producer does
+                continue
+            if getattr(event, "run_id", None) == run_id and isinstance(event, TERMINAL_RUN_EVENT_TYPES):
+                is_finished = True
+            yield event
+    finally:
+        # Close the background stream when the caller stops reading it early
+        aclose_fn = getattr(event_stream, "aclose", None)
+        if aclose_fn is not None:
+            await aclose_fn()
+
+    if is_finished:
+        return
+    run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
+    if run_output is not None and run_output.status in (RunStatus.cancelled, RunStatus.error):
+        yield terminal_run_event_from_run_output(run_output)

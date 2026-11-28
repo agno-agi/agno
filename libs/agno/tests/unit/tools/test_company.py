@@ -2,13 +2,33 @@
 
 import inspect
 import json
+import subprocess
+import sys
 
 import pytest
 
-from agno.company import CompanyManager
-from agno.db.sqlite import SqliteDb
+from agno.agent import Agent
+from agno.company import AsyncCompanyManager, CompanyManager
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.registry import Registry
 from agno.run import RunContext
 from agno.tools.company import CompanyTools
+
+
+def test_company_imports_without_sqlalchemy():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            'import sys; sys.modules["sqlalchemy"] = None; '
+            'import agno.company.routines, agno.tools.company; print("OK")',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "OK"
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -36,15 +56,76 @@ def test_optional_schema_describes_null_and_hides_identity(tmp_path, use_async, 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
+async def test_source_capabilities_guide_reads_without_changing_saved_sources(tmp_path, use_async, processed):
+    db = SqliteDb(db_file=str(tmp_path / "capabilities.db"))
+    manager = CompanyManager(db)
+    goal = manager.create(name="SDK")
+    path = tmp_path / "README.md"
+    path.write_text("Local repository evidence")
+    sources = [
+        manager.create_source(goal_id=goal["id"], type="git", reference=str(tmp_path)),
+        manager.create_source(goal_id=goal["id"], type="markdown", reference=str(path)),
+        manager.create_source(goal_id=goal["id"], type="website", reference="https://docs.agno.com"),
+        manager.create_source(
+            goal_id=goal["id"],
+            type="git",
+            reference="https://github.com/agno-agi/agno",
+            credential_ref="REPO_TOKEN",
+        ),
+    ]
+    tools = CompanyTools(db)
+    context = RunContext(run_id="scan", session_id="session", user_id="alice")
+
+    async def invoke(name, **kwargs):
+        function = (tools.get_async_functions() if use_async else tools.functions)[name]
+        fn = getattr(tools, ("a" if use_async else "") + name)
+        if processed:
+            function.process_entrypoint()
+            fn = function.entrypoint
+        result = fn(**kwargs, _agno_run_context=context)
+        return json.loads(await result if inspect.isawaitable(result) else result)
+
+    try:
+        rows = []
+        for page in (1, 2):
+            result = await invoke("list_goal_sources", goal_id=goal["id"], limit=2, page=page)
+            assert result["meta"]["total_count"] == 4
+            assert result["meta"]["page"] == page
+            rows.extend(result["data"])
+        by_id = {row["id"]: row for row in rows}
+        assert set(by_id) == {source["id"] for source in sources}
+        for source in sources[:3]:
+            assert by_id[source["id"]]["readable"] is True
+            assert by_id[source["id"]]["checkout_supported"] is False
+        remote = by_id[sources[-1]["id"]]
+        assert remote["readable"] is False
+        assert remote["checkout_supported"] is True
+        assert all("credential_ref" not in row for row in rows)
+        for source in sources:
+            assert manager.get_source(source["id"]) == source
+
+        # Capabilities guide selection; they neither grant access nor bypass the reader.
+        content = await invoke("read_goal_source", source_id=sources[0]["id"], path="README.md")
+        assert content["content"] == "Local repository evidence"
+        with pytest.raises(ValueError, match="Git URL Sources are for sandbox checkout"):
+            await invoke("read_goal_source", source_id=remote["id"])
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("processed", [False, True])
 @pytest.mark.parametrize(
     "name", ["propose_company_task", "list_company_tasks", "list_company_wiki", "search_company_decisions"]
 )
 async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, name):
     db = SqliteDb(db_file=str(tmp_path / "tools.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK", user_id="alice")
-    project = manager.create_project(product_id=product["id"], name="Release")
-    manager.create_task(product_id=product["id"], title="Existing task", project_id=project["id"])
+    goal = manager.create(name="SDK", user_id="alice")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
+    manager.create_task(goal_id=goal["id"], title="Existing task", project_id=project["id"])
     manager.log_decision(decision="Review before shipping", agent_id="planner", session_id="prior")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", user_id="alice")
@@ -63,7 +144,7 @@ async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, na
     else:
         fn = raw
     required = (
-        {"product_id": product["id"], "project_id": project["id"], "title": "Proposed"}
+        {"goal_id": goal["id"], "project_id": project["id"], "title": "Proposed"}
         if name == "propose_company_task"
         else {}
     )
@@ -91,30 +172,61 @@ async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, na
 async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_async):
     tools = CompanyTools(SqliteDb(db_file=str(tmp_path / "validation.db")))
     manager = CompanyManager(tools.db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     fn = tools.apropose_company_task if use_async else tools.propose_company_task
     with pytest.raises(ValueError, match="title"):
-        result = fn(product["id"], "", project_id="project")
+        result = fn(goal["id"], "", project_id="project")
         if inspect.isawaitable(result):
             await result
     with pytest.raises(ValueError):
-        result = fn(product["id"], "Valid title", project_id=" ")
+        result = fn(goal["id"], "Valid title", project_id=" ")
         if inspect.isawaitable(result):
             await result
     tools.db.close()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "db_class,use_async",
+    [(SqliteDb, False), (SqliteDb, True), (AsyncSqliteDb, True)],
+    ids=["sync", "async_facade", "native_async"],
+)
+async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_class, use_async):
+    db = db_class(db_file=str(tmp_path / "approval.db"))
+    manager = AsyncCompanyManager(db) if isinstance(db, AsyncSqliteDb) else CompanyManager(db)
+    tools = CompanyTools(db)
+    propose = tools.apropose_company_task if use_async else tools.propose_company_task
+
+    async def call(fn, *args, **kwargs):
+        result = fn(*args, **kwargs)
+        return await result if inspect.isawaitable(result) else result
+
+    try:
+        goal = await call(manager.create, name="SDK")
+        project = await call(manager.create_project, goal_id=goal["id"], name="Release")
+        project = await call(manager.get_project, project["id"])
+        task = json.loads(await call(propose, goal["id"], "Document release", project_id=project["id"]))
+        assert task["status"] == "backlog" and task["project_id"] == project["id"]
+        current = await call(manager.get_project, project["id"])
+        assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
+        assert current["transitions"] == project["transitions"]
+        await call(manager.transition_project, project_id=project["id"], target="active", reason="Human approved")
+        assert (await call(manager.get_task, task["id"]))["status"] == "backlog"
+    finally:
+        await call(db.close)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
-@pytest.mark.parametrize("name", ["list_company_sources", "read_company_source"])
+@pytest.mark.parametrize("name", ["list_goal_sources", "read_goal_source"])
 async def test_source_optionals_equal_omission(tmp_path, use_async, processed, name):
     db = SqliteDb(db_file=str(tmp_path / "sources.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     path = tmp_path / "source.md"
     path.write_text("Observed content")
-    source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
+    source = manager.create_source(goal_id=goal["id"], type="markdown", reference=str(path))
     tools = CompanyTools(db)
     context = RunContext(run_id="scan", session_id="session", user_id="alice")
     raw = getattr(tools, ("a" if use_async else "") + name)
@@ -130,7 +242,7 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
         function = (tools.get_async_functions() if use_async else tools.functions)[name]
         function.process_entrypoint()
         fn = function.entrypoint
-    required = {"product_id": product["id"]} if name == "list_company_sources" else {"source_id": source["id"]}
+    required = {"goal_id": goal["id"]} if name == "list_goal_sources" else {"source_id": source["id"]}
 
     async def invoke(options):
         result = fn(**required, **options, _agno_run_context=context)
@@ -140,7 +252,67 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
     for argument in optional:
         assert await invoke({argument: ""}) == expected, argument
         assert await invoke({argument: None}) == expected, argument
-    if name == "read_company_source":
+    if name == "read_goal_source":
         selected = await invoke({"path": path.name, "max_chars": None, "content_offset": ""})
         assert selected["content"] == "Observed content"
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("enabled", [True, False, None, ""])
+async def test_create_routine_enabled_option(tmp_path, use_async, enabled):
+    db = SqliteDb(db_file=str(tmp_path / "routine.db"))
+    goal = CompanyManager(db).create(name="SDK", user_id="alice")
+    reviewer = Agent(id="reviewer", telemetry=False)
+    tools = CompanyTools(db, registry=Registry(agents=[reviewer]))
+    function = (tools.get_async_functions() if use_async else tools.functions)["create_goal_routine"]
+    function.process_entrypoint(strict=True)
+    try:
+        result = function.entrypoint(
+            goal_id=goal["id"],
+            name="review",
+            executor_type="agent",
+            executor_id="reviewer",
+            instructions="Review existing work.",
+            cron_expr="0 9 * * *",
+            enabled=enabled,
+            _agno_run_context=RunContext(run_id="human", session_id="session", user_id="alice"),
+        )
+        row = json.loads(await result if inspect.isawaitable(result) else result)
+        assert row["enabled"] is (enabled is not False)
+        assert db.get_schedule(row["id"])["enabled"] is (enabled is not False)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "label", ["backlog", "Backlog", " BACKLOG ", "ready", "Ready", "In progress", "in-review", "Reviewing"]
+)
+async def test_task_status_filter_accepts_labels(tmp_path, use_async, label):
+    # "Backlog" used to match nothing, and the empty list read as "no Backlog Tasks".
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    manager = CompanyManager(db)
+    goal = manager.create(name="SDK")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
+    task = manager.create_task(goal_id=goal["id"], title="Publish wheels", project_id=project["id"])
+    tools = CompanyTools(db)
+    listed = await tools.alist_company_tasks(status=label) if use_async else tools.list_company_tasks(status=label)
+    titles = [row["title"] for row in json.loads(listed)["data"]]
+    assert titles == (["Publish wheels"] if "backlog" in label.lower() else []), listed
+    assert task["status"] == "backlog"
+    db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_task_status_filter_refuses_an_unknown_status(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "status.db"))
+    tools = CompanyTools(db)
+    with pytest.raises(ValueError, match="Unknown Task status 'waiting'. Use one of: backlog, ready, in_progress"):
+        if use_async:
+            await tools.alist_company_tasks(status="waiting")
+        else:
+            tools.list_company_tasks(status="waiting")
     db.close()

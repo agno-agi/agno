@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import wraps
 from inspect import isasyncgen, iscoroutinefunction, isgenerator, signature
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, Literal, Optional, overload
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, overload
 
 if TYPE_CHECKING:
     from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
@@ -30,6 +30,41 @@ class RunAuthorization:
     # Manager tool execution activates checks for its nested work. Explicit
     # RunAuthorization instances enforce by default for trusted Python callers.
     enforce_tools: bool = True
+    # A schedule fired this run with the saved authority of the person who created it. Nobody is present.
+    scheduled: bool = False
+    # Loaded from an authority that was stored with a schedule, a Routine or a Task acceptance,
+    # not built from a live request. A live caller's authority that only passes through the job
+    # queue or an internal hop is not saved.
+    saved: bool = False
+
+    def _saved_scopes_reach_mini_agent(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Whether this saved authority reaches Mini Agent on scopes that name no component.
+
+        A wildcard scope does not reach a built-in component. An authority saved before that rule
+        carries the scopes its author's token had then, and a token that could run every agent
+        could run Mini Agent. Work saved then keeps running: for Mini Agent, the saved scopes are
+        asked as they were, with no component named. This holds for saved authority only: saving
+        or editing a Routine, or accepting a Task, asks for Mini Agent by name. Mini Agent runs
+        nothing but Routines and Tasks, so no other work is reached this way."""
+        if not self.saved or not getattr(self.provider, "enforces_token_scopes", False):
+            return False
+        # Running a Routine or a Task starts Mini Agent and reads the run back. Nothing else is asked
+        if ctx.action not in ("run", "read"):
+            return False
+        from agno.os.scopes import has_required_scopes
+        from agno.registry._reserved import MANAGER_RESOURCES, MINI_AGENT_ID
+
+        if f"{ctx.resource_type}/{ctx.resource_id}" != MANAGER_RESOURCES[MINI_AGENT_ID]:
+            return False
+        return has_required_scopes(list(ctx.scopes or []), scopes, admin_scope=ctx.admin_scope)
+
+    def authorizes_route(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Whether this authority satisfies a route's required scopes, in the context given."""
+        return self.provider.authorize_route(ctx, scopes) or self._saved_scopes_reach_mini_agent(ctx, scopes)
+
+    async def aauthorizes_route(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Async twin of :meth:`authorizes_route`."""
+        return await self.provider.aauthorize_route(ctx, scopes) or self._saved_scopes_reach_mini_agent(ctx, scopes)
 
     def _decision(self, resource: str, action: str, resource_id: Optional[str]):
         ctx = replace(self.context, resource_type=resource, resource_id=resource_id, action=action)
@@ -45,13 +80,13 @@ class RunAuthorization:
 
     def require(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
         ctx, scopes = self._decision(resource, action, resource_id)
-        if not self.provider.authorize_route(ctx, scopes):
+        if not self.authorizes_route(ctx, scopes):
             permission = f"{resource}:{resource_id}:{action}" if resource_id else scopes[0]
             raise PermissionError(f"Permission required: {permission}")
 
     async def arequire(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
         ctx, scopes = self._decision(resource, action, resource_id)
-        if not await self.provider.aauthorize_route(ctx, scopes):
+        if not await self.aauthorizes_route(ctx, scopes):
             permission = f"{resource}:{resource_id}:{action}" if resource_id else scopes[0]
             raise PermissionError(f"Permission required: {permission}")
 
@@ -59,9 +94,13 @@ class RunAuthorization:
         from dataclasses import asdict
 
         return {
-            "context": asdict(self.context),
+            # Roles an application grants a run are kept only when set, so every other snapshot stays unchanged
+            "context": {k: v for k, v in asdict(self.context).items() if k != "roles" or v is not None},
             "service_account": self.service_account,
             "enforce_tools": self.enforce_tools,
+            **({"scheduled": True} if self.scheduled else {}),
+            # A saved authority stays saved when its run goes through the job queue or an internal hop
+            **({"saved": True} if self.saved else {}),
         }
 
 
@@ -90,6 +129,22 @@ def _caller_authorization(run_context: Any = None) -> Optional[RunAuthorization]
         return current_authorization()
     value = getattr(run_context, "authorization", None)
     return value if isinstance(value, RunAuthorization) else None
+
+
+# What a tool answers in a finished-work report: a run AgentOS started in a conversation to report that work
+# the conversation started has ended. Nobody is present in it.
+FINISHED_WORK_REPORT_REFUSAL = (
+    "Refused: this is a finished-work report and nobody is present. It reports what ended and what waits on "
+    "the person, and changes nothing. Say what you would do, and the person can ask for it."
+)
+
+
+def in_finished_work_report(run_context: Any = None) -> bool:
+    """Whether this run is a finished-work report, read from the mark the runtime put on its metadata."""
+    from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
+
+    metadata = getattr(run_context, "metadata", None)
+    return isinstance(metadata, dict) and bool(metadata.get(FINISHED_WORK_REPORT_METADATA_KEY))
 
 
 def authorization_for(run_context: Any = None) -> Optional[RunAuthorization]:
@@ -151,10 +206,32 @@ def requires_permission(resource: Optional[str] = None, action: Optional[str] = 
     return decorate
 
 
+def require_task_authority(metadata: Any, authority: Optional[RunAuthorization]) -> None:
+    """Refuse to go on with a run that a Company Task started, once it has left the Task's authority.
+
+    Mini Agent runs components only inside a Task, under the Task's limits. The dispatch lineage stored
+    on such a run names Mini Agent. A continuation holds the caller's own authority, not the Task's.
+    """
+    from agno.db.schemas.scheduler import DISPATCH_CHAIN_METADATA_KEY
+    from agno.registry._reserved import MINI_AGENT_ID
+
+    chain = metadata.get(DISPATCH_CHAIN_METADATA_KEY) if isinstance(metadata, dict) else None
+    if not isinstance(chain, list) or f"agent:{MINI_AGENT_ID}" not in chain:
+        return
+    from agno.company.execution import _ExecutorAuthorization
+
+    if not isinstance(authority, _ExecutorAuthorization):
+        raise PermissionError(
+            "This run was started by a Company Task and cannot continue outside it. "
+            "Send the Task back, or run the component yourself."
+        )
+
+
 @contextmanager
 def _tool_authorization(function: Any) -> Iterator[Optional[RunAuthorization]]:
     """Activate operation checks for manager tools and preserve them through delegation."""
     authority = _caller_authorization(function._run_context)
+    require_task_authority(getattr(function._run_context, "metadata", None), authority)
     if authority is not None and not authority.enforce_tools:
         from agno.registry._reserved import RESERVED_MANAGER_IDS
 
@@ -236,10 +313,21 @@ def stamp_authorization(
     return cleaned if cleaned or payload is not None else None
 
 
-def require_schedule_target(endpoint: str, method: str = "POST") -> None:
+def _run_endpoint_target(endpoint: str, method: str) -> Any:
+    """The (type, id) a schedule endpoint runs, read from the path as the server will route it."""
+    import posixpath
+    from urllib.parse import unquote, urlsplit
+
     from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
 
-    match = RUN_ENDPOINT_RE.fullmatch(endpoint) if method.upper() == "POST" else None
+    if method.upper() != "POST":
+        return None
+    # Decoded and normalised first: "/agents/mini%61gent/runs" reaches the same agent as its plain form
+    return RUN_ENDPOINT_RE.fullmatch(posixpath.normpath(unquote(urlsplit(endpoint).path)))
+
+
+def require_schedule_target(endpoint: str, method: str = "POST") -> None:
+    match = _run_endpoint_target(endpoint, method)
     if match is None:
         require_permission("agent_os", "admin")
     else:
@@ -247,9 +335,7 @@ def require_schedule_target(endpoint: str, method: str = "POST") -> None:
 
 
 async def arequire_schedule_target(endpoint: str, method: str = "POST") -> None:
-    from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
-
-    match = RUN_ENDPOINT_RE.fullmatch(endpoint) if method.upper() == "POST" else None
+    match = _run_endpoint_target(endpoint, method)
     if match is None:
         await arequire_permission("agent_os", "admin")
     else:

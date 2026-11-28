@@ -1,14 +1,59 @@
-"""Product request and response schemas."""
+"""Goal request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.company.context import ContextRef
+from agno.db.schemas.tasks import MAX_TASK_CONTEXT_ENTRIES
+from agno.os.schema import InternalServerErrorResponse
+from agno.registry._reserved import MINI_AGENT_ID
 
-class ProductCreate(BaseModel):
+# Every Company route reads the Company tables, which a database from agno 3.2 must migrate first.
+MIGRATION_REQUIRED_RESPONSE: Dict[Union[int, str], Dict[str, Any]] = {
+    500: {
+        "description": "Internal server error, or the database must be migrated first (migration_required_error)",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Table agno_company_products was written by an older version of Agno and must be "
+                    "renamed to agno_company_goals. Apply the pending migrations.",
+                    "error_id": "migration_required_error",
+                    "error_type": "migration_required_error",
+                }
+            }
+        },
+        "model": InternalServerErrorResponse,
+    }
+}
+
+
+def refuse_product_id(request: Request) -> None:
+    """Refuse ``product_id``, the filter a client written for agno 3.2 sends.
+
+    It is not an alias of ``goal_id``. Ignored, it would answer with the records of every Goal.
+    """
+    if "product_id" in request.query_params:
+        raise HTTPException(status_code=422, detail="product_id is not a filter of this route. Use goal_id.")
+
+
+def _refuse_purpose(data: Any) -> Any:
+    """Refuse ``purpose``, the field a client written for agno 3.2 sends. Dropped, the objective would stay as it is."""
+    if isinstance(data, dict) and "purpose" in data:
+        raise ValueError("purpose is not a field of a Goal. Use objective.")
+    return data
+
+
+class GoalCreate(BaseModel):
     name: str = Field(..., min_length=1)
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod
@@ -18,10 +63,15 @@ class ProductCreate(BaseModel):
         return value
 
 
-class ProductUpdate(BaseModel):
+class GoalUpdate(BaseModel):
     name: Optional[str] = None
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod
@@ -44,15 +94,15 @@ class ProjectCounts(BaseModel):
     tasks: TaskCounts = Field(default_factory=TaskCounts)
 
 
-class ProductCounts(ProjectCounts):
+class GoalCounts(ProjectCounts):
     projects: int = Field(0, description="Non-archived Projects in proposed or active status")
 
 
-class ProductResponse(BaseModel):
-    counts: ProductCounts = Field(default_factory=ProductCounts)
+class GoalResponse(BaseModel):
+    counts: GoalCounts = Field(default_factory=GoalCounts)
     id: str
     name: str
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
@@ -66,7 +116,8 @@ TaskStatus = Literal["backlog", "ready", "in_progress", "in_review", "done", "ca
 
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    # The Goal this Project serves. Without one the Project stands on its own.
+    goal_id: Optional[str] = Field(None, min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -95,7 +146,9 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(BaseModel):
     counts: ProjectCounts = Field(default_factory=ProjectCounts)
-    product_id: str = Field(..., min_length=1)
+    goal_id: Optional[str] = None
+    # True for the one Default Project: always active, and it refuses edits, transitions and archive.
+    is_default: bool = False
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -121,15 +174,30 @@ class ProjectTransition(BaseModel):
         return value
 
 
+def _ready_executor(executor_type: Any, executor_id: Any) -> Any:
+    """The executor a Task enters Ready with: the one named, or Mini Agent when none is named."""
+    if executor_type is None and executor_id is None:
+        return "agent", MINI_AGENT_ID
+    if executor_type is None or executor_id is None or not executor_id.strip():
+        raise ValueError("Give executor_type and executor_id together, or leave both out to use Mini Agent")
+    return executor_type, executor_id
+
+
 class TaskCreate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    # In a Project the Task takes the Project's Goal. In the Default Project it has this Goal or none.
+    goal_id: Optional[str] = Field(None, min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
-    project_id: str = Field(..., min_length=1)
+    # Without a Project the Task goes into the Default Project.
+    project_id: Optional[str] = Field(None, min_length=1)
     evidence: Optional[List[Dict[str, Any]]] = None
+    # What a run of the Task is given beside its brief. A reference that names nothing is refused.
+    context: Optional[List[ContextRef]] = Field(None, max_length=MAX_TASK_CONTEXT_ENTRIES)
+    # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
+    status: Literal["backlog", "ready", "cancelled"] = "backlog"
 
     @field_validator("title")
     @classmethod
@@ -137,6 +205,12 @@ class TaskCreate(BaseModel):
         if value is None or not value.strip():
             raise ValueError("title must be a non-empty string")
         return value
+
+    @model_validator(mode="after")
+    def validate_executor(self) -> "TaskCreate":
+        if self.status == "ready":
+            self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
+        return self
 
 
 class TaskUpdate(BaseModel):
@@ -156,6 +230,26 @@ class TaskUpdate(BaseModel):
         return value
 
 
+class TaskLastRun(BaseModel):
+    status: str
+    triggered_at: Optional[int] = None
+    completed_at: Optional[int] = None
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+    attempt: Optional[int] = None
+    # What the attempt's input carried of the Task's context: each entry with the version sent.
+    context_sent: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class TaskTransitionOption(BaseModel):
+    target: TaskStatus
+    allowed: bool
+    reason: Optional[str] = None
+    # In progress is entered with POST /company/tasks/{id}/runs, not a transition.
+    starts_run: bool = False
+
+
 class TaskResponse(BaseModel):
     @field_validator("transitions", mode="before")
     @classmethod
@@ -164,11 +258,19 @@ class TaskResponse(BaseModel):
 
         return public_task({"transitions": value})["transitions"]
 
-    product_id: str = Field(..., min_length=1)
+    @field_validator("context", mode="before")
+    @classmethod
+    def stored_context(cls, value):
+        # A Task nothing was attached to stores no list.
+        return value or []
+
+    goal_id: Optional[str] = None
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: Optional[str] = None
     evidence: Optional[List[Dict[str, Any]]] = None
+    # Each entry: id, kind, ref, added_by and added_at.
+    context: List[Dict[str, Any]] = Field(default_factory=list)
     origin: Optional[str] = None
     routine_id: Optional[str] = None
     dedupe_key: Optional[str] = None
@@ -189,6 +291,8 @@ class TaskResponse(BaseModel):
     sandboxed: bool = False
     metadata: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None
+    last_run: Optional[TaskLastRun] = None
+    allowed_transitions: List[TaskTransitionOption] = Field(default_factory=list)
 
 
 class TaskTransition(BaseModel):
@@ -209,8 +313,9 @@ class TaskTransition(BaseModel):
     @model_validator(mode="after")
     def validate_executor(self) -> "TaskTransition":
         if self.target == "ready":
-            if self.executor_type is None or self.executor_id is None or not self.executor_id.strip():
-                raise ValueError("Ready requires an executor type and id")
+            # With no executor named, the route keeps the Task's executor, or names Mini Agent when it has none.
+            if self.executor_type is not None or self.executor_id is not None:
+                self.executor_type, self.executor_id = _ready_executor(self.executor_type, self.executor_id)
         elif self.executor_type is not None or self.executor_id is not None:
             raise ValueError("Only Ready can set an executor")
         return self
@@ -243,6 +348,13 @@ class WikiReadResponse(BaseModel):
     metadata: WikiPageResponse
 
 
+class CompanyFileReadResponse(WikiReadResponse):
+    """One read of a file in tasks/ or notes/. A long file takes more than one read."""
+
+    # Where the next read starts. Null when this read reached the end of the file.
+    next_offset: Optional[int] = None
+
+
 class DecisionResponse(BaseModel):
     id: str
     decision: str
@@ -264,4 +376,13 @@ class DecisionResponse(BaseModel):
 
 class TaskRunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    attempt: int = Field(1, ge=1, strict=True)
+    attempt: Optional[int] = Field(None, ge=1, strict=True)
+    executor_type: Optional[Literal["agent", "team", "workflow"]] = None
+    executor_id: Optional[str] = Field(None, min_length=1)
+
+    @model_validator(mode="after")
+    def validate_executor(self) -> "TaskRunCreate":
+        if self.executor_type is not None or self.executor_id is not None:
+            if self.executor_type is None or self.executor_id is None or not self.executor_id.strip():
+                raise ValueError("A direct start requires an executor type and id")
+        return self

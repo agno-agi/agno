@@ -22,7 +22,7 @@ from agno.os.authz.run_context import request_authorization, restore_authorizati
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker, aenqueue_ticket
 from agno.registry import Registry
-from agno.registry._reserved import MANAGER_TEAM_ID, OPERATOR_ID
+from agno.registry._reserved import BUILDER_ID, MANAGER_TEAM_ID
 from agno.run import RunContext
 from agno.run.authorization import (
     AUTHORIZATION_HEADER,
@@ -125,9 +125,9 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
     target_model = ScriptedModel()
     target = Agent(id="allowed", name="Friendly target", model=target_model)
     model = ScriptedModel("run_agent", {"agent_id": "Friendly target", "message": "hello"})
-    scopes = ["teams:os-manager-internal:run"] + (["agents:allowed:run"] if allowed else [])
+    scopes = ["teams:superagent:run"] + (["agents:allowed:run"] if allowed else [])
     token_headers = headers(scopes)
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test")
+    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", trust_token_scopes=False)
     if identity == "managed_role":
         auth.define_role("caller", scopes)
         auth.assign("alice", "caller")
@@ -144,7 +144,7 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
         )
         token_headers = {"Authorization": "Bearer " + token}
     response = TestClient(os.get_app()).post(
-        "/teams/os-manager-internal/runs", headers=token_headers, data={"message": "run target", "stream": "false"}
+        "/teams/superagent/runs", headers=token_headers, data={"message": "run target", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     assert ("allowed target ran" if allowed else "Permission required: agents:allowed:run") in response.text
@@ -155,13 +155,13 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
 def test_builder_publish_checks_component_write(tmp_path, allowed):
     builder_model = ScriptedModel("create_agent", {"name": "Alice calc", "instructions": "Calculate", "publish": True})
     os = make_os(tmp_path, ScriptedModel())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder-internal")
+    builder = next(member for member in os.manager.members if member.id == "platform-builder")
     builder.model = builder_model
     os.manager.model = ScriptedModel(
-        "delegate_task_to_member", {"member_id": "platform-builder-internal", "task": "Build Alice calc"}
+        "delegate_task_to_member", {"member_id": "platform-builder", "task": "Build Alice calc"}
     )
-    path = "/teams/os-manager-internal/runs"
-    scopes = ["teams:os-manager-internal:run"]
+    path = "/teams/superagent/runs"
+    scopes = ["teams:superagent:run"]
     if allowed:
         scopes.append("components:write")
     response = TestClient(os.get_app()).post(
@@ -178,7 +178,7 @@ def test_builder_publish_checks_component_write(tmp_path, allowed):
 def test_studio_actions_refuse_before_writing(tmp_path, use_async):
     db = SqliteDb(db_file=str(tmp_path / "studio.db"))
     studio = StudioTools(registry=Registry(models=[ScriptedModel()]), db=db, versions=True, schedules=True)
-    with authorization_scope(lambda: authority(["teams:os-manager-internal:run"])):
+    with authorization_scope(lambda: authority(["teams:superagent:run"])):
         ctx = RunContext(run_id="run", session_id="session", user_id="alice")
         fn = studio.acreate_agent if use_async else studio.create_agent
         with pytest.raises(PermissionError, match="components:write"):
@@ -291,6 +291,32 @@ def test_stored_authority_uses_current_provider_and_keeps_pat_plane():
     restore_authorization(app, snapshot).require("agents", "run", "restricted")
 
 
+def test_carried_roles_decide_for_the_member_and_survive_the_snapshot(tmp_path):
+    """An application can hand a run its roles, such as an interface's default role: the member stays
+    the principal, the carried roles decide, and the snapshot keeps them only when set."""
+    from agno.os.auth import resolve_authorization_provider
+    from agno.run.authorization import RunAuthorization
+
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256")
+    authz.define_role("slack-member", ["tasks:write"])
+    db = SqliteDb(db_file=str(tmp_path / "carried.db"))
+    app = AgentOS(id="carried-roles", db=db, agents=[Agent(id="a")], authorization=authz, telemetry=False).get_app()
+    provider = resolve_authorization_provider(app)
+
+    member = RunAuthorization(provider, AuthorizationContext(principal_id="member@co", roles=["slack-member"]))
+    member.require("tasks", "write")
+    with pytest.raises(PermissionError):
+        member.require("goals", "write")
+    # The same member without carried roles holds nothing
+    with pytest.raises(PermissionError):
+        RunAuthorization(provider, AuthorizationContext(principal_id="member@co")).require("tasks", "write")
+
+    restored = restore_authorization(app, member.snapshot())
+    assert (restored.context.principal_id, restored.context.roles) == ("member@co", ["slack-member"])
+    restored.require("tasks", "write")
+    assert "roles" not in RunAuthorization(provider, AuthorizationContext(principal_id="other")).snapshot()["context"]
+
+
 @pytest.mark.parametrize("use_async", [False, True])
 def test_permission_sensitive_tools_do_not_reuse_cached_authorized_results(tmp_path, use_async):
     from agno.run.authorization import requires_permission
@@ -348,7 +374,7 @@ async def test_mcp_call_carries_permissions_into_manager_tools(tmp_path, monkeyp
             authorization_enabled=True,
             user_id="alice",
             claims={},
-            scopes=["teams:os-manager-internal:run"] + (["agents:allowed:run"] if allowed else []),
+            scopes=["teams:superagent:run"] + (["agents:allowed:run"] if allowed else []),
             admin_scope="agent_os:admin",
             user_isolation_enabled=True,
         ),
@@ -356,7 +382,7 @@ async def test_mcp_call_carries_permissions_into_manager_tools(tmp_path, monkeyp
     request.scope = {}
     monkeypatch.setattr(dependencies, "get_http_request", lambda: request)
     async with Client(build_mcp_server(os)) as client:
-        result = await client.call_tool("run_team", {"team_id": "os-manager-internal", "message": "run"})
+        result = await client.call_tool("run_team", {"team_id": "superagent", "message": "run"})
     text = str(result)
     assert ("allowed target ran" if allowed else "Permission required: agents:allowed:run") in text
 
@@ -371,14 +397,14 @@ def test_scheduled_manager_run_keeps_original_caller_permissions(tmp_path, allow
     app = os.get_app()
     app.state.internal_service_token = "internal-test-token"
     client = TestClient(app)
-    scopes = ["teams:os-manager-internal:run", "schedules:write"] + (["agents:allowed:run"] if allowed else [])
+    scopes = ["teams:superagent:run", "schedules:write"] + (["agents:allowed:run"] if allowed else [])
     created = client.post(
         "/schedules",
         headers=headers(scopes),
         json={
             "name": "manager",
             "cron_expr": "0 0 * * *",
-            "endpoint": "/teams/os-manager-internal/runs",
+            "endpoint": "/teams/superagent/runs",
             "payload": {"message": "run", AUTHORIZATION_KEY: None},
         },
     )
@@ -398,7 +424,7 @@ def test_scheduled_manager_run_keeps_original_caller_permissions(tmp_path, allow
     executor._get_client = AsyncMock(return_value=object())
     asyncio.run(executor._call_endpoint(schedule))
     response = client.post(
-        "/teams/os-manager-internal/runs",
+        "/teams/superagent/runs",
         headers=captured["headers"],
         data={**captured["data"], "stream": "false", "background": "false"},
     )
@@ -434,10 +460,10 @@ def test_durable_background_manager_run_preserves_caller(tmp_path, allowed):
     target = Agent(id="allowed", model=ScriptedModel())
     os = make_os(tmp_path, ScriptedModel("run_agent", {"agent_id": "allowed", "message": "hi"}), [target])
     os.queue = QueueConfig(durable=True, db=InMemoryQueueStore(), poll_interval=0.01)
-    scopes = ["teams:os-manager-internal:run"] + (["agents:allowed:run"] if allowed else [])
+    scopes = ["teams:superagent:run"] + (["agents:allowed:run"] if allowed else [])
     with TestClient(os.get_app()) as client:
         response = client.post(
-            "/teams/os-manager-internal/runs",
+            "/teams/superagent/runs",
             headers=headers(scopes),
             data={
                 "message": "run",
@@ -466,7 +492,7 @@ def test_service_account_tool_authority_is_enforced_even_when_rbac_flag_is_off()
             authorization_enabled=False,
             service_account_name="caller",
             user_id="sa:caller",
-            scopes=["teams:os-manager-internal:run"],
+            scopes=["teams:superagent:run"],
             claims={},
         ),
     )
@@ -538,8 +564,10 @@ def test_manager_run_discovery_and_session_permissions_remain_separate(tmp_path)
     assert client.get(f"/teams/{manager_id}", headers=run_headers).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=run_headers).status_code == 403
 
-    read_headers = headers(["teams:read"])
+    # Super Agent is read through its own scope: a type-wide teams:read does not reach it
+    read_headers = headers([f"teams:{manager_id}:read"])
     assert client.get(f"/teams/{manager_id}", headers=read_headers).status_code == 200
+    assert client.get(f"/teams/{manager_id}", headers=headers(["teams:read"])).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=read_headers).status_code == 403
     assert client.post(f"/teams/{manager_id}/runs", headers=read_headers, data={"message": "hi"}).status_code == 403
 
@@ -550,12 +578,14 @@ def test_manager_run_discovery_and_session_permissions_remain_separate(tmp_path)
     assert client.get(f"/sessions/{other.session_id}", headers=session_headers).status_code == 404
 
 
-def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", arguments=None, delegated=False):
+def _leader_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", arguments=None):
     root = tmp_path / "source"
     root.mkdir()
     (root / "example.py").write_text("READABLE_SOURCE_SENTINEL = 42\n")
     (root / ".env").write_text("SECRET_SENTINEL_NEVER_RETURN=synthetic\n")
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True)
+    auth = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True, trust_token_scopes=False
+    )
     request_headers = headers(scopes)
     if identity == "managed":
         auth.define_role("caller", scopes)
@@ -566,17 +596,10 @@ def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", 
         db=SqliteDb(db_file=str(tmp_path / "db.sqlite")),
         authorization=auth,
         user_isolation=True,
-        manager=OSManager(model=ScriptedModel(), root=root),
+        manager=OSManager(model=ScriptedModel(tool, arguments or {}), root=root),
         telemetry=False,
     )
-    operator = next(m for m in os.manager.members if m.id == OPERATOR_ID)
-    operator.model = ScriptedModel(tool, arguments or {})
-    path = f"/agents/{OPERATOR_ID}/runs"
-    if delegated:
-        os.manager.model = ScriptedModel(
-            "delegate_task_to_member", {"member_id": OPERATOR_ID, "task": "Execute the tool"}
-        )
-        path = f"/teams/{MANAGER_TEAM_ID}/runs"
+    path = f"/teams/{MANAGER_TEAM_ID}/runs"
     if identity == "pat":
         from agno.db.schemas.service_accounts import ServiceAccount
         from agno.os.service_accounts import generate_token
@@ -598,14 +621,14 @@ def _operator_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", 
     [
         ("read_file", {"path": "example.py"}, "filesystem:read", "READABLE_SOURCE_SENTINEL"),
         ("run_diagnostics", {}, "config:read", "checks"),
-        ("get_platform_metrics", {}, "agent_os:admin", "window_days"),
+        ("get_run_activity", {}, "agent_os:admin", "window_days"),
     ],
 )
-def test_operator_action_grants(tmp_path, identity, allowed, tool, args, grant, marker):
+def test_leader_action_grants(tmp_path, identity, allowed, tool, args, grant, marker):
     scopes = [f"teams:{MANAGER_TEAM_ID}:run"]
     if allowed:
         scopes.append(grant)
-    os, client, path, request_headers = _operator_permission_os(tmp_path, scopes, identity, tool, args, delegated=True)
+    os, client, path, request_headers = _leader_permission_os(tmp_path, scopes, identity, tool, args)
     response = client.post(path, headers=request_headers, data={"message": "Execute", "stream": "false"})
     assert response.status_code == 200, response.text
     content = response.json()["content"]
@@ -620,7 +643,7 @@ def test_operator_action_grants(tmp_path, identity, allowed, tool, args, grant, 
 @pytest.mark.parametrize("scope", ["filesystem:read", "agent_os:admin"])
 def test_even_authorized_source_reads_cannot_read_credential_files(tmp_path, scope):
     scopes = [f"teams:{MANAGER_TEAM_ID}:run", scope]
-    os, client, path, h = _operator_permission_os(tmp_path, scopes, arguments={"path": ".env"}, delegated=True)
+    os, client, path, h = _leader_permission_os(tmp_path, scopes, arguments={"path": ".env"})
     response = client.post(path, headers=h, data={"message": "Read", "stream": "false"})
     assert response.status_code == 200
     assert "SECRET_SENTINEL_NEVER_RETURN" not in response.text
@@ -629,7 +652,7 @@ def test_even_authorized_source_reads_cannot_read_credential_files(tmp_path, sco
 
 @pytest.mark.parametrize("mode", ["missing", "malformed", "expired", "wrong_audience"])
 def test_invalid_credentials_cannot_start_manager(tmp_path, mode):
-    os, client, _, _ = _operator_permission_os(tmp_path, [])
+    os, client, _, _ = _leader_permission_os(tmp_path, [])
     claims = {"sub": "alice", "aud": "test", "scopes": ["agent_os:admin"], "exp": int(time.time()) + 300}
     h = {}
     if mode == "malformed":
@@ -753,9 +776,9 @@ def test_manager_dispatch_keeps_checks_on_existing_studio_agent(tmp_path, allowe
         telemetry=False,
     )
     client = TestClient(os.get_app())
-    scopes = ["teams:os-manager-internal:run", "agents:legacy:run"] + (["registry:read"] if allowed else [])
+    scopes = ["teams:superagent:run", "agents:legacy:run"] + (["registry:read"] if allowed else [])
     response = client.post(
-        "/teams/os-manager-internal/runs", headers=headers(scopes), data={"message": "List models", "stream": "false"}
+        "/teams/superagent/runs", headers=headers(scopes), data={"message": "List models", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     assert ("Permission required: registry:read" in response.text) is not allowed
@@ -774,23 +797,23 @@ def test_ordinary_runner_cannot_dispatch_private_manager_member(tmp_path, allowe
     from agno.tools.studio_runner import StudioRunnerTools
 
     os = make_os(tmp_path, ScriptedModel())
-    operator = next(member for member in os.manager.members if member.id == OPERATOR_ID)
-    operator.model = ScriptedModel("run_diagnostics")
+    builder = next(member for member in os.manager.members if member.id == BUILDER_ID)
+    builder.model = ScriptedModel("list_models")
     legacy = Agent(
         id="legacy",
-        model=ScriptedModel("run_agent", {"agent_id": OPERATOR_ID, "message": "Diagnose"}),
-        tools=[StudioRunnerTools(db=os.db, include_agents=[operator])],
+        model=ScriptedModel("run_agent", {"agent_id": BUILDER_ID, "message": "List models"}),
+        tools=[StudioRunnerTools(db=os.db, include_agents=[builder])],
     )
     os.agents.append(legacy)
     app = os.get_app()
     os.resync(app)
-    scopes = ["agents:legacy:run"] + (["config:read"] if allowed else [])
+    scopes = ["agents:legacy:run"] + (["registry:read"] if allowed else [])
     response = TestClient(app).post(
-        "/agents/legacy/runs", headers=headers(scopes), data={"message": "Diagnose", "stream": "false"}
+        "/agents/legacy/runs", headers=headers(scopes), data={"message": "List models", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     assert "not found" in response.json()["content"]
-    assert operator.model.calls == 0
+    assert builder.model.calls == 0
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -798,7 +821,7 @@ def test_shared_studio_tool_keeps_manager_checks_without_affecting_ordinary_agen
     from agno.tools.function import Function, FunctionCall
 
     os = make_os(tmp_path, ScriptedModel())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder-internal")
+    builder = next(member for member in os.manager.members if member.id == "platform-builder")
     studio = builder.tools[0]
     fn = Function.from_callable(studio.list_models)
     fn._agent = builder
@@ -826,7 +849,7 @@ async def test_queue_keeps_legacy_tools_compatible_and_manager_tools_protected(t
 
     os = make_os(tmp_path, ScriptedModel())
     worker = QueueWorker(SimpleNamespace(), lambda *args: None, QueueConfig(), authorization_app=os.get_app())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder-internal")
+    builder = next(member for member in os.manager.members if member.id == "platform-builder")
     manager_function = builder.tools[0].functions["list_models"].model_copy(deep=False)
     manager_function._agent = builder
     ordinary_studio = StudioTools(registry=os.registry, db=os.db)
@@ -878,7 +901,7 @@ def test_lazy_tool_work_keeps_authority_without_leaking_it(manager_owned, allowe
             observed.append(current_authorization().enforce_tools)
 
     fn = Function.from_callable(avalues if use_async else values)
-    fn._agent = Agent(id=OPERATOR_ID if manager_owned else "ordinary")
+    fn._agent = Agent(id=BUILDER_ID if manager_owned else "ordinary")
     caller = authority(["registry:read"] if allowed else [])
     caller.enforce_tools = False
     with authorization_scope(lambda: caller):
@@ -928,9 +951,9 @@ def test_shared_custom_decorated_tool_is_protected_only_in_manager_execution(tmp
         telemetry=False,
     )
     client = TestClient(os.get_app())
-    scopes = ["teams:os-manager-internal:run", "agents:legacy:run"] + (["registry:read"] if allowed else [])
+    scopes = ["teams:superagent:run", "agents:legacy:run"] + (["registry:read"] if allowed else [])
     response = client.post(
-        "/teams/os-manager-internal/runs", headers=headers(scopes), data={"message": "Inspect", "stream": "false"}
+        "/teams/superagent/runs", headers=headers(scopes), data={"message": "Inspect", "stream": "false"}
     )
     assert response.status_code == 200
     assert ("REGISTRY_SENTINEL" in response.text) is allowed
@@ -955,7 +978,7 @@ def test_scheduled_runs_keep_ordinary_tools_compatible_but_protect_manager(tmp_p
         caller = authority([])
         caller.enforce_tools = snapshot_mode == "manager"
         request.headers[AUTHORIZATION_HEADER] = json.dumps(caller.snapshot())
-    builder = next(member for member in os.manager.members if member.id == "platform-builder-internal")
+    builder = next(member for member in os.manager.members if member.id == "platform-builder")
     fn = builder.tools[0].functions["list_models"].model_copy(deep=False)
     fn._agent = builder
     with authorization_scope(lambda: request_authorization(request)):
@@ -980,7 +1003,7 @@ async def test_mcp_preserves_ordinary_studio_access_and_enforces_manager_tools(t
     studio = StudioTools(registry=os.registry, db=os.db)
     legacy = Agent(id="legacy", model=ScriptedModel("list_models"), tools=[studio])
     os.agents.append(legacy)
-    builder = next(member for member in os.manager.members if member.id == "platform-builder-internal")
+    builder = next(member for member in os.manager.members if member.id == "platform-builder")
     builder.model = ScriptedModel("list_models")
     os.manager.model = ScriptedModel("delegate_task_to_member", {"member_id": builder.id, "task": "List models"})
     app = os.get_app()
@@ -994,7 +1017,8 @@ async def test_mcp_preserves_ordinary_studio_access_and_enforces_manager_tools(t
             authorization_enabled=True,
             user_id="alice",
             claims={"sub": "alice"},
-            scopes=["agents:run", "teams:run"],
+            # The built-ins are named: a plain agents:run or teams:run does not reach them
+            scopes=["agents:run", "teams:run", f"agents:{builder.id}:run", f"teams:{MANAGER_TEAM_ID}:run"],
         ),
     )
     monkeypatch.setattr(dependencies, "get_http_request", lambda: request)
@@ -1025,7 +1049,7 @@ def test_authorization_scope_preserves_post_hook_result_mutations(use_async, man
         fc.result = "post-hook result"
 
     fn = Function(name="answer", entrypoint=answer, post_hook=post_hook)
-    fn._agent = Agent(id=OPERATOR_ID if manager_owned else "ordinary")
+    fn._agent = Agent(id=BUILDER_ID if manager_owned else "ordinary")
     caller = authority([])
     caller.enforce_tools = False
     with authorization_scope(lambda: caller):
@@ -1110,18 +1134,18 @@ def test_schedule_metadata_edit_preserves_execution_authority(tmp_path, changes)
 
 
 @pytest.mark.parametrize(
-    "tool,arguments,component_id,permission,expected",
+    "tool,arguments,permission,expected",
     [
-        ("list_agents", {}, MANAGER_TEAM_ID, "agents:visible:read", "visible"),
-        ("list_teams", {}, MANAGER_TEAM_ID, "teams:visible:read", "visible"),
-        ("list_workflows", {}, MANAGER_TEAM_ID, "workflows:visible:read", "visible"),
-        ("read_file", {"path": "public.txt"}, OPERATOR_ID, "filesystem:read", "source content"),
-        ("list_files", {}, OPERATOR_ID, "filesystem:read", "public.txt"),
-        ("search_content", {"query": "source content"}, OPERATOR_ID, "filesystem:read", "public.txt"),
+        ("list_agents", {}, "agents:visible:read", "visible"),
+        ("list_teams", {}, "teams:visible:read", "visible"),
+        ("list_workflows", {}, "workflows:visible:read", "visible"),
+        ("read_file", {"path": "public.txt"}, "filesystem:read", "source content"),
+        ("list_files", {}, "filesystem:read", "public.txt"),
+        ("search_content", {"query": "source content"}, "filesystem:read", "public.txt"),
     ],
 )
 @pytest.mark.parametrize("allowed", [True, False])
-def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, component_id, permission, expected, allowed):
+def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, permission, expected, allowed):
     from agno.db.sqlite import AsyncSqliteDb
     from agno.os.authz.native_engine import NativePolicyEngine
     from agno.team import Team
@@ -1154,17 +1178,13 @@ def test_manager_tools_with_async_managed_roles(tmp_path, tool, arguments, compo
             verification_keys=[SECRET], algorithm="HS256", audience="test", db=policy_db, roles_claim="roles"
         ),
     )
-    if component_id == OPERATOR_ID:
-        os.manager.model = ScriptedModel(
-            "delegate_task_to_member", {"member_id": OPERATOR_ID, "task": "Read the source"}
-        )
     response = TestClient(os.get_app()).post(
         f"/teams/{MANAGER_TEAM_ID}/runs", headers=headers([]), data={"message": "run", "stream": "false"}
     )
     assert response.status_code == 200, response.text
     content = response.json()["content"]
     assert "synchronously against an async database" not in content
-    if tool.startswith("list_") and component_id == MANAGER_TEAM_ID:
+    if tool in ("list_agents", "list_teams", "list_workflows"):
         listing_family = tool.removeprefix("list_")
         listing = json.loads(content)
         assert [item["id"] for item in listing[listing_family]] == (["visible"] if allowed else [])

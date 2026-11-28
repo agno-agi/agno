@@ -49,9 +49,9 @@ python cookbook/90_models/heabsy/structured_output.py
 
 ## Model Ids
 
-The examples use `qwen38` (Qwen3.8 27B): 262,144-token context, up to 32,768 output tokens,
-vision input, tool calling and structured output. The endpoint lists the current models at
-`GET /v1/models`, and the catalog is at https://heabsy.com/models.
+The examples use `qwen38` (Qwen3.8 27B): up to 32,768 output tokens, vision input, tool calling
+and structured output. The endpoint lists the current models at `GET /v1/models`, and the
+catalog, including context sizes, is at https://heabsy.com/models.
 
 Reasoning is on or off per request through `chat_template_kwargs.enable_thinking`, for example:
 

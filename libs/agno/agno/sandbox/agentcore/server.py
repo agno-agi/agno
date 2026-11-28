@@ -470,8 +470,8 @@ def _rpc(request: Dict[str, Any]) -> Dict[str, Any]:
     if _state["token"] is None:
         raise _Refused("busy", "The runtime server is not running")
     operation, payload = request.get("operation"), request.get("payload")
-    if operation not in ("start", "poll") or not isinstance(payload, str):
-        raise ValueError("Runtime RPC requires start/poll and a JSON payload")
+    if operation not in ("start", "poll", "resolve", "capabilities") or not isinstance(payload, str):
+        raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a JSON payload")
     try:
         wait = float(json.loads(payload).get("wait", 0) or 0)
     except (ValueError, AttributeError):
@@ -1003,7 +1003,8 @@ def _checkpoint_restore(arguments: str) -> None:
         source, staging = Path(directory) / "checkpoint", Path(directory) / "restored"
         with source.open("xb") as stream:
             shutil.copyfileobj(sys.stdin.buffer, stream)
-        state = archive.restore(source, staging)
+        # Inside the computer, so absolute links name the paths they were captured with.
+        state = archive.restore(source, staging, absolute_links=True)
         for name, target in roots.items():
             target.mkdir(mode=0o700, exist_ok=True)
             if target.is_symlink() or not target.is_dir() or any(target.iterdir()):

@@ -54,6 +54,32 @@ def postgres_db(mock_engine):
     )
 
 
+def test_failed_table_creation_can_be_retried(postgres_db, mock_session):
+    """A failed CREATE TABLE must not leave the table registered on MetaData."""
+    postgres_db.Session = Mock(return_value=mock_session)
+    postgres_db.create_schema = False
+    attempts = {"retry_table": 0}
+
+    def create_once(table, *args, **kwargs):
+        if table.name == "retry_table":
+            attempts["retry_table"] += 1
+            if attempts["retry_table"] == 1:
+                raise OSError("temporary DDL outage")
+
+    with (
+        patch.object(PostgresDb, "table_exists", return_value=False),
+        patch("agno.db.postgres.postgres.is_table_available", return_value=False),
+        patch.object(Table, "create", create_once),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            postgres_db._get_or_create_table("retry_table", "knowledge", True)
+
+        table = postgres_db._get_or_create_table("retry_table", "knowledge", True)
+
+    assert table.name == "retry_table"
+    assert attempts["retry_table"] == 2
+
+
 def test_id_is_deterministic(mock_engine):
     # Initialize two databases with the same engine
     first_db = PostgresDb(db_engine=mock_engine)
@@ -61,6 +87,25 @@ def test_id_is_deterministic(mock_engine):
 
     # Assert that the ids are the same
     assert first_db.id == second_db.id
+
+
+@pytest.mark.parametrize("db_type", [PostgresDb, AsyncPostgresDb])
+def test_long_session_table_keeps_distinct_metrics_names(mock_engine, db_type):
+    session_table = "s" * 63
+    db = db_type(db_engine=mock_engine, session_table=session_table)
+    names = [db.component_metrics_table_name, db.aggregate_metrics_table_name, db.metrics_refreshes_table_name]
+
+    assert db.session_table_name == session_table
+    assert len({session_table, *names}) == 4
+    assert all(len(name.encode("utf-8")) <= 63 for name in names)
+    assert all(
+        name.endswith(suffix)
+        for name, suffix in zip(names, ["_component_metrics", "_aggregate_metrics", "_metrics_refreshes"])
+    )
+    same = db_type(db_engine=mock_engine, session_table=session_table)
+    assert same.component_metrics_table_name == db.component_metrics_table_name
+    other = db_type(db_engine=mock_engine, session_table="t" * 63)
+    assert other.component_metrics_table_name != db.component_metrics_table_name
 
 
 def test_init_with_engine(mock_engine):

@@ -16,7 +16,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 finance_agent = Agent(
     model=OpenAIResponses(id="gpt-5.6"),
-    reasoning_model=OpenAIResponses(id="o3-mini"),
+    reasoning_model=OpenAIResponses(id="gpt-5.6-sol"),
 )
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from agno.agent import Agent
-from agno.company import Product, Routine
+from agno.company import Goal, Routine
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS, CompanyConfig
 from agno.run.base import RunContext
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         db = SqliteDb(db_file=str(Path(directory) / "company.db"))
         tools = CompanyTools(db)
         researcher = Agent(id="researcher", tools=[tools], db=db, telemetry=False)
-        product = Product(
+        goal = Goal(
             id="research",
             name="Research",
             routines=[
@@ -37,7 +37,7 @@ if __name__ == "__main__":
         agent_os = AgentOS(
             db=db,
             agents=[researcher],
-            company=CompanyConfig(products=[product]),
+            company=CompanyConfig(goals=[goal]),
             telemetry=False,
         )
         with TestClient(agent_os.get_app()) as client:
@@ -48,9 +48,9 @@ if __name__ == "__main__":
             assert routine["schedule_type"] == "on_demand"
             assert routine["enabled"] and routine["next_run_at"] is None
             assert routine["last_run"] is None
-            client.post(path + "/pause").raise_for_status()
-            assert client.post(path + "/trigger").status_code == 409
-            assert client.post(path + "/resume").json()["next_run_at"] is None
+            # An on-demand Routine has no schedule to pause, and it is already enabled.
+            assert client.post(path + "/pause").status_code == 409
+            assert client.post(path + "/resume").status_code == 409
             scheduled = client.patch(path, json={"cron_expr": "0 9 * * *"}).json()
             assert (
                 scheduled["schedule_type"] == "scheduled" and scheduled["next_run_at"]
@@ -65,15 +65,13 @@ if __name__ == "__main__":
                 run_id="example-discovery", session_id="example-session"
             )
             arguments = dict(
-                product_id="research",
+                goal_id="research",
                 reference="https://docs.agno.com/",
                 _agno_agent=researcher,
                 _agno_run_context=context,
             )
-            source = json.loads(tools.add_company_source(**arguments))
-            assert (
-                json.loads(tools.add_company_source(**arguments))["id"] == source["id"]
-            )
+            source = json.loads(tools.add_goal_source(**arguments))
+            assert json.loads(tools.add_goal_source(**arguments))["id"] == source["id"]
             assert source["config"]["metadata"]["agent_id"] == "researcher"
             print("Created a custom Routine without a template or initial Sources.")
             print("Repeated website discovery reused one attributed Source.")

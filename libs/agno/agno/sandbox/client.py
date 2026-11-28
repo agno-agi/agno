@@ -51,8 +51,7 @@ class SandboxRuntimeClient:
             await task
             raise
         if output.exit_code or output.timed_out or output.output_limited:
-            reason = output.stderr[-2000:] or ("timed out" if output.timed_out else "no reply")
-            raise SandboxError("Runtime RPC failed: " + reason)
+            raise SandboxError("Runtime RPC failed: " + (output.stderr[-2000:] or self._silent_failure(output)))
         try:
             response = json.loads(output.stdout)
         except ValueError as error:
@@ -62,6 +61,15 @@ class SandboxRuntimeClient:
         if response.get("execution_id") != request.get("execution_id"):
             raise SandboxError("Runtime execution identity mismatch")
         return response
+
+    @staticmethod
+    def _silent_failure(output: Any) -> str:
+        """What is known about a runtime request that failed and left no message."""
+        if output.timed_out:
+            return "the runtime request timed out"
+        if output.output_limited:
+            return "the runtime's reply was larger than the limit"
+        return f"the runtime request ended with exit code {output.exit_code} and left no message"
 
     async def astart(
         self,
@@ -82,6 +90,10 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
+        if (config or {}).get("_native_hitl", False):
+            capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
+            if "native_hitl_v1" not in capabilities.get("capabilities", []):
+                raise SandboxError("Rebuild the sandbox image: native human-in-the-loop is unsupported")
         response = await self._rpc(
             computer,
             "start",
@@ -135,6 +147,31 @@ class SandboxRuntimeClient:
                 **({"metadata": metadata} if metadata is not None else {}),
             )
         )
+
+    async def aresolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """Deliver one decision to the exact native request waiting in the runtime: a confirm or
+        reject, or the answers to its questions."""
+        answer = (
+            {"answers": decision["answers"]} if "answers" in decision else {"confirmed": decision["confirmed"] is True}
+        )
+        return await self._rpc(
+            execution.computer,
+            "resolve",
+            {
+                "execution_id": execution.execution_id,
+                "run_id": execution.run_id,
+                "agent_id": execution.computer.agent_id,
+                "session_id": execution.computer.session_id,
+                "tool_call_id": decision["tool_call_id"],
+                **answer,
+                "digest": decision["digest"],
+                "owner": decision["owner"],
+            },
+        )
+
+    def resolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous decision delivery."""
+        return _sync(self.aresolve(execution, decision))
 
     async def apoll(self, execution: RuntimeExecution, *, cursor: int = 0, wait: float = 0.0) -> RuntimePage:
         """One page from the journal. ``wait`` long-polls inside the container for up to that

@@ -29,12 +29,14 @@ authorization = Authorization(
     algorithm="HS256",
     audience="manager-access-demo",
     verify_audience=True,
+    # The managed role decides alone. Without this, the scopes on a token count too.
+    trust_token_scopes=False,
 )
 authorization.define_role(
     "manager-user",
     [
-        "teams:os-manager-internal:run",
-        "teams:os-manager-internal:read",
+        "teams:superagent:run",
+        "teams:superagent:read",
         "agents:math-helper:run",
         "agents:math-helper:read",
         "config:read",

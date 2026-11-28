@@ -70,14 +70,17 @@ def make_client(request, tmp_path):
 
 
 def create(client, user):
-    parent = client.post("/company/products", json={"name": user}, headers=headers(user, ["products:write"])).json()[
-        "id"
-    ]
+    parent = client.post("/company/goals", json={"name": user}, headers=headers(user, ["goals:write"])).json()["id"]
     project = client.post(
-        "/company/projects", json={"product_id": parent, "name": "Release"}, headers=headers(user, ["projects:write"])
+        "/company/projects", json={"goal_id": parent, "name": "Release"}, headers=headers(user, ["projects:write"])
     ).json()
+    client.post(
+        "/company/projects/" + project["id"] + "/transitions",
+        json={"target": "active", "reason": "Approved"},
+        headers=headers(user, ["projects:write"]),
+    )
     response = client.post(
-        "/company/tasks", json={"title": user, "product_id": parent, "project_id": project["id"]}, headers=headers(user)
+        "/company/tasks", json={"title": user, "goal_id": parent, "project_id": project["id"]}, headers=headers(user)
     )
     assert response.status_code == 201, response.text
     assert response.json()["user_id"] == user
@@ -97,7 +100,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
-def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
+def test_isolation_on_shares_reads_edits_and_deletion(make_client):
     c = make_client(True)
     a = create(c, "alice")
     own = {create(c, "bob") for _ in range(3)}
@@ -111,22 +114,16 @@ def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
     path = "/company/tasks/" + a
     before = c.get(path, headers=headers("alice")).json()
     assert c.get(path, headers=headers("bob")).json() == before
-    for method, suffix, body in [
-        ("delete", "", None),
-        ("post", "/restore", None),
-    ]:
-        response = c.request(method, path + suffix, json=body, headers=headers("bob"))
-        assert response.status_code == 403, response.text
-    assert c.get(path, headers=headers("alice")).json() == before
     edited = c.patch(path, json={"title": "Collaborative work"}, headers=headers("bob", ["tasks:write"]))
     assert edited.status_code == 200, edited.text
     assert edited.json()["title"] == "Collaborative work"
     assert edited.json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("alice")).status_code == 204
+    # Archive and restore need the scope, not ownership; the creator stays recorded.
+    assert c.delete(path, headers=headers("bob")).status_code == 204
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
-    assert c.post(path + "/restore", headers=headers("bob")).status_code == 403
     assert c.get("/company/tasks?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
-    assert c.post(path + "/restore", headers=headers("alice")).status_code == 200
+    assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
+    assert c.get(path, headers=headers("alice")).json()["user_id"] == "alice"
 
 
 def test_admin_bypass_and_creator_attribution(make_client):
@@ -138,10 +135,12 @@ def test_admin_bypass_and_creator_attribution(make_client):
     assert c.patch(path, json={"title": "renamed"}, headers=admin).status_code == 200
     assert c.delete(path, headers=admin).status_code == 204
     assert c.post(path + "/restore", headers=admin).status_code == 200
-    parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
-    project = c.post("/company/projects", json={"name": "Admin project", "product_id": parent}, headers=admin).json()
+    parent = c.post("/company/goals", json={"name": "Admin goal"}, headers=admin).json()["id"]
+    project = c.post("/company/projects", json={"name": "Admin project", "goal_id": parent}, headers=admin).json()
+    approval = {"target": "active", "reason": "Approved"}
+    c.post("/company/projects/" + project["id"] + "/transitions", json=approval, headers=admin)
     response = c.post(
-        "/company/tasks", json={"title": "Admin work", "product_id": parent, "project_id": project["id"]}, headers=admin
+        "/company/tasks", json={"title": "Admin work", "goal_id": parent, "project_id": project["id"]}, headers=admin
     )
     assert response.status_code == 201
     assert response.json()["user_id"] == "admin"
@@ -173,11 +172,10 @@ def test_service_account_scopes_on_company_routes(tmp_path, authorization):
 
     db = SqliteDb(db_file=str(tmp_path / "service-accounts.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Shared product", user_id="alice")
-    project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
-    shared = manager.create_task(
-        product_id=product["id"], title="Shared work", project_id=project["id"], user_id="alice"
-    )
+    goal = manager.create(name="Shared goal", user_id="alice")
+    project = manager.create_project(goal_id=goal["id"], name="Release", user_id="alice")
+    manager.transition_project(project_id=project["id"], target="active", reason="Approved")
+    shared = manager.create_task(goal_id=goal["id"], title="Shared work", project_id=project["id"], user_id="alice")
     token, token_hash, token_prefix = generate_token()
     db.create_service_account(
         {
@@ -341,7 +339,7 @@ async def test_run_target_permission_with_async_managed_roles(tmp_path, resource
 
     db = AsyncSqliteDb(db_file=str(tmp_path / "managed.db"))
     engine = NativePolicyEngine(db=db)
-    scopes = ["projects:write", "products:write", "tasks:read", "tasks:write", "schedules:write", "agents:writer:run"]
+    scopes = ["projects:write", "goals:write", "tasks:read", "tasks:write", "schedules:write", "agents:writer:run"]
     await engine.aset_role_scopes("editor", [(scope, "allow") for scope in scopes])
     await engine.aassign("alice", "editor")
     app = AgentOS(
@@ -353,7 +351,12 @@ async def test_run_target_permission_with_async_managed_roles(tmp_path, resource
         company=CompanyConfig(),
         telemetry=False,
         authorization=Authorization(
-            db=db, roles_claim="roles", verification_keys=[SECRET], algorithm="HS256", audience=OS_ID
+            db=db,
+            roles_claim="roles",
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            audience=OS_ID,
+            trust_token_scopes=False,
         ),
     ).get_app()
     # Token admin claims must not override the stored executor permissions.
@@ -361,15 +364,18 @@ async def test_run_target_permission_with_async_managed_roles(tmp_path, resource
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             if resource == "tasks":
-                product = await client.post("/company/products", json={"name": "SDK"}, headers=auth)
-                assert product.status_code == 201, product.text
+                goal = await client.post("/company/goals", json={"name": "SDK"}, headers=auth)
+                assert goal.status_code == 201, goal.text
                 project = await client.post(
-                    "/company/projects", json={"product_id": product.json()["id"], "name": "Release"}, headers=auth
+                    "/company/projects", json={"goal_id": goal.json()["id"], "name": "Release"}, headers=auth
                 )
                 assert project.status_code == 201, project.text
+                approval = {"target": "active", "reason": "Approved"}
+                path = "/company/projects/" + project.json()["id"] + "/transitions"
+                await client.post(path, json=approval, headers=auth)
                 task = await client.post(
                     "/company/tasks",
-                    json={"product_id": product.json()["id"], "project_id": project.json()["id"], "title": "Work"},
+                    json={"goal_id": goal.json()["id"], "project_id": project.json()["id"], "title": "Work"},
                     headers=auth,
                 )
                 assert task.status_code == 201, task.text
@@ -415,7 +421,11 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
             continue
         advanced = c.post(path + "/transitions", json={"target": next_state, "reason": "Progress"}, headers=writer)
         assert advanced.status_code == 200, advanced.text
+    assert c.patch(path, json={"executor_id": "other"}, headers=writer).status_code == 409
     assert c.patch(path, json={"brief": "Changed"}, headers=writer).status_code == 409
+    content = c.patch(path, json={"title": "Renamed"}, headers=writer)
+    assert content.status_code == 200, content.text
+    assert content.json()["user_id"] == "alice" and content.json()["status"] == start
     changed = c.post(path + "/transitions", json={"target": target, "reason": "Team decision"}, headers=writer)
     assert changed.status_code == 200, changed.text
     record = changed.json()
@@ -430,7 +440,7 @@ def test_collaborators_return_or_cancel_accepted_tasks(make_client, start, targe
     else:
         assert (
             c.post(path + "/transitions", json={"target": "backlog", "reason": "Reopen"}, headers=writer).status_code
-            == 409
+            == 200
         )
 
 

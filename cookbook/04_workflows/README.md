@@ -12,6 +12,7 @@ Runnable workflow examples under: cookbook/04_workflows
 - 06_advanced_concepts/: Additional examples for 06 advanced concepts.
 - 07_cel_expressions/: Additional examples for 07 cel expressions.
 - 08_human_in_the_loop/: Sequential HITL decision trees and confirmation patterns.
+- 09_coding_engineers/: Claude and Codex engineers in sandboxes as workflow steps, such as getting a pull request to merge-ready.
 - assets/: Reference images used by workflow documentation.
 
 ## Prerequisites

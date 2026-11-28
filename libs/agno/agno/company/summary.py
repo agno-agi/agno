@@ -1,4 +1,4 @@
-"""Product reports use the configured interface's existing outbound transport."""
+"""Goal reports use the configured interface's existing outbound transport."""
 
 import asyncio
 import inspect
@@ -23,7 +23,7 @@ def _claim_content(existing: Any) -> str:
 
 
 def _serialized_summary(fn):
-    """Serialize reports per Product through a recoverable versioned filesystem lease.
+    """Serialize reports per Goal through a recoverable versioned filesystem lease.
 
     Transport still has at-least-once semantics across a crash after sending and
     before saving its receipt. The lease prevents concurrent healthy runs from
@@ -32,14 +32,14 @@ def _serialized_summary(fn):
     if inspect.iscoroutinefunction(fn):
 
         @wraps(fn)
-        async def async_wrapped(self, *, product_id, **kwargs):
-            from agno.company.playbook import _require_owner
+        async def async_wrapped(self, *, goal_id, **kwargs):
+            from agno.company.playbook import _require_goal_scope
 
-            product = await self.get(product_id)
-            if product is None:
-                raise LookupError("Product not found")
-            _require_owner(product, kwargs.get("user_id"))
-            filesystem = _summary_state_filesystem(self.db, product_id)
+            goal = await self.get(goal_id)
+            if goal is None:
+                raise LookupError("Goal not found")
+            _require_goal_scope(goal)
+            filesystem = _summary_state_filesystem(self.db, goal_id)
             existing = await filesystem.aread_with_meta(_LOCK_PATH)
             content = _claim_content(existing)
             saved = await filesystem.awrite(
@@ -47,7 +47,7 @@ def _serialized_summary(fn):
             )
             token = _delivery_deadline.set(json.loads(content)["expires_at"])
             try:
-                return await fn(self, product_id=product_id, **kwargs)
+                return await fn(self, goal_id=goal_id, **kwargs)
             finally:
                 _delivery_deadline.reset(token)
                 await filesystem.awrite(_LOCK_PATH, '{"expires_at": 0}', expected_version=saved.version)
@@ -55,20 +55,20 @@ def _serialized_summary(fn):
         return async_wrapped
 
     @wraps(fn)
-    def wrapped(self, *, product_id, **kwargs):
-        from agno.company.playbook import _require_owner
+    def wrapped(self, *, goal_id, **kwargs):
+        from agno.company.playbook import _require_goal_scope
 
-        product = self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_owner(product, kwargs.get("user_id"))
-        filesystem = _summary_state_filesystem(self.db, product_id)
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        filesystem = _summary_state_filesystem(self.db, goal_id)
         existing = filesystem.read_with_meta(_LOCK_PATH)
         content = _claim_content(existing)
         saved = filesystem.write(_LOCK_PATH, content, expected_version=existing.metadata.version if existing else 0)
         token = _delivery_deadline.set(json.loads(content)["expires_at"])
         try:
-            return fn(self, product_id=product_id, **kwargs)
+            return fn(self, goal_id=goal_id, **kwargs)
         finally:
             _delivery_deadline.reset(token)
             filesystem.write(_LOCK_PATH, '{"expires_at": 0}', expected_version=saved.version)
@@ -85,13 +85,13 @@ def _delivery_state(report: str) -> str:
     return "\n" + "\n".join([*baseline[-1:], *dict.fromkeys(receipts)]) + "\n"
 
 
-def _summary_state_filesystem(db: Any, product_id: str) -> FileSystem:
-    return FileSystem(db, namespace=f"company/products/{product_id}/summary-state", user_scoped=False)
+def _summary_state_filesystem(db: Any, goal_id: str) -> FileSystem:
+    return FileSystem(db, namespace=f"company/products/{goal_id}/summary-state", user_scoped=False)
 
 
-def _load_summary_state(db: Any, product_id: str, legacy_report: str) -> Tuple[FileSystem, str, int]:
+def _load_summary_state(db: Any, goal_id: str, legacy_report: str) -> Tuple[FileSystem, str, int]:
     """Migrate legacy receipts before the report can expire; writes use filesystem versions."""
-    filesystem = _summary_state_filesystem(db, product_id)
+    filesystem = _summary_state_filesystem(db, goal_id)
     existing = filesystem.read_with_meta(_STATE_PATH)
     if existing is not None:
         assert existing.metadata.version is not None, "Summary delivery state requires a versioned filesystem"
@@ -102,9 +102,9 @@ def _load_summary_state(db: Any, product_id: str, legacy_report: str) -> Tuple[F
     return filesystem, content, saved.version
 
 
-async def _aload_summary_state(db: Any, product_id: str, legacy_report: str) -> Tuple[FileSystem, str, int]:
+async def _aload_summary_state(db: Any, goal_id: str, legacy_report: str) -> Tuple[FileSystem, str, int]:
     """Asynchronously preserve delivery state independently of report retention."""
-    filesystem = _summary_state_filesystem(db, product_id)
+    filesystem = _summary_state_filesystem(db, goal_id)
     existing = await filesystem.aread_with_meta(_STATE_PATH)
     if existing is not None:
         assert existing.metadata.version is not None, "Summary delivery state requires a versioned filesystem"
@@ -115,11 +115,13 @@ async def _aload_summary_state(db: Any, product_id: str, legacy_report: str) -> 
     return filesystem, content, saved.version
 
 
-def _summary_report(product: Any, counts: Any, tasks: Any, narrative: str, previous: str) -> str:
+def _summary_report(goal: Any, counts: Any, tasks: Any, narrative: str, previous: str) -> str:
     """Compare stored Task facts with the preceding report and retain the executor's narrative."""
     import base64
     import json
     import re
+
+    from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES
 
     if not isinstance(narrative, str) or not narrative.strip():
         raise ValueError("Summary requires the executor's narrative")
@@ -144,9 +146,9 @@ def _summary_report(product: Any, counts: Any, tasks: Any, narrative: str, previ
             else None
         )
         current[task["id"]] = {"title": task["title"], "status": task["status"], "run_status": status, "error": error}
-        if error and task["status"] == "in_progress" and result.get("status") in {"ERROR", "CANCELLED"}:
+        if error and task["status"] in FAILED_RUN_TASK_STATUSES and result.get("status") in {"ERROR", "CANCELLED"}:
             failures.append("- " + task["title"] + " (" + task["id"] + "): " + status + ": " + error)
-        if task["status"] in {"backlog", "in_review"}:
+        elif task["status"] in {"backlog", "in_review"}:
             waiting.append("- " + task["title"] + ": " + task["status"])
     changes = []
     for task_id, state in current.items():
@@ -168,7 +170,7 @@ def _summary_report(product: Any, counts: Any, tasks: Any, narrative: str, previ
     snapshot = base64.b64encode(json.dumps(current, sort_keys=True).encode()).decode()
     return (
         "# "
-        + product["name"]
+        + goal["name"]
         + " summary\n\n"
         + "\n".join(f"{name}: {count}" for name, count in counts.items())
         + "\n\n## Narrative\n\n"

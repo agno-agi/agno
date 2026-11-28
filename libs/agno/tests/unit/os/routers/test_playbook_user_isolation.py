@@ -13,9 +13,9 @@ from agno.os.config import AuthorizationConfig
 
 SECRET = "company-playbook-test-key-long-enough"
 SCOPES = [
-    "products:read",
-    "products:write",
-    "products:delete",
+    "goals:read",
+    "goals:write",
+    "goals:delete",
     "wiki:read",
     "wiki:write",
     "decisions:read",
@@ -60,21 +60,19 @@ def client(request, tmp_path):
     asyncio.run(db.close()) if request.param else db.close()
 
 
-def test_wiki_company_read_owner_write_and_versions(client):
-    product = client.post(
-        "/company/products", json={"name": "SDK", "purpose": "Build"}, headers=headers("alice")
-    ).json()
-    url = "/company/products/" + product["id"] + "/wiki"
+def test_wiki_shared_reads_writes_and_versions(client):
+    goal = client.post("/company/goals", json={"name": "SDK", "objective": "Build"}, headers=headers("alice")).json()
+    url = "/company/goals/" + goal["id"] + "/wiki"
     listing = client.get(url, headers=headers("bob", ["wiki:read"]))
     assert listing.status_code == 200, listing.text
     assert {row["path"] for row in listing.json()["data"]} == {"brief.md", "status.md"}
     assert listing.json()["meta"]["total_count"] == 2
-    assert client.get(url, headers=headers("bob", ["products:read"])).status_code == 403
+    assert client.get(url, headers=headers("bob", ["goals:read"])).status_code == 403
     page = client.get(url + "/status.md", headers=headers("bob")).json()
     body = {"content": "Updated", "expected_version": page["metadata"]["version"]}
-    assert client.put(url + "/status.md", json=body, headers=headers("bob")).status_code == 403
-    assert client.put(url + "/status.md", json=body, headers=headers("alice", ["wiki:read"])).status_code == 403
-    assert client.put(url + "/status.md", json=body, headers=headers("alice")).status_code == 200
+    # Writes need wiki:write, not Goal ownership; the version check still serializes them.
+    assert client.put(url + "/status.md", json=body, headers=headers("bob", ["wiki:read"])).status_code == 403
+    assert client.put(url + "/status.md", json=body, headers=headers("bob")).status_code == 200
     assert client.put(url + "/status.md", json=body, headers=headers("alice")).status_code == 409
     assert client.get(url + "/status.md", headers=headers("bob")).json()["content"] == "Updated"
     assert (
@@ -96,19 +94,21 @@ def test_wiki_company_read_owner_write_and_versions(client):
         == 409
     )
     assert client.get(url + "/missing.md", headers=headers("alice")).status_code == 404
-    assert client.get("/company/products/missing/wiki", headers=headers("alice")).status_code == 404
+    assert client.get("/company/goals/missing/wiki", headers=headers("alice")).status_code == 404
     assert client.get(url + "/bad.txt", headers=headers("alice")).status_code == 422
     assert client.put(url + "/status.md", json={"content": "unguarded"}, headers=headers("alice")).status_code == 422
-    assert client.delete("/company/products/" + product["id"], headers=headers("alice")).status_code == 204
+    assert client.delete("/company/goals/" + goal["id"], headers=headers("alice")).status_code == 204
     assert client.get(url, headers=headers("alice")).status_code == 404
-    assert client.post("/company/products/" + product["id"] + "/restore", headers=headers("alice")).status_code == 200
+    assert client.post("/company/goals/" + goal["id"] + "/restore", headers=headers("alice")).status_code == 200
     assert client.get(url + "/status.md", headers=headers("bob")).json()["content"] == "Updated"
 
 
 def test_company_namespace_and_decision_identity(client):
     assert client.get("/company/wiki", headers=headers("reader")).status_code == 200
+    # Company pages are shared: members with wiki:write edit them, as admins do.
     body = {"content": "shared", "expected_version": 1}
-    assert client.put("/company/wiki/status.md", json=body, headers=headers("alice")).status_code == 403
+    assert client.put("/company/wiki/status.md", json=body, headers=headers("alice")).status_code == 200
+    body = {"content": "admin edit", "expected_version": 2}
     assert (
         client.put("/company/wiki/status.md", json=body, headers=headers("admin", ["agent_os:admin"])).status_code
         == 200
@@ -145,13 +145,13 @@ def test_company_namespace_and_decision_identity(client):
 @pytest.mark.parametrize(
     "method,path,expected",
     [
-        ("GET", "/company/products/p1/wiki", ["wiki:read"]),
-        ("GET", "/company/products/p1/wiki/notes/status.md", ["wiki:read"]),
-        ("PUT", "/company/products/p1/wiki/status.md", ["wiki:write"]),
-        ("GET", "/company/products/p1", ["products:read"]),
+        ("GET", "/company/goals/p1/wiki", ["wiki:read"]),
+        ("GET", "/company/goals/p1/wiki/notes/status.md", ["wiki:read"]),
+        ("PUT", "/company/goals/p1/wiki/status.md", ["wiki:write"]),
+        ("GET", "/company/goals/p1", ["goals:read"]),
     ],
 )
-def test_wiki_scope_precedes_generic_product_pattern(method, path, expected):
+def test_wiki_scope_precedes_generic_goal_pattern(method, path, expected):
     from agno.os.scopes import get_default_scope_mappings, get_required_scopes_for_route
 
     assert get_required_scopes_for_route(get_default_scope_mappings(company=True), method, path) == expected

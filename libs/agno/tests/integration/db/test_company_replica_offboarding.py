@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -47,9 +48,12 @@ async def test_ticketless_checkpoint_on_another_replica_remains_running(system, 
         **{name: str(tmp_path / name) for name in ("started", "release", "tool")},
     }
     log_path = tmp_path / "replica.log"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
     with log_path.open("w") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "tests.integration.db.company_replica_worker", json.dumps(config)],
+            env=env,
             stdout=log,
             stderr=log,
         )
@@ -90,7 +94,7 @@ async def test_disabled_owner_blocks_new_work_but_allows_collaborator_cancel(
 ):
     _, db, worker, _, components = system
     secret = "disabled-owner-regression-secret-at-least-32-bytes"
-    common = [f"{r}:{a}" for r in ("products", "projects", "tasks") for a in ("read", "write")] + ["wiki:read"]
+    common = [f"{r}:{a}" for r in ("goals", "projects", "tasks") for a in ("read", "write")] + ["wiki:read"]
     auth = Authorization(verification_keys=[secret], algorithm="HS256")
     os_app, app = company_app(db, worker, components, isolation, auth, UserDirectory(auto_provision=True))
 
@@ -112,12 +116,14 @@ async def test_disabled_owner_blocks_new_work_but_allows_collaborator_cancel(
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", headers=headers("alice")
     ) as client:
-        product = (await client.post("/company/products", json={"name": "Product"})).json()
-        project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})).json()
+        goal = (await client.post("/company/goals", json={"name": "Goal"})).json()
+        project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Project"})).json()
+        approval = {"target": "active", "reason": "Approved"}
+        await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = (
             await client.post(
                 "/company/tasks",
-                json={"product_id": product["id"], "project_id": project["id"], "title": "Task", "brief": "Draft"},
+                json={"goal_id": goal["id"], "project_id": project["id"], "title": "Task", "brief": "Draft"},
             )
         ).json()
         client.headers.update(headers("bob"))
@@ -202,7 +208,6 @@ async def test_refresh_with_mongo_history_continues_completion_proposals(system,
     client, db, _, _, _ = system
     task = await accepted(client)
     await _call(db, "transition_task", task["id"], "cancelled", "No work needed")
-    await _call(db, "transition_project", task["project_id"], "active", "Begin")
     schedule_db = (AsyncMongoDb if asynchronous else MongoDb)(db_url=url, db_name="company_refresh_" + uuid4().hex)
     manager = (AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager)(db, schedule_db=schedule_db)
     now = int(time.time())
@@ -224,14 +229,14 @@ async def test_refresh_with_mongo_history_continues_completion_proposals(system,
                     status="success" if complete else "running",
                 ).to_dict(),
             )
-        result = await _call(manager, "refresh", task["product_id"])
+        result = await _call(manager, "refresh", task["goal_id"])
         assert result["deleted_automation_runs"] == 1
         assert result["completion_proposals"][0]["project_id"] == task["project_id"]
         assert {
             row["id"] for row in (await _call(schedule_db, "get_schedule_runs", COMPANY_AUTOMATION_SCHEDULE_ID))[0]
         } == {"recent", "running"}
         assert (await _call(schedule_db, "get_schedule_runs", "another-schedule"))[1] == 1
-        assert (await _call(manager, "refresh", task["product_id"]))["deleted_automation_runs"] == 0
+        assert (await _call(manager, "refresh", task["goal_id"]))["deleted_automation_runs"] == 0
     finally:
         if asynchronous:
             await schedule_db.db_client.drop_database(schedule_db.db_name)
@@ -262,8 +267,8 @@ async def test_sync_attention_inside_event_loop_with_paginated_history(system):
         )
     expected = [{"task_id": task["id"], "reason": "Executor offline", "count": 2}]
     assert manager.attention()["automation_failures"] == expected
-    assert manager.attention(task["product_id"])["automation_failures"] == expected
+    assert manager.attention(task["goal_id"])["automation_failures"] == expected
     assert await aautomation_failures(db, db) == expected
-    assert "automation_failures" not in manager.attention("another-product")
+    assert "automation_failures" not in manager.attention("another-goal")
     await _call(db, "transition_task", task["id"], "backlog", "Replan")
     assert "automation_failures" not in manager.attention()

@@ -11,13 +11,18 @@ from agno.knowledge.document import Document
 from agno.utils.string import hash_string_sha256
 
 
+def is_remote_git(source: Dict[str, Any]) -> bool:
+    """Git URL Sources support sandbox checkout only; the reader rejects them."""
+    return source["type"] == "git" and source["reference"].startswith("https://")
+
+
 def _local_files(source: Dict[str, Any], paths: Optional[List[str]] = None, pattern: Optional[str] = None):
     from fnmatch import fnmatch
 
     from agno.context.mode import ContextMode
     from agno.context.workspace import WorkspaceContextProvider
 
-    if source["type"] == "git" and source["reference"].startswith("https://"):
+    if is_remote_git(source):
         raise ValueError("Git URL Sources are for sandbox checkout and publication; HTTP reading is not supported")
     root = Path(source["reference"]).expanduser().resolve()
     if not root.exists():
@@ -78,7 +83,7 @@ def _paths_for_links(source: Dict[str, Any], links: List[str]) -> Optional[List[
         if set(links) != {source["reference"]}:
             raise ValueError("Proposal evidence must link to the configured page")
         return None
-    if source["type"] == "git" and source["reference"].startswith("https://"):
+    if is_remote_git(source):
         raise ValueError("Git URL Sources are for sandbox checkout and publication; HTTP reading is not supported")
     root = Path(source["reference"]).expanduser().resolve()
     if not root.exists():
@@ -271,7 +276,7 @@ def _proposal_fields(source_id: str, proposal: Any, evidence: List[Dict[str, Any
     if any(proposal.evidence_hashes[item["link"]] != item["content_hash"] for item in selected):
         raise ValueError("Proposal evidence changed; read the Source again before proposing work")
     # A stable issue identity survives edits to the evidence or proposal wording.
-    # The database enforces uniqueness within the Product, including completed Tasks.
+    # The database enforces uniqueness within the Goal, including completed Tasks.
     return {
         "title": proposal.title,
         "brief": proposal.brief,

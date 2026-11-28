@@ -33,7 +33,6 @@ from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
-from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
@@ -61,6 +60,7 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.merge_dict import merge_dictionaries
+from agno.utils.models.json_schema_model import rehydrate_inline_output_schema, serialize_output_schema
 from agno.utils.string import generate_id_from_name
 
 # ---------------------------------------------------------------------------
@@ -160,37 +160,6 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 
     session_id_to_load = session_id or team.session_id
     return cast(TeamRunOutput, await aget_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
-
-
-# ---------------------------------------------------------------------------
-# Session metrics (internal)
-# ---------------------------------------------------------------------------
-
-
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return SessionMetrics.from_dict(session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, SessionMetrics):
-                return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, RunMetrics):
-                # Convert legacy RunMetrics to SessionMetrics
-                return SessionMetrics(
-                    input_tokens=session_metrics_from_db.input_tokens,
-                    output_tokens=session_metrics_from_db.output_tokens,
-                    total_tokens=session_metrics_from_db.total_tokens,
-                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
-                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
-                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
-                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
-                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
-                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                    cost=session_metrics_from_db.cost,
-                )
-    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -538,8 +507,11 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Members ---
     if team.members and isinstance(team.members, list):
         serialized_members = []
+        from agno.agents.base import BaseExternalAgent
+
         for member in team.members:
-            if isinstance(member, Agent):
+            # An external agent (Claude Code, Codex, ...) is referenced by id like an Agent.
+            if isinstance(member, (Agent, BaseExternalAgent)):
                 serialized_members.append({"type": "agent", "agent_id": member.id})
             elif isinstance(member, Team):
                 serialized_members.append({"type": "team", "team_id": member.id})
@@ -707,10 +679,9 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         elif isinstance(team.input_schema, dict):
             config["input_schema"] = team.input_schema
     if team.output_schema is not None:
-        if isinstance(team.output_schema, type) and issubclass(team.output_schema, BaseModel):
-            config["output_schema"] = team.output_schema.__name__
-        elif isinstance(team.output_schema, dict):
-            config["output_schema"] = team.output_schema
+        stored_schema = serialize_output_schema(team.output_schema)
+        if stored_schema is not None:
+            config["output_schema"] = stored_schema
 
     # --- Parser and output settings ---
     if team.parser_model is not None:
@@ -991,7 +962,7 @@ def from_dict(
         config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle Members reconstruction ---
-    members: Optional[List[Union[Agent, "Team"]]] = None
+    members: Optional[List[Any]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
     from agno.utils.component_scope import get_component_owner_scope
@@ -1060,18 +1031,29 @@ def from_dict(
                         agent = get_agent_by_id(
                             id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
                         )
+                # A stored external agent without a sandbox runs on this host, so it needs the
+                # opt-in it needs when served on its own.
+                from agno.agents._storage import admit_stored_child
+
+                agent = admit_stored_child(agent, registry, strict, f"{component_label} member agent '{agent_id}'")
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
                 # Deep copy so the shared registry singleton isn't mutated when the
                 # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
+                    from agno.agents.base import BaseExternalAgent
+
                     registered_agent = registry.get_agent(agent_id)
-                    agent = (
-                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
-                        if registered_agent is not None
-                        else None
-                    )
+                    if isinstance(registered_agent, BaseExternalAgent):
+                        # An external agent (Claude Code, Codex, ...) is not copied: the team sets nothing
+                        # on it and passes its own id on each member call, so the registry's instance
+                        # is the member, as it is in a team written in code.
+                        agent = registered_agent
+                    elif registered_agent is not None:
+                        agent = _registry_copy(
+                            registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent
+                        )
                 if agent is not None:
                     members.append(agent)
                 elif strict:
@@ -1252,6 +1234,8 @@ def from_dict(
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
             del config["input_schema"]
 
+    if "output_schema" in config and isinstance(config["output_schema"], dict):
+        rehydrate_inline_output_schema(config, component_label)
     if "output_schema" in config and isinstance(config["output_schema"], str):
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:
@@ -1465,7 +1449,6 @@ def save(
     Returns:
         Optional[int]: The version number of the saved config.
     """
-    from agno.agent.agent import Agent
 
     db_ = db or team.db
     if not db_:
@@ -1494,7 +1477,7 @@ def save(
                     "child_component_id": member.id,
                     "child_version": member_version,
                     "position": position,
-                    "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    "meta": {"type": "team" if isinstance(member, _team_type()) else "agent"},
                 }
             )
 
@@ -1575,6 +1558,12 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
+            from agno.agents._storage import is_external_agent_config
+
+            if is_external_agent_config(child_config):
+                # from_dict above already resolved a stored external agent at its pinned version,
+                # and applied the host opt-in. It is not an Agent, so it is not rebuilt as one here.
+                continue
             agent = Agent.from_dict(child_config, registry=registry, strict=strict)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:

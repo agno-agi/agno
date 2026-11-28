@@ -8,7 +8,7 @@ already-unwrapped downstream response.
 
 Prerequisites: Start weather_agent.py on 7782 and airbnb_agent.py on 7783, then set OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/15_a2a/multi_agent/trip_planning_a2a_client.py
-Try: With all servers running, rerun this file with --demo to call POST http://127.0.0.1:7779/a2a/agents/trip-planner/v1/message:send
+Try: With all servers running, rerun this file with --demo to call POST http://127.0.0.1:7779/a2a/agents/trip-planner
 """
 
 import asyncio

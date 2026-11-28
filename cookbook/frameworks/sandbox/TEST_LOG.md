@@ -1,5 +1,27 @@
 # Sandbox cookbook test log
 
+## October 20, 2026: virtualenv links and uncheckpointable turns
+
+### Checkpoint archive and transfer unit suites
+
+**Status:** PASS
+
+**Description:** Ran `libs/agno/tests/unit/sandbox` with `PYTHONPATH=libs/agno`. New cases cover a Linux virtualenv's absolute interpreter link and its relative aliases through capture, validation, host restore and in-computer restore; a host secret behind an absolute link is neither read at capture nor reachable after a host restore; FIFOs, escaping links, hardlinks to excluded credentials and entry limits raise `CheckpointContentError`; the Docker combine and split path keeps absolute link targets verbatim; the AgentCore round trip recreates an absolute link in the replacement computer.
+
+**Result:** 568 passed. Every new case failed on the unchanged code first, including the AgentCore round trip with the in-computer restore flag reverted.
+
+---
+
+### Coordinator integration with Docker and PostgreSQL
+
+**Status:** PASS
+
+**Description:** Ran `test_coordinator.py`, `test_transfer.py`, `test_docker.py` and `test_checkpoint_access.py` against a fresh PostgreSQL database on port 5532 and a runtime image built from this tree with `build_image.py`. A turn runs `python -m venv --without-pip /workspace/.venv`; the next turn, on a fresh generation restored from the checkpoint, runs `/workspace/.venv/bin/python`. A turn that leaves a FIFO in the workspace ends in `ERROR` with `retryable: False`, the session goes back to idle with the previous checkpoint, and the next run is accepted.
+
+**Result:** 98 passed, 23 skipped (opt-in S3 and live repository cases). On the unchanged code the virtualenv turn failed with `Unsafe checkpoint symlink 'workspace/.venv/bin/python' -> '/usr/local/bin/python'` and the FIFO turn left the session finalizing. No model calls were made.
+
+---
+
 ## October 16, 2026: agent repository configuration
 
 ### repository_workspace.py

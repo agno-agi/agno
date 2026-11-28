@@ -10,8 +10,9 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.fs.errors import InvalidPathError, QuotaExceededError, VersionConflictError
 from agno.os.auth import get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
     DecisionCreate,
     DecisionResponse,
     WikiPageResponse,
@@ -24,7 +25,12 @@ from agno.os.settings import AgnoAPISettings
 
 def get_playbook_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
     """Mount the existing wiki and learning domains under Company."""
-    router = APIRouter(prefix="/company", tags=["Company playbook"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Company playbook"],
+        dependencies=[Depends(get_scoped_user_id)],
+    )
     auth = get_authentication_dependency(settings)
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db else None
 
@@ -56,31 +62,28 @@ def get_playbook_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
         )
 
-    @router.get("/products/{product_id}/wiki", response_model=PaginatedResponse[WikiPageResponse])
-    async def list_product_wiki(
-        product_id: str,
+    @router.get("/goals/{goal_id}/wiki", response_model=PaginatedResponse[WikiPageResponse])
+    async def list_goal_wiki(
+        goal_id: str,
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):
-        return paged(await call("list_wiki", product_id, limit, page), limit, page)
+        return paged(await call("list_wiki", goal_id, limit, page), limit, page)
 
-    @router.get("/products/{product_id}/wiki/{path:path}", response_model=WikiReadResponse)
-    async def read_product_wiki(path: str, product_id: str, _: bool = Depends(auth)):
-        return asdict(await call("read_wiki", product_id, path))
+    @router.get("/goals/{goal_id}/wiki/{path:path}", response_model=WikiReadResponse)
+    async def read_goal_wiki(path: str, goal_id: str, _: bool = Depends(auth)):
+        return asdict(await call("read_wiki", goal_id, path))
 
-    @router.put("/products/{product_id}/wiki/{path:path}", response_model=WikiPageResponse)
-    async def write_product_wiki(
-        path: str, body: WikiWrite, request: Request, product_id: str, _: bool = Depends(auth)
-    ):
+    @router.put("/goals/{goal_id}/wiki/{path:path}", response_model=WikiPageResponse)
+    async def write_goal_wiki(path: str, body: WikiWrite, goal_id: str, _: bool = Depends(auth)):
         return asdict(
             await call(
                 "write_wiki",
-                product_id=product_id,
+                goal_id=goal_id,
                 path=path,
                 content=body.content,
                 expected_version=body.expected_version,
-                user_id=get_scoped_user_id(request),
             )
         )
 
@@ -97,15 +100,14 @@ def get_playbook_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         return asdict(await call("read_wiki", None, path))
 
     @router.put("/wiki/{path:path}", response_model=WikiPageResponse)
-    async def write_company_wiki(path: str, body: WikiWrite, request: Request, _: bool = Depends(auth)):
+    async def write_company_wiki(path: str, body: WikiWrite, _: bool = Depends(auth)):
         return asdict(
             await call(
                 "write_wiki",
-                product_id=None,
+                goal_id=None,
                 path=path,
                 content=body.content,
                 expected_version=body.expected_version,
-                user_id=get_scoped_user_id(request),
             )
         )
 
@@ -123,7 +125,6 @@ def get_playbook_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
 
     @router.post("/decisions", status_code=201, response_model=DecisionResponse)
     async def create_decision(body: DecisionCreate, request: Request, _: bool = Depends(auth)):
-        user = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
-        return asdict(await call("log_decision", **body.model_dump(), user_id=user))
+        return asdict(await call("log_decision", **body.model_dump(), user_id=resolve_run_user_id(request)))
 
     return router

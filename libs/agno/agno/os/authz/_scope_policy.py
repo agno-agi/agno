@@ -8,7 +8,10 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 ``agent_os:admin`` maps to the all-resources/all-actions wildcard ``("*", "*")``.
 """
 
-from typing import Tuple
+from functools import lru_cache
+from typing import Dict, List, Tuple
+
+from agno.os.scopes import _built_in_resources
 
 ADMIN_SCOPE = "agent_os:admin"
 # The namespace of the admin scope. Not a resource type: no other scope may use it.
@@ -101,7 +104,31 @@ def resource_action_to_scope(resource: str, action: str) -> str:
     return f"{rtype}:{rid}:{action}"
 
 
-def resource_matches(pattern: str, request: str) -> bool:
+# Scope aliases that no stored policy row carries: a role has always stored a system scope under config.
+_UNSTORED_ALIASES = frozenset({"system"})
+
+
+@lru_cache(maxsize=1)
+def _renamed_policy_types() -> Dict[str, str]:
+    """Resource types whose stored policy rows may still carry the old name, by old name."""
+    from agno.os.scopes import LEGACY_RESOURCE_ALIASES
+
+    return {old: new for old, new in LEGACY_RESOURCE_ALIASES.items() if old not in _UNSTORED_ALIASES}
+
+
+def current_resource(resource: str) -> str:
+    """``resource`` under the current name of its type."""
+    resource_type, separator, rest = resource.partition("/")
+    return _renamed_policy_types().get(resource_type, resource_type) + separator + rest
+
+
+def legacy_resources(resource: str) -> List[str]:
+    """The spellings of ``resource`` under its renamed types, which a stored policy may still carry."""
+    resource_type, separator, rest = resource.partition("/")
+    return [old + separator + rest for old, new in _renamed_policy_types().items() if new == resource_type]
+
+
+def resource_matches(pattern: str, request: str, *, grant: bool = True) -> bool:
     """Does a policy's ``pattern`` resource match a request's ``request`` resource?
 
     Glob-style matching over our restricted resource space
@@ -112,11 +139,21 @@ def resource_matches(pattern: str, request: str) -> bool:
       itself (what a create or list request is evaluated as), but never the bare
       string ``"type"``, which no policy writes,
     - otherwise an exact match.
+
+    A ``"type/*"`` grant never matches a built-in component (``teams/superagent`` and the others
+    in ``MANAGER_RESOURCES``): only its own row or the admin wildcard grants one. Pass
+    ``grant=False`` for a deny row, which keeps the plain match: a deny on ``teams/*`` still
+    covers Super Agent, because narrowing a deny would widen access.
+
+    A renamed resource type and its old name are the same type on both sides.
     """
     if pattern == "*":
         return True
+    pattern, request = current_resource(pattern), current_resource(request)
     if pattern == request:
         return True
     if pattern.endswith("/*"):
-        return request.startswith(pattern[:-1])  # "type/" prefix
+        if not request.startswith(pattern[:-1]):  # "type/" prefix
+            return False
+        return not (grant and request in _built_in_resources())
     return False

@@ -5,8 +5,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.company.execution import _call
-from agno.company.playbook import _require_owner
-from agno.db.schemas.products import product_metadata
+from agno.company.playbook import _require_goal_scope
+from agno.db.schemas.goals import goal_metadata
 from agno.utils.string import hash_string_sha256
 
 
@@ -51,13 +51,13 @@ def _completion_proposal(project: Dict[str, Any], tasks: List[Dict[str, Any]]) -
     return path, content
 
 
-async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+async def arefresh_goal(manager: Any, goal_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     """Propose completion and archive old terminal work without accepting it."""
-    product = await _call(manager, "get", product_id)
-    if product is None:
-        raise LookupError("Product not found")
-    _require_owner(product, user_id)
-    days = product_metadata(product.get("metadata"))["archive_window_days"]
+    goal = await _call(manager, "get", goal_id)
+    if goal is None:
+        raise LookupError("Goal not found")
+    _require_goal_scope(goal)
+    days = goal_metadata(goal.get("metadata"))["archive_window_days"]
     cutoff = int(time.time()) - days * 86400
     result: Dict[str, Any] = {
         "archive_window_days": days,
@@ -68,7 +68,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
     }
     # Snapshot paging before deleting prevents offset pagination from skipping work.
     for kind in ("project", "task"):
-        records = await _records(manager, "list_" + kind + "s", product_id=product_id)
+        records = await _records(manager, "list_" + kind + "s", goal_id=goal_id)
         for record in records:
             updated = record.get("updated_at")
             if (
@@ -77,7 +77,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
             ):
                 continue
             # Recheck terminal state and age in the existing soft-delete statement.
-            if await _call(manager, "delete_" + kind, record["id"], updated_before=cutoff):
+            if await _call(manager, "delete_" + kind, record["id"], user_id=None, updated_before=cutoff):
                 result["archived_" + kind + "s"].append(record["id"])
 
     from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
@@ -88,7 +88,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
         COMPANY_AUTOMATION_SCHEDULE_ID,
         before=int(time.time()) - manager.automation_history_retention_days * 86400,
     )
-    wiki = await _call(manager, "get_wiki", product_id)
+    wiki = await _call(manager, "get_wiki", goal_id)
     filesystem = wiki.backend.filesystem
     for page in await filesystem.alist():
         if page.path in {"brief.md", "status.md"} or page.updated_at is None or page.updated_at >= cutoff:
@@ -104,14 +104,16 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
                 from agno.company.summary import _aload_summary_state
 
                 # Upgrade old reports before retention removes their only delivery receipts.
-                await _aload_summary_state(manager.db, product_id, current.content)
+                await _aload_summary_state(manager.db, goal_id, current.content)
             if await filesystem.adelete(page.path, expected_version=current.metadata.version):
                 result["deleted_pages"].append(page.path)
 
-    projects = await _records(manager, "list_projects", product_id=product_id, status="active")
+    projects = await _records(manager, "list_projects", goal_id=goal_id, status="active")
     for project in projects:
         tasks = await _records(manager, "list_tasks", project_id=project["id"], include_deleted=True)
-        if not tasks or any(task["status"] not in {"done", "cancelled"} for task in tasks):
+        if not tasks or any(
+            task["status"] not in {"done", "cancelled"} for task in tasks if task.get("deleted_at") is None
+        ):
             continue
         path, content = _completion_proposal(project, tasks)
         existing = await filesystem.aread_with_meta(path)
@@ -119,7 +121,7 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
             await _call(
                 manager,
                 "write_wiki",
-                product_id=product_id,
+                goal_id=goal_id,
                 path=path,
                 content=content,
                 expected_version=existing.metadata.version if existing else 0,
@@ -141,6 +143,6 @@ async def arefresh_product(manager: Any, product_id: str, user_id: Optional[str]
     return result
 
 
-def refresh_product(manager: Any, product_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+def refresh_goal(manager: Any, goal_id: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     """Run the same retention and proposal operations through a synchronous manager."""
-    return asyncio.run(arefresh_product(manager, product_id, user_id))
+    return asyncio.run(arefresh_goal(manager, goal_id, user_id))

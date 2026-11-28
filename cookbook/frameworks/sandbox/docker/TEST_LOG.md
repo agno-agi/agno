@@ -318,6 +318,8 @@ Coordinator review follow-up: native transcript-mirror warnings and lost pre-che
 
 **Result:** Passed. The background turn COMPLETED with a checkpoint on the run row; the streamed turn returned four events ending in RunCompleted with the file name from turn 1; no containers were left running and the server log had no errors.
 
+Re-run on 20 October 2026 with the store chosen by `AGNO_SANDBOX_CHECKPOINT_BUCKET` (unset, so the single-replica local directory), on a fresh database and a dedicated Redis. AgentOS started, and a background turn COMPLETED with a checkpoint on the run row. Then the session's warm container and its checkpoint object were removed, and a second turn ended ERROR with the missing-checkpoint message, `retryable` false, its ticket failed after one attempt, and no container left for the session. The S3 branch was not run.
+
 ---
 
 ### Warm turns: session_computer.py, cancel_turn.py, resume_after_disconnect.py
@@ -385,5 +387,55 @@ Coordinator review follow-up: native transcript-mirror warnings and lost pre-che
 **Description:** `S3CheckpointStore(cache_dir=..., cache_bytes=256 MiB)` on a sandboxed `FixtureAgent`. One turn checkpoints to the bucket; the checkpoint is then opened and restored five times, a second store instance on the same cache directory opens it once more, and the object is deleted from the bucket before a final open. A boto3 event hook on `request-created.s3.GetObject` counts the downloads.
 
 **Result:** The first open downloaded the object (25 ms); the next four and the other store's open came from the cache (7 to 16 ms) with the download count staying at one. The cache directory held the object under its digest. After `delete`, the next open raised `CheckpointObjectNotFound` despite the cached copy, since the bucket is consulted first. Unit tests for the cache (`test_s3_store.py`): downloaded once, served to async opens, a corrupt entry fetched again, a deleted object not hidden, eviction within the budget while an open lease keeps reading, and the uncached copy landing in `scratch=` read-only. 15 tests pass.
+
+---
+
+### S3CheckpointStore cancelled async opens (2026-10-20)
+
+**Status:** PASS
+
+**Description:** `libs/agno/tests/unit/sandbox/test_s3_store.py` (moto in-process) cancels `aopen_archive` after its worker thread has finished the download, before the caller holds the copy. Uncached, the downloaded copy in `scratch=` must be removed. Cached, the `.open-*` lease must be released and the cached object kept. A third test records which thread runs the cached object's digest check on an async open.
+
+**Result:** Against the unchanged store, the uncached test failed with a `.checkpoint-*.tar` left in scratch, and the digest-check test failed because opening the lease hashed the whole cached object on the event loop, a second time after the thread's check. The cached-lease test failed once the lease was entered in the thread without being released. All 19 store tests and the 561 `tests/unit/sandbox` tests pass with the fix.
+
+---
+
+### sandbox_postgres_checkpoints.py (2026-10-20)
+
+**Status:** PASS (fixture runtime, `agno-sandbox:pgstore` built from this branch, a fresh `agno_pgstore` database on the local pgvector container)
+
+**Description:** `PostgresCheckpointStore(db)` on the agent's own `PostgresDb`, passed as `checkpoints=` to a `DockerSandbox` running `FixtureAgent`. Turn 1 checkpoints to Postgres, the computer kept warm for the next turn is destroyed, and turn 2 on the same session runs on a new computer. Turn 2's checkpoint is opened through `agent.open_run_checkpoint` and restored to a directory.
+
+**Result:** Turn 1 stored a 633-byte checkpoint as one header row and one chunk row. Turn 2 reported `resumed: False`, passed the fixture's native-session check (which fails the turn when native state did not come back), and its checkpoint's `fixture-effects.txt` listed both turns' run ids in order. The shared `ai` database could not be used: its `agno_sessions_sandbox_bindings` table is from an older build and the coordinator refuses it, as designed.
+
+---
+
+### PostgresCheckpointStore and the existing suites under it (2026-10-20)
+
+**Status:** PASS
+
+**Description:** `libs/agno/tests/integration/sandbox/test_postgres_checkpoints.py` against real Postgres through both `PostgresDb` and `AsyncPostgresDb` (27 cases): contract round trip across several chunks, a second store instance restoring what the first stored, no chunk writes when the object exists, four concurrent puts of the same bytes storing one object, a source that changes mid-put rolling back the header with every chunk, a tampered chunk caught on open while verify answers from the header, a truncated object and a wrong header size, missing objects through every access, delete idempotent and cascading, a reader keeping its read-only copy after the object is deleted, the object limit applied before touching the database, `STORAGE EXTERNAL` on the chunk column, sync methods refused on `AsyncPostgresDb`, constructor validation, a read issuing one query per chunk (asyncpg prefetches 50 rows from a streamed cursor, so streaming does not bound memory), and a cancelled `aopen_archive` leaving no copy behind. Each of four guards (readback digest check, source-change check, `ON CONFLICT DO NOTHING` on the header, the storage DDL) was removed in turn and its tests failed. Then the Docker transfer, coordinator, AgentOS and checkpoint-access suites with `AGNO_TEST_CHECKPOINT_DB_URL` set, so every `checkpoint_store` fixture is a `PostgresCheckpointStore`, with Redis for the AgentOS durable-queue cases.
+
+**Result:** 27 store cases passed; the per-chunk read and the sync-store cancellation cases failed before their fix. `test_transfer.py` 4 passed; `test_coordinator.py` 84 passed, 10 skipped; `test_agentos.py` 39 passed, 1 skipped; `test_checkpoint_access.py` 8 passed, 2 skipped (that suite builds its own `FileCheckpointStore`, so it does not exercise this store). The skips are `AGNO_TEST_LIVE_REPOSITORY` cases and the sync `stream()` cases that do not apply to `AsyncPostgresDb`.
+
+---
+
+### agentos.py without Redis, and two replicas without Redis (2026-10-21)
+
+**Status:** PASS
+
+**Description:** `agentos.py` with `SANDBOX_HARNESS=fixture` and `SANDBOX_REDIS_URL` unset, on a fresh database: a background turn polled to completion, then a streamed second turn on the same session. Then two AgentOS replicas sharing Postgres, a moto S3 checkpoint bucket and one Docker daemon, with no Redis, driven over HTTP: a cancel sent to the replica not running the turn (max_attempts 1 and 2), the running replica SIGKILLed and its container removed (max_attempts 2), a streamed run submitted to one replica and executed on the other with `/resume` on both, and a restart after warm windows expired. `sandbox_claude_agentos.py` was not run (it needs model credentials); its Redis setting now follows `AGNO_SANDBOX_REDIS_URL` the same way.
+
+**Result:** Passed. The cookbook logged `Queued-run streams are replica-local`, the background turn COMPLETED and the streamed turn returned RunContent and RunCompleted. On two replicas: each cancel settled the ticket `cancelled` at attempt 1 in about 0.4s, with no retry. Host loss recovered on attempt 2 on a new generation restored from S3, and the run went from RUNNING straight to COMPLETED. The submitter's own stream ended with `stream_expired` (RUNNING) a second after the other replica claimed the run, `/resume` there answered `replay` (RUNNING, then COMPLETED after the run) and closed, and `/resume` on the executing replica streamed every event live. The restarted worker retired the 3 paused containers whose windows had ended and kept the one still inside its window.
+
+---
+
+### Warm sweep scope, native approvals on a lost host, and /resume load without Redis (2026-11-03)
+
+**Status:** PASS
+
+**Description:** AgentOS replicas on one Postgres and one Docker daemon, with no Redis. Two sandboxed agents on different namespaces kept warm past their window, then a restart; a sandboxed agent as a team member and as a workflow step, kept warm past its window, then a restart. A native-approval turn whose container was removed while it waited. 200 queued streamed runs held open on one replica, measuring Postgres transactions per second after the first 30 seconds. `/resume` without `session_id` on the replica not executing the run, for an agent, a team and a workflow, with `gpt-5.6-luna`.
+
+**Result:** Each worker retired only its own agents' expired computers; the other namespace's container and binding were left to its own coordinator. Team-member and workflow-step computers were retired. The native-approval turn ended ERROR, not retried, on two computers instead of completing on a third. The 200 streams cost 9.5 transactions per second, against 9.1 before the change. `/resume` answered with an error naming `session_id`, and with `session_id` replayed the run from the database.
 
 ---

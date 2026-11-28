@@ -1,4 +1,4 @@
-"""Declare a Product heartbeat and deduplicate source Intake without a model call.
+"""Declare a Goal heartbeat and deduplicate source Intake without a model call.
 
 Prerequisites: Install agno, sqlalchemy, fastapi, httpx, croniter and pytz.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/07_heartbeat.py
@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from time import time
 
 from agno.agent import Agent
-from agno.company import CompanyManager, Product, Routine, Source
+from agno.company import CompanyManager, Goal, Routine, Source
 from agno.company.routines import load_routine_skills
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS, CompanyConfig
@@ -30,9 +30,9 @@ if __name__ == "__main__":
             skills=load_routine_skills(),
             telemetry=False,
         )
-        product = Product(
+        goal = Goal(
             name="Documentation",
-            purpose="Keep docs current with released SDK behavior",
+            objective="Keep docs current with released SDK behavior",
             sources=[Source(type="markdown", reference=str(release))],
             routines=[
                 Routine(
@@ -47,15 +47,15 @@ if __name__ == "__main__":
         agent_os = AgentOS(
             db=db,
             agents=[reader],
-            company=CompanyConfig(products=[product]),
+            company=CompanyConfig(goals=[goal]),
             telemetry=False,
         )
         with TestClient(agent_os.get_app()) as client:
-            records = client.get("/company/products").json()["data"]
-            product_id = records[0]["id"]
-            source = client.get(
-                "/company/sources", params={"product_id": product_id}
-            ).json()["data"][0]
+            records = client.get("/company/goals").json()["data"]
+            goal_id = records[0]["id"]
+            source = client.get("/company/sources", params={"goal_id": goal_id}).json()[
+                "data"
+            ][0]
             manager = CompanyManager(db)
             # Offline stand-in for the reader's decision after inspecting the Source.
             index = manager.browse_source(source["id"], "first-scan")
@@ -70,8 +70,9 @@ if __name__ == "__main__":
                 evidence_links=[evidence[0]["link"]],
                 evidence_hashes={evidence[0]["link"]: evidence[0]["content_hash"]},
             )
-            project = manager.create_project(
-                product_id=product_id, name="Review the release"
+            project = manager.create_project(goal_id=goal_id, name="Review the release")
+            manager.transition_project(
+                project_id=project["id"], target="active", reason="Human accepted scope"
             )
             first = manager.intake(
                 source_id=source["id"],
@@ -94,15 +95,12 @@ if __name__ == "__main__":
             )
             assert first["id"] == again["id"]
             assert first["status"] == "backlog"
-            manager.transition_project(
-                project_id=project["id"], target="active", reason="Human accepted scope"
-            )
             manager.transition_task(
                 task_id=first["id"],
                 target="cancelled",
                 reason="Replaced by the release guide",
             )
-            refresh = manager.refresh(product_id)
+            refresh = manager.refresh(goal_id)
             assert refresh["completion_proposals"][0]["project_id"] == project["id"]
             assert manager.get_project(project["id"])["status"] == "active"
             manager.transition_project(
@@ -114,7 +112,7 @@ if __name__ == "__main__":
             db.create_task(
                 dict(
                     id="old-terminal",
-                    product_id=product_id,
+                    goal_id=goal_id,
                     project_id=project["id"],
                     title="Old completed work",
                     status="done",
@@ -122,7 +120,7 @@ if __name__ == "__main__":
                     transitions=[],
                 )
             )
-            assert "old-terminal" in manager.refresh(product_id)["archived_tasks"]
+            assert "old-terminal" in manager.refresh(goal_id)["archived_tasks"]
             assert manager.get_task("old-terminal") is None
             assert manager.restore_task("old-terminal")["status"] == "done"
             routine = client.get("/company/routines").json()["data"][0]

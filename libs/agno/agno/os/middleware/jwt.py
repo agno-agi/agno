@@ -28,6 +28,8 @@ from agno.os.scopes import (
     get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
+    is_built_in,
+    without_renamed_defaults,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -95,6 +97,22 @@ def resolve_expected_audience(
     if not verify_audience:
         return None
     return audience or os_id
+
+
+def verification_keys_from_env(algorithm: str) -> List[str]:
+    """The verification keys in ``JWT_VERIFICATION_KEY``.
+
+    For an asymmetric algorithm the value may hold several keys separated by commas, so one
+    AgentOS can verify tokens from several issuers, each with its own key. PEM and base64 text
+    hold no comma. An HMAC secret can, and splitting it would turn one secret into several
+    shorter ones that each verify a token, so with an HS algorithm the whole value is one key.
+    """
+    value = getenv("JWT_VERIFICATION_KEY", "")
+    if not value:
+        return []
+    if (algorithm or "").upper().startswith("HS"):
+        return [value]
+    return [key.strip() for key in value.split(",") if key.strip()]
 
 
 def _route_action(required_scopes: List[str]) -> Optional[str]:
@@ -171,6 +189,9 @@ class JWTValidator:
             verification_keys: List of keys for verifying JWT signatures.
                               For asymmetric algorithms (RS256, ES256), these should be public keys.
                               For symmetric algorithms (HS256), these are shared secrets.
+                              The keys in the JWT_VERIFICATION_KEY env var are added to this list:
+                              several keys separated by commas for an asymmetric algorithm, one
+                              secret for a symmetric one.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
             algorithm: JWT algorithm (default: RS256).
             validate: Whether to validate the JWT token (default: True).
@@ -199,10 +220,10 @@ class JWTValidator:
         if verification_keys:
             self.verification_keys.extend(verification_keys)
 
-        # Add key from environment variable if not already provided
-        env_key = getenv("JWT_VERIFICATION_KEY", "")
-        if env_key and env_key not in self.verification_keys:
-            self.verification_keys.append(env_key)
+        # Add the keys from the environment variable that were not already provided
+        for env_key in verification_keys_from_env(algorithm):
+            if env_key not in self.verification_keys:
+                self.verification_keys.append(env_key)
 
         # JWKS configuration - load keys from JWKS file or environment variable.
         self.jwks_keys: "Dict[str, PyJWK]" = {}
@@ -434,6 +455,15 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
+def jwt_kwargs_enable_authorization(kwargs: Dict[str, Any]) -> bool:
+    """Whether ``add_middleware`` kwargs turn on RBAC: the rule AuthMiddleware.__init__ applies.
+
+    That is ``authorization=True``, or ``scope_mappings`` with ``authorization`` unset.
+    """
+    authorization = kwargs.get("authorization")
+    return bool(authorization or (authorization is None and kwargs.get("scope_mappings") is not None))
+
+
 def build_jwt_middleware_kwargs(
     authorization_config: Optional[Any],
     *,
@@ -617,7 +647,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                               For symmetric algorithms (HS256), these are shared secrets.
                               Each key will be tried in order until one successfully validates the token.
                               Useful when accepting tokens signed by different private keys.
-                              If not provided, will use JWT_VERIFICATION_KEY env var (as a single-item list).
+                              If not provided, will use the JWT_VERIFICATION_KEY env var, which may
+                              hold several comma-separated keys for an asymmetric algorithm.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
                       The file should contain a JSON object with a "keys" array.
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
@@ -770,6 +801,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Merge standalone middleware overrides with the default route scopes."""
         mappings = get_default_scope_mappings()
         if scope_mappings is not None:
+            # A mapping written for a route's old path overrides the default for its current path.
+            mappings = without_renamed_defaults(mappings, scope_mappings)
             mappings.update(scope_mappings)
         self.scope_mappings = mappings if self.authorization else (scope_mappings or {})
         # Service-account ACLs apply even when JWT authorization is disabled.
@@ -1234,9 +1267,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
         When the caller's token scopes are what the gate compared, "required vs held" is the
-        truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
-        so listing them as what the user "has" reads as a contradiction (the required scope is
-        right there in the list) and hides the real reason: the provider denied the subject.
+        truth. When a role store decides beside the scope plane, both refused, so the line names
+        the role the store held as well. Under a managed-roles or ReBAC provider the token's
+        scopes were never consulted, so listing them as what the user "has" reads as a
+        contradiction (the required scope is right there in the list) and hides the real reason:
+        the provider denied the subject.
         ``held_roles`` is what the engine decided on: the roles carried on the token when the
         store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
         subject's stored assignments; None when no role store is configured. ``explicit_deny``
@@ -1248,12 +1283,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ``trust_token_scopes=False``, the one case where that flag is why the token's scopes did not
         count; under any other provider the flag is not the reason and is not cited.
         """
-        from agno.os.auth import caller_scopes_are_authoritative
+        from agno.os.auth import _caller_is_service_account, caller_scopes_are_authoritative
 
-        if caller_scopes_are_authoritative(request):
-            return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
-        subject = getattr(request.state, "user_id", None)
-        line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
+        scopes_decide = caller_scopes_are_authoritative(request)
+        if scopes_decide:
+            line = f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
+            # A service account is decided on its own scopes alone. For anyone else, a role store
+            # beside the scope plane refused the request too, so the line goes on to say what it held.
+            if held_roles is None or _caller_is_service_account(request):
+                return line
+            line += "."
+        else:
+            subject = getattr(request.state, "user_id", None)
+            line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
         if held_roles and roles_from_token:
             line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
         elif held_roles and via_default:
@@ -1267,6 +1309,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             line += " The subject holds no role in the role store."
         if explicit_deny:
             line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
+        if scopes_decide:
+            return line
         if scopes and token_scopes_ignored:
             on_token = [sc for sc in scopes if sc in required_scopes] or scopes
             line += (
@@ -1823,6 +1867,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
           The same holds for managed roles read from a ``roles_claim``: the owner's role
           is on their IdP token, the executor has no such token, and stored assignments
           are empty for an IdP user, so re-asking would refuse every owned schedule.
+          Where token scopes are trusted beside managed roles, an owner who holds a
+          stored role is still asked through it when the schedule saved no authority.
 
         An unowned (system) schedule forwards no owner and is not affected. A denial is
         written to the decision trail and answered 403, so the executor records a failed
@@ -1846,12 +1892,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         resource_id=resource_id,
                         action=_route_action(required),
                     )
-                    if not await authority.provider.aauthorize_route(ctx, required):
+                    if not await authority.aauthorizes_route(ctx, required):
                         raise PermissionError("Scheduled target is not permitted")
             except Exception:
                 return self._create_error_response(
                     403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
                 )
+        elif self.authorization and is_built_in(*get_resource_context_from_path(path)):
+            # No saved authority, so nobody can be shown to hold the built-in's own scope
+            await self._arecord_decision(
+                request,
+                allowed=False,
+                method=method,
+                path=path,
+                principal=unquote(request.headers.get(SCHEDULE_OWNER_HEADER) or "") or None,
+                required_scopes=self._get_required_scopes(method, path),
+                scopes=[],
+                reason="scheduled_built_in_without_authority",
+            )
+            return self._create_error_response(
+                403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
+            )
 
         raw = request.headers.get(SCHEDULE_OWNER_HEADER)
         if raw is None:
@@ -1903,12 +1964,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from agno.os.auth import resolve_authorization_provider, token_scopes_are_authoritative
         from agno.os.authz.provider import AuthorizationContext
 
-        if token_scopes_are_authoritative(request):
-            return None
         # Roles read from a token claim are grants this OS never stores; the executor's
         # request carries no such claim, so a stored-assignment decision for the owner
         # would be a false denial. The create-time check stands, as for token scopes.
         if getattr(getattr(request.app.state, "role_store", None), "roles_claim", None):
+            return None
+        # With token scopes trusted, the owner may hold the target through a token this OS never
+        # sees, so the stored role cannot be asked alone for everyone. A saved authority was
+        # asked again above: its stored role as it is now, its token scopes as they were saved.
+        # With none saved, an owner who holds a stored role must still be allowed by it, and an
+        # owner who holds none got in on a token, where the create-time check stands.
+        scopes_trusted = token_scopes_are_authoritative(request)
+        role_store = self._deciding_role_store(request) if scopes_trusted else None
+        if scopes_trusted and (role_store is None or request.headers.get(AUTHORIZATION_HEADER)):
             return None
         required_scopes = self._get_required_scopes(method, path)
         if not required_scopes:
@@ -1924,6 +1992,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             admin_scope=self.admin_scope,
         )
         try:
+            if role_store is not None and not await role_store.aroles_of(owner):
+                return None
             allowed = await resolve_authorization_provider(request).aauthorize_route(ctx, required_scopes)
             reason = "schedule_owner_denied"
         except Exception as e:

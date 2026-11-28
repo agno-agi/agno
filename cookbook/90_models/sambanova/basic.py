@@ -13,7 +13,7 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"), markdown=True)
+agent = Agent(model=Sambanova(id="Meta-Llama-3.3-70B-Instruct"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

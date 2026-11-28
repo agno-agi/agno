@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
@@ -91,7 +92,7 @@ def _tool_resource_name(tool: Any) -> Optional[str]:
 class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
-    agents, teams, and workflows.
+    sandboxes, agents, teams, and workflows.
     """
 
     name: Optional[str] = None
@@ -129,6 +130,15 @@ class Registry:
     _ambiguous_learning_names: Set[str] = field(default_factory=set, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
+    # Sandboxes a stored external agent can run in. A sandbox holds a daemon
+    # or cloud client, a checkpoint store and credentials, so a component
+    # config names one by id and the registry supplies the live object.
+    sandboxes: List[Any] = field(default_factory=list)
+    # Let a stored ClaudeAgent or CodexAgent config run on this host rather than only in a
+    # registered sandbox. A stored config names a working directory, MCP server commands,
+    # plugins and permission modes, so whoever can write components could start programs
+    # here; off by default, the deployer opts in.
+    allow_host_execution: bool = False
     # Code-defined agents, teams, and workflows (for rehydration)
     agents: List[Union[Agent, BaseExternalAgent]] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
@@ -142,6 +152,8 @@ class Registry:
     # Served framework components may be runnable without being building blocks.
     # IDs keep that boundary intact when a caller supplies a per-run copy.
     _excluded_component_ids: Set[str] = field(default_factory=lambda: set(RESERVED_MANAGER_IDS), init=False, repr=False)
+    # Mini Agent, set by the AgentOS that built it. It executes Company Routines and Tasks and is in no list above.
+    _mini_agent: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for component in [*self.agents, *self.teams, *self.workflows]:
@@ -318,6 +330,13 @@ class Registry:
             and "input_schema" not in func_dict
         )
 
+    def _renamed_tool(self, toolkit_name: str, name: str) -> Optional[str]:
+        """The current name of a tool saved under an earlier one, from the toolkit that renamed it."""
+        for tool in self.tools:
+            if isinstance(tool, Toolkit) and tool.name == toolkit_name and name in tool.renamed_tools:
+                return tool.renamed_tools[name]
+        return None
+
     def rehydrate_functions(
         self, func_dicts: List[Dict[str, Any]], strict: bool = False
     ) -> List[Union[Function, Dict[str, Any]]]:
@@ -408,6 +427,20 @@ class Registry:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
             source, source_owner = lookup((func.owning_toolkit, func.name))
+            if source is None:
+                current_name = self._renamed_tool(func.owning_toolkit, func.name)
+                if current_name is not None:
+                    source, source_owner = lookup((func.owning_toolkit, current_name))
+                    if source is not None:
+                        func.name = current_name
+            if isinstance(source, Function) and source_owner is not None:
+                properties = (func.parameters or {}).get("properties") or {}
+                if func.name != func_dict.get("name") or any(
+                    old in properties for old in source_owner.renamed_arguments
+                ):
+                    # The saved definition names arguments the tool no longer takes.
+                    func.description = source.description
+                    func.parameters = deepcopy(source.parameters)
             resolved_as_recorded = source is not None
         # A strict load keeps a qualified reference bound to its own toolkit:
         # a same-named function from another toolkit is a different tool.
@@ -440,6 +473,10 @@ class Registry:
             # the fallback for a flat slot owned by a direct registration of an
             # object a Toolkit also holds -- provenance follows the object.
             source_toolkit = source_owner if source_owner is not None else toolkit_by_identity.get(id(source))
+            # The per-run copy records this toolkit's current name: the saved
+            # one can be stale, and a stale MCP default name holds the old
+            # command's arguments.
+            func.bound_toolkit = source_toolkit
             if not resolved_as_recorded:
                 source_toolkit = None
             if source_toolkit is not None:
@@ -667,6 +704,43 @@ class Registry:
         elif any(v is vector_db for v in self.vector_dbs):
             return
         self.vector_dbs.append(vector_db)
+
+    def add_sandbox(self, sandbox: Any) -> None:
+        """Add a sandbox unless one with the same id (or the same instance) is already present.
+
+        Only a sandbox with an id is registrable: a stored component refers to
+        it by that id, and nothing else can name it. The first instance under an
+        id wins; a distinct same-id instance is reported, since it would be
+        shadowed.
+        """
+        from agno.sandbox.base import Sandbox
+
+        if not isinstance(sandbox, Sandbox):
+            return
+        sandbox_id = getattr(sandbox, "id", None)
+        if not isinstance(sandbox_id, str) or not sandbox_id:
+            return
+        existing = self.get_sandbox(sandbox_id)
+        if existing is not None:
+            if existing is not sandbox:
+                log_warning(
+                    f"Registry: multiple distinct sandboxes share id '{sandbox_id}'; keeping the first. "
+                    "Give them distinct ids to avoid one shadowing the other."
+                )
+            return
+        self.sandboxes.append(sandbox)
+
+    def get_sandbox(self, sandbox_id: str) -> Optional[Any]:
+        """Get a sandbox by id from the registry."""
+        if self.sandboxes:
+            return next((s for s in self.sandboxes if getattr(s, "id", None) == sandbox_id), None)
+        return None
+
+    def get_sandbox_ids(self) -> Set[str]:
+        """Get the set of all sandbox ids in this registry."""
+        if self.sandboxes:
+            return {sid for s in self.sandboxes if isinstance((sid := getattr(s, "id", None)), str) and sid}
+        return set()
 
     def add_function(self, func: Any) -> None:
         """Add a plain callable unless one with the same name is already present.

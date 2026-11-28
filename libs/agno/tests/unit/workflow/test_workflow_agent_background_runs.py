@@ -52,7 +52,6 @@ def make_workflow_agent_workflow(monkeypatch, executed: dict, mode: str = "persi
     monkeypatch.setattr(wf, "initialize_workflow", lambda: None)
     monkeypatch.setattr(wf, "_initialize_session", lambda session_id=None, user_id=None: (session_id or "s1", user_id))
     monkeypatch.setattr(wf, "_prepare_steps", lambda: None)
-    monkeypatch.setattr(wf, "update_agents_and_teams_session_info", lambda: None)
 
     async def fake_execute_workflow_agent(user_input=None, execution_input=None, run_context=None, **kwargs):
         executed["run_context_run_id"] = run_context.run_id if run_context else None

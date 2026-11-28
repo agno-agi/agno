@@ -1,7 +1,10 @@
 """S3CheckpointStore against moto's in-process S3, so no credentials or network are needed."""
 
+import asyncio
 import hashlib
 import os
+import threading
+import time
 
 import pytest
 
@@ -332,3 +335,104 @@ def test_eviction_keeps_the_budget_and_never_pulls_an_open_object_away(tmp_path,
         assert sum(p.stat().st_size for p in (tmp_path / "cache").iterdir() if not p.name.startswith(".")) <= budget
         assert hashlib.sha256(held.read_bytes()).hexdigest() == references[0].sha256, "the open lease still reads"
     assert not held.exists()
+
+
+async def cancel_while_opening(s3, reference):
+    async def open_and_hold():
+        async with s3.aopen_archive(reference):
+            await asyncio.sleep(10)
+
+    task = asyncio.create_task(open_and_hold())
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_uncached_open_leaves_no_copy_behind(tmp_path, roots):
+    s3 = store(scratch=tmp_path / "scratch")
+    reference = await s3.aput(capture(tmp_path / "src", roots))
+    download = s3._download
+
+    def slow(ref):
+        # A thread cannot be interrupted: cancel after its copy exists, before the caller holds it.
+        path = download(ref)
+        time.sleep(0.5)
+        return path
+
+    s3._download = slow
+    await cancel_while_opening(s3, reference)
+    assert list((tmp_path / "scratch").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_cached_open_leaves_no_lease_behind(tmp_path, roots):
+    s3 = store(cache_dir=tmp_path / "cache")
+    reference = await s3.aput(capture(tmp_path / "src", roots))
+    enter = s3._open_cached
+
+    def slow(ref):
+        # Cancel after the lease exists, before the caller holds it.
+        opened = enter(ref)
+        time.sleep(0.5)
+        return opened
+
+    s3._open_cached = slow
+    await cancel_while_opening(s3, reference)
+    assert [p.name for p in (tmp_path / "cache").iterdir() if p.name.startswith(".")] == []
+    assert (tmp_path / "cache" / reference.sha256).exists(), "the cached object itself stays"
+
+
+@pytest.mark.asyncio
+async def test_a_cached_async_open_verifies_off_the_event_loop(tmp_path, roots, monkeypatch):
+    s3 = store(cache_dir=tmp_path / "cache")
+    reference = await s3.aput(capture(tmp_path / "src", roots))
+    verify = s3.cache._verify
+    threads = []
+
+    def recording(path, ref):
+        threads.append(threading.current_thread())
+        verify(path, ref)
+
+    monkeypatch.setattr(s3.cache, "_verify", recording)
+    async with s3.aopen_archive(reference) as path:
+        assert path.stat().st_size == reference.size
+    assert threads and threading.main_thread() not in threads
+
+
+def test_a_cached_open_checks_the_digest_once(tmp_path, roots, monkeypatch):
+    """The lease's check is the only one: a second full hash per open was pure cost."""
+    s3 = store(cache_dir=tmp_path / "cache")
+    reference = s3.put(capture(tmp_path / "src", roots))
+    with s3.open_archive(reference):  # fill the cache
+        pass
+    checks = []
+    verify = s3.cache._verify
+    monkeypatch.setattr(s3.cache, "_verify", lambda path, ref: checks.append(path) or verify(path, ref))
+    monkeypatch.setattr(s3.cache, "verify", lambda ref: pytest.fail("the lease already checks the digest"))
+    with s3.open_archive(reference) as path:
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == reference.sha256
+    assert len(checks) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_release_keeps_the_cancellation():
+    """A cleanup that fails under a cancel is chained on; the caller still sees CancelledError."""
+    import asyncio
+
+    from agno.sandbox.checkpoint import _thread
+
+    def work():
+        time.sleep(0.3)
+        return "resource"
+
+    def release(_):
+        raise OSError("cleanup failed")
+
+    task = asyncio.create_task(_thread(work, release=release))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await task
+    assert isinstance(caught.value.__cause__, OSError)

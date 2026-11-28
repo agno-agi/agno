@@ -125,6 +125,20 @@ class TestAtomicRunPatch:
         assert runs["r1"]["queue_attempt"] == 2
 
     @pytest.mark.asyncio
+    async def test_a_handed_back_claim_restores_the_attempt_so_a_cancel_of_the_waiting_ticket_lands(self, db):
+        await seed_session(db, "s1", ["r1"])
+        # The claim stamped attempt 1 and RUNNING.
+        await db.update_run_in_session("s1", "r1", {"queue_attempt": 1}, expected_attempt=1)
+        await db.update_run_in_session("s1", "r1", {"status": "RUNNING"}, expected_attempt=1)
+        # Its agent was busy: the worker puts the row back as it hands the ticket back at attempt 0.
+        restored = await db.update_run_in_session("s1", "r1", {"status": "PENDING", "queue_attempt": 0})
+        assert restored is RunPersistOutcome.UPDATED
+        # Cancelling the waiting ticket writes with the ticket's attempt, 0.
+        cancelled = await db.update_run_in_session("s1", "r1", {"status": "CANCELLED"}, expected_attempt=0)
+        assert cancelled is RunPersistOutcome.UPDATED
+        assert (await get_runs(db, "s1"))["r1"]["status"] == "CANCELLED"
+
+    @pytest.mark.asyncio
     async def test_missing_run_or_session_is_typed_missing(self, db):
         await seed_session(db, "s1", ["r1"])
         assert await db.update_run_in_session("s1", "nope", {"status": "ERROR"}) is RunPersistOutcome.MISSING

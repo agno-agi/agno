@@ -61,10 +61,8 @@ def make_client(request, tmp_path):
 
 
 def create(client, user):
-    parent = client.post("/company/products", json={"name": user}, headers=headers(user, ["products:write"])).json()[
-        "id"
-    ]
-    response = client.post("/company/projects", json={"name": user, "product_id": parent}, headers=headers(user))
+    parent = client.post("/company/goals", json={"name": user}, headers=headers(user, ["goals:write"])).json()["id"]
+    response = client.post("/company/projects", json={"name": user, "goal_id": parent}, headers=headers(user))
     assert response.status_code == 201, response.text
     assert response.json()["user_id"] == user
     return response.json()["id"]
@@ -83,7 +81,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
-def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
+def test_isolation_on_shares_reads_edits_and_deletion(make_client):
     c = make_client(True)
     a = create(c, "alice")
     own = {create(c, "bob") for _ in range(3)}
@@ -97,22 +95,16 @@ def test_isolation_on_shares_reads_and_edits_but_scopes_deletion(make_client):
     path = "/company/projects/" + a
     before = c.get(path, headers=headers("alice")).json()
     assert c.get(path, headers=headers("bob")).json() == before
-    for method, suffix, body in [
-        ("delete", "", None),
-        ("post", "/restore", None),
-    ]:
-        response = c.request(method, path + suffix, json=body, headers=headers("bob"))
-        assert response.status_code == 403, response.text
-    assert c.get(path, headers=headers("alice")).json() == before
     edited = c.patch(path, json={"name": "Collaborative work"}, headers=headers("bob", ["projects:write"]))
     assert edited.status_code == 200, edited.text
     assert edited.json()["name"] == "Collaborative work"
     assert edited.json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("alice")).status_code == 204
+    # Archive and restore need the scope, not ownership; the creator stays recorded.
+    assert c.delete(path, headers=headers("bob")).status_code == 204
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
-    assert c.post(path + "/restore", headers=headers("bob")).status_code == 403
     assert c.get("/company/projects?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
-    assert c.post(path + "/restore", headers=headers("alice")).status_code == 200
+    assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
+    assert c.get(path, headers=headers("alice")).json()["user_id"] == "alice"
 
 
 def test_admin_bypass_and_creator_attribution(make_client):
@@ -124,8 +116,8 @@ def test_admin_bypass_and_creator_attribution(make_client):
     assert c.patch(path, json={"name": "renamed"}, headers=admin).status_code == 200
     assert c.delete(path, headers=admin).status_code == 204
     assert c.post(path + "/restore", headers=admin).status_code == 200
-    parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
-    response = c.post("/company/projects", json={"name": "Admin work", "product_id": parent}, headers=admin)
+    parent = c.post("/company/goals", json={"name": "Admin goal"}, headers=admin).json()["id"]
+    response = c.post("/company/projects", json={"name": "Admin work", "goal_id": parent}, headers=admin)
     assert response.status_code == 201
     assert response.json()["user_id"] == "admin"
 
@@ -156,8 +148,8 @@ def test_service_account_scopes_on_company_routes(tmp_path, authorization):
 
     db = SqliteDb(db_file=str(tmp_path / "service-accounts.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Shared product", user_id="alice")
-    shared = manager.create_project(product_id=product["id"], name="Shared work", user_id="alice")
+    goal = manager.create(name="Shared goal", user_id="alice")
+    shared = manager.create_project(goal_id=goal["id"], name="Shared work", user_id="alice")
     token, token_hash, token_prefix = generate_token()
     db.create_service_account(
         {

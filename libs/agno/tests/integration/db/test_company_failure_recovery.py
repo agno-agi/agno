@@ -1,6 +1,7 @@
 """Actual enqueue loss, completion read failures, and mixed Mongo/SQL Routine storage."""
 
 import os
+import time
 from uuid import uuid4
 
 import pytest
@@ -24,6 +25,113 @@ from tests.integration.db.test_company_execution_parity import system as executi
 from tests.integration.db.test_company_routines_parity import create_routine
 
 system = execution_system
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_kind", ["ready", "routine_draft"])
+async def test_cancelled_project_automation_skips_without_failure_streak(system, tmp_path, task_kind):
+    from agno.company.automation_history import aautomation_failures
+
+    client, db, _, _, _ = system
+    if task_kind == "ready":
+        task = await accepted(client)
+    else:
+        task, _, _ = await routine_proposal(
+            system, tmp_path, required_checks=["has_source_evidence", "executor_registered"]
+        )
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, schedule = await automation(system)
+    for _ in range(2):
+        await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+        result = await tick(executor, db)
+        assert result["status"] == "success", result
+        outcome = next(row for row in result["output"]["tasks"] if row["task_id"] == task["id"])
+        assert outcome["status"] == "skipped", outcome
+        assert outcome["reason"] == (
+            "Cannot start Task work in a cancelled Project"
+            if task_kind == "ready"
+            else "Cannot accept Task work in a cancelled Project"
+        )
+        assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 0
+        assert await aautomation_failures(db, db) == []
+    assert (await _call(db, "get_task", task["id"]))["status"] == ("ready" if task_kind == "ready" else "backlog")
+
+
+@pytest.mark.asyncio
+async def test_denied_dispatch_in_cancelled_project_does_not_abort_tick(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, db, _, _, _ = system
+    stuck = await accepted(client)
+    other = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{stuck['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+    original_dispatch = executor._dispatch
+    complete_projects = AsyncMock(wraps=executor._complete_projects)
+
+    async def dispatch(task):
+        if task["id"] == stuck["id"]:
+            raise PermissionError("Executor run permission revoked")
+        return await original_dispatch(task)
+
+    monkeypatch.setattr(executor, "_dispatch", dispatch)
+    monkeypatch.setattr(executor, "_complete_projects", complete_projects)
+    outcomes = await executor._tick()
+    assert any(row["task_id"] == other["id"] and row.get("action") == "submitted" for row in outcomes)
+    complete_projects.assert_awaited_once()
+    assert (await _call(db, "get_task", stuck["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_policy_refusal_keeps_its_reason_after_project_cancellation(system, monkeypatch):
+    import agno.company.routines as routines
+
+    client, db, _, _, _ = system
+    task = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+
+    async def refuse(*args):
+        raise ValueError("Policy denied")
+
+    monkeypatch.setattr(routines, "_check_automatic_policy", refuse)
+    with pytest.raises(ValueError, match="Policy denied"):
+        await executor._dispatch(await _call(db, "get_task", task["id"]))
+    assert (await _call(db, "get_task", task["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_project_cancelled_during_automation_checks_is_skipped(system, tmp_path, monkeypatch):
+    import agno.company.routines as routines
+
+    client, db, _, _, _ = system
+    task, _, _ = await routine_proposal(system, tmp_path)
+    original = routines._has_source_evidence
+
+    async def cancel_during_check(*args):
+        response = await client.post(
+            f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+        )
+        assert response.status_code == 200, response.text
+        return await original(*args)
+
+    monkeypatch.setattr(routines, "_has_source_evidence", cancel_during_check)
+    executor, schedule = await automation(system)
+    await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+    result = await tick(executor, db)
+    assert result["status"] == "success", result
+    assert result["output"]["tasks"][0]["status"] == "skipped"
+    assert result["output"]["tasks"][0]["reason"] == "Cannot change Task status in a cancelled Project"
+    assert (await _call(db, "get_task", task["id"]))["status"] == "backlog"
 
 
 def delete_ticket(worker, run_id):
@@ -61,7 +169,8 @@ async def test_lost_ticket_after_real_enqueue_is_cancelled_and_retryable(system,
     saved = await _call(db, "get_task", task["id"])
     assert saved["result"]["status"] == "CANCELLED", saved
     assert "Queue ticket lost" in saved["result"]["content"]
-    assert saved["transitions"] == original["transitions"]
+    # The reservation is kept, followed by the step into review that the cancelled attempt's end added.
+    assert saved["transitions"][:-1] == original["transitions"] and saved["status"] == "in_review"
     assert (await _call(db, "get_run", run_id, deserialize=False))["status"] == "CANCELLED"
     assert await worker.store.get_job(run_id) is None
     # Reconciliation is idempotent and the automation does not replay the run.
@@ -125,7 +234,7 @@ async def test_project_completion_failure_history(system, tmp_path, monkeypatch,
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy["complete_projects"] = True
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, schedule = await automation(system)
     if failure == "database":
         original = db.get_tasks
@@ -194,10 +303,31 @@ async def test_routine_apis_with_mongo_schedules_and_sql_company(system, asynchr
             assert triggered.json()["status"] == "success", triggered.text
             latest = (await client.get(path)).json()["last_run"]
             assert latest["run_id"] == triggered.json()["run_id"]
-            assert (await client.post(path + "/pause")).json()["last_run"] == latest
+            stored = await _call(schedule_db, "get_schedule", first["id"])
+            with monkeypatch.context() as later:
+                later.setattr(time, "time", lambda: stored["updated_at"] + 100)
+                for _ in range(2):
+                    assert (await client.post(path + "/pause")).status_code == 409
+                    assert (await client.post(path + "/resume")).status_code == 409
+            assert await _call(schedule_db, "get_schedule", first["id"]) == stored
+            await _call(schedule_db, "update_schedule", first["id"], enabled=False)
             assert (await client.post(path + "/trigger")).status_code == 409
             assert (await client.post(path + "/resume")).json()["last_run"] == latest
+            assert (await client.post(path + "/resume")).status_code == 409
             assert (await client.patch(path, json={"name": "Updated"})).json()["last_run"] == latest
+            # A user edit advances updated_at; a scheduled run of the routine does not.
+            clock = [int(time.time())]
+            monkeypatch.setattr(time, "time", lambda: clock[0])
+            clock[0] += 100
+            assert (await client.patch(path, json={"name": "Edited again"})).status_code == 200
+            assert (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"] == clock[0]
+            await _call(schedule_db, "update_schedule", first["id"], next_run_at=1)
+            claimed = await _call(schedule_db, "claim_due_schedule", "worker")
+            assert claimed["id"] == first["id"]
+            edited = (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"]
+            clock[0] += 1000
+            assert (await app.state.scheduler_executor.execute(claimed, schedule_db))["status"] == "success"
+            assert (await _call(schedule_db, "get_schedule", first["id"]))["updated_at"] == edited
             for index, routine in enumerate(routines):
                 for stamp in (10, 20):
                     await _call(
@@ -233,6 +363,12 @@ async def test_routine_apis_with_mongo_schedules_and_sql_company(system, asynchr
                 assert all(row["last_run"]["run_id"] == "newest-20" for row in listed.json()["data"])
                 assert len(queries) == 1, queries
             assert await _call(schedule_db, "get_latest_schedule_runs", ["unknown"]) == {}
+            # Sorting is independent of the schedule adapter; ids break created_at ties in the active direction.
+            by_age = sorted(routines, key=lambda row: (row["created_at"], row["id"]))
+            for sort_order, rows in (("asc", by_age), ("desc", by_age[::-1])):
+                ordered = await client.get("/company/routines", params={"sort_order": sort_order})
+                assert ordered.status_code == 200, ordered.text
+                assert [row["id"] for row in ordered.json()["data"]] == [row["id"] for row in rows]
     finally:
         if asynchronous:
             await schedule_db.db_client.drop_database(schedule_db.db_name)
