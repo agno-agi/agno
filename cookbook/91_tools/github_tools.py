@@ -53,23 +53,11 @@ agent = Agent(
     ],
 )
 
-# Example 2: Exclude dangerous functions
+# Example 2: Read only. No tool that creates, changes or deletes anything is registered,
+# whatever the token allows, and the agent is told how to read a pull request well.
 agent_safe = Agent(
-    instructions=[
-        "Use your tools to answer questions about the repo: agno-agi/agno",
-        "You can only read repository data, not modify anything",
-    ],
-    tools=[
-        GithubTools(
-            exclude_tools=[
-                "delete_repository",
-                "create_repository",
-                "create_issue",
-                "create_pull_request",
-                "delete_file",
-            ]
-        )
-    ],
+    instructions=["Use your tools to answer questions about the repo: agno-agi/agno"],
+    tools=[GithubTools(read_only=True)],
 )
 
 # Example 3: Include all functions (default behavior)
