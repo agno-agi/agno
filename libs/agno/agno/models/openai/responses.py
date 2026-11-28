@@ -10,7 +10,7 @@ from typing_extensions import Literal
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.metrics import MessageMetrics
-from agno.models.base import Model
+from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.openai.types import ReasoningEffort, ReasoningSummary, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
@@ -1343,6 +1343,37 @@ class OpenAIResponses(Model):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
+    @staticmethod
+    def _phased_output_text(response: Response) -> Optional[str]:
+        """The final answer of a response whose message items carry a phase, or its commentary when it has none."""
+        texts: List[Tuple[Optional[str], str]] = []
+        for output in getattr(response, "output", None) or []:
+            if getattr(output, "type", None) != "message":
+                continue
+            parts = [
+                content.text
+                for content in getattr(output, "content", None) or []
+                if getattr(content, "type", None) == "output_text" and content.text
+            ]
+            texts.append((getattr(output, "phase", None), "".join(parts)))
+
+        if not any(phase is not None for phase, _ in texts):
+            return None
+
+        final_answers = [text for phase, text in texts if phase == "final_answer" and text]
+        if final_answers:
+            return final_answers[-1]
+        return "\n\n".join(text for _, text in texts if text)
+
+    def _populate_assistant_message_from_stream_data(
+        self, assistant_message: Message, stream_data: MessageData
+    ) -> None:
+        # The accumulated deltas hold every message item, so text set from the completed response wins
+        phased_text = assistant_message.content
+        super()._populate_assistant_message_from_stream_data(assistant_message, stream_data)
+        if phased_text is not None:
+            assistant_message.content = phased_text
+
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
@@ -1371,11 +1402,12 @@ class OpenAIResponses(Model):
         # Add role
         model_response.role = "assistant"
         reasoning_summary: Optional[str] = None
+        phased_text = self._phased_output_text(response)
 
         for output in response.output:
             # Add content
             if output.type == "message":
-                model_response.content = response.output_text
+                model_response.content = response.output_text if phased_text is None else phased_text
 
                 # Add citations
                 citations = Citations()
@@ -1541,6 +1573,11 @@ class OpenAIResponses(Model):
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
                             model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
+
+            # Same text as a non-streamed response
+            phased_text = self._phased_output_text(stream_event.response)
+            if phased_text:
+                assistant_message.content = phased_text
 
             # Add metrics
             if stream_event.response.usage is not None:
