@@ -812,6 +812,8 @@ class AgentOS:
         # The Routine API's read and its PATCH handler, set when the Company routes are built.
         self._routine_api_read: Any = None
         self._routine_api_update: Any = None
+        self._routine_api_resume: Any = None
+        self._routine_api_live_runs: Any = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
             from agno.company.mini_agent import _build_mini_agent
@@ -1129,7 +1131,7 @@ class AgentOS:
             from agno.os.routers.company.tasks import get_tasks_router
 
             updated_routers.append(get_company_details_router(self))
-            updated_routers.append(get_goals_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_goals_router(db=self._company_db, settings=self.settings, schedule_db=self.db))
             updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             updated_routers.append(
@@ -2291,7 +2293,7 @@ class AgentOS:
             from agno.os.routers.company.tasks import get_tasks_router
 
             routers.append(get_company_details_router(self))
-            routers.append(get_goals_router(db=self._company_db, settings=self.settings))
+            routers.append(get_goals_router(db=self._company_db, settings=self.settings, schedule_db=self.db))
             routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))

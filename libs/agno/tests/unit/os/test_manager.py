@@ -2468,9 +2468,14 @@ def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_appr
     assert "or answer whether something may be done, is ready or is allowed, read them" in rule
     # The usual page is named, and a company that keeps its rules elsewhere is still read.
     assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
-    # A step that needs someone's approval is held, and a yes from anyone else does not release it.
-    assert "say so and hold that step, recording a proposal at most" in rule
-    assert "a yes in chat is approval only from the person the rule names" in rule
+    # A rule is not stretched, and one about who does the work does not overrule the executor the person named.
+    assert "A rule covers only what it says: never stretch it to other work or another case." in rule
+    assert "a rule about who does, approves or reviews work never holds or refuses a step" in rule
+    assert "applies when the person names none: the executor the person names does the work" in rule
+    assert "say so once and ask, then do what the person says, and never reroute or split the work yourself" in rule
+    # A rule that names an approver or reviewer is said, and does not hold the step.
+    assert "do what the person here asked and say once that the rule asks for that person's approval or review" in rule
+    assert "hold that step" not in rule and "only from the person the rule names" not in rule
     # Work that leaves no record does not pay for the read.
     assert "An answer, draft or summary that leaves no record needs no read." in rule
 
@@ -2887,3 +2892,43 @@ def test_application_tool_named_like_a_source_tool_is_refused_with_root(db, work
     # Either one alone is a working configuration.
     AgentOS(db=db, manager=OSManager(model=OfflineModel(), tools=[tool, notes.tools()]), telemetry=False)
     AgentOS(db=db, manager=OSManager(model=OfflineModel(), root=workspace), telemetry=False)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_with_github_tools_is_told_to_read_before_it_repeats_a_claim(db, use_async):
+    pytest.importorskip("github")
+    from unittest.mock import patch
+
+    from agno.os.manager.prompts import GITHUB_INSTRUCTIONS
+    from agno.tools.github import GithubTools
+
+    class RecordingModel(OfflineModel):
+        def invoke(self, *args, **kwargs):
+            if "messages" in kwargs:
+                self.system = next(m.content for m in kwargs["messages"] if m.role == "system")
+            return super().invoke()
+
+        async def ainvoke(self, *args, **kwargs):
+            return self.invoke(*args, **kwargs)
+
+    def system_message(tools):
+        model = RecordingModel()
+        os = AgentOS(db=db, manager=OSManager(model=model, tools=tools, access_docs=False), telemetry=False)
+        asyncio.run(os.manager.arun("Hello")) if use_async else os.manager.run("Hello")
+        return model.system
+
+    with patch("agno.tools.github.Github"):
+        read_only = GithubTools(access_token="token", read_only=True)
+        files_only = GithubTools(access_token="token", read_only=True, include_tools=["get_file_content"])
+        no_reads = GithubTools(access_token="token", include_tools=["list_branches"])
+
+    # Super Agent's own line, and the toolkit's guidance, are both in what the model is sent.
+    sent = system_message([read_only])
+    assert GITHUB_INSTRUCTIONS.strip() in sent
+    assert "Asked about a pull request, read it before you answer" in sent
+    assert "You cannot write to it." in sent
+
+    assert GITHUB_INSTRUCTIONS.strip() in system_message([files_only])
+    # With no tool that reads a pull request or a file, and with no GitHub tools, the line is left out.
+    assert "before you repeat it as true" not in system_message([no_reads])
+    assert "before you repeat it as true" not in system_message([])

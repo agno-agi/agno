@@ -150,10 +150,11 @@ def _now(timezone_identifier: Optional[str] = None, datetime_format: Optional[st
 
 
 class TurnContext:
-    """What Super Agent is told right before each message: the time, who the person is, then the
-    work this conversation started. One unstored user message holds all of it.
+    """What Super Agent is told right before each message: the time, who the person is, which company
+    wiki pages exist, then the work this conversation started. One unstored user message holds all of it.
 
     clock returns the Team's timezone identifier and datetime format, or is None to leave the time out.
+    pages reads the line on the company wiki's pages, or is None without Company.
     """
 
     def __init__(
@@ -162,26 +163,32 @@ class TurnContext:
         work: Any,
         delivers: Optional[Callable[[], bool]] = None,
         clock: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]] = None,
+        pages: Optional[Any] = None,
     ):
         self.person = person
         self.work = work
         # Whether Super Agent's model is sent the message at all.
         self.delivers = delivers
         self.clock = clock
+        self.pages = pages
 
-    def _join(self, note: str, work: Optional[str]) -> str:
+    def _join(self, note: str, work: Optional[str], pages: Optional[str] = None) -> str:
         # The time is read when the message is built, so each turn and each report carries its own.
         head = f"{_now(*self.clock())}\n{note}" if self.clock is not None else note
+        if pages:
+            head = f"{head}\n{pages}"
         return f"{head}\n\n{work}" if work else head
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         if self.delivers is not None and not self.delivers():
             return None
         work = self.work.read(run_context, session) if self.work is not None else None
-        return self._join(self.person.read(run_context), work)
+        pages = self.pages.read(run_context) if self.pages is not None else None
+        return self._join(self.person.read(run_context), work, pages)
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         if self.delivers is not None and not self.delivers():
             return None
         work = await self.work.aread(run_context, session) if self.work is not None else None
-        return self._join(await self.person.aread(run_context), work)
+        pages = await self.pages.aread(run_context) if self.pages is not None else None
+        return self._join(await self.person.aread(run_context), work, pages)
