@@ -54,8 +54,28 @@ def _company_routine_refusal(schedule: Any) -> Optional[str]:
         return None
     return json.dumps(
         {
-            "error": f"Schedule {schedule.id} is a Company Routine. Change it through Company Routines.",
+            "error": (
+                f"Schedule {schedule.id} is a Company Routine, so it is not changed as a plain schedule. It is "
+                "paused, resumed and deleted through the Company Routine API, by a person with the Routine "
+                "permissions or by an administrator."
+            ),
             "error_type": "company_routine",
+        }
+    )
+
+
+def _not_owner_refusal(schedule: Any, owner: Optional[str]) -> Optional[str]:
+    """A schedule that exists and is another user's is not "not found": it is not the asker's to change."""
+    if schedule is None or owner is None or schedule.user_id == owner:
+        return None
+    belongs = f"user {schedule.user_id}" if schedule.user_id else "no user"
+    return json.dumps(
+        {
+            "error": (
+                f"Schedule {schedule.id} exists and belongs to {belongs}, so it is not yours to read or change. "
+                "Its owner can change it, and so can an administrator."
+            ),
+            "error_type": "not_owner",
         }
     )
 
@@ -566,6 +586,34 @@ class SchedulerTools(Toolkit):
             return self.user_id
         return run_context.user_id if run_context is not None else None
 
+    def _not_found(
+        self, schedule_id: str, run_context: Optional[RunContext], missing: str = "Schedule not found"
+    ) -> str:
+        """The answer when the asker owns no schedule with this ID: whose it is, when it exists."""
+        try:
+            stored = self.manager.get(schedule_id)
+        except Exception:
+            stored = None
+        return (
+            _company_routine_refusal(stored)
+            or _not_owner_refusal(stored, self._owner(run_context))
+            or json.dumps({"error": f"{missing}: {schedule_id}"})
+        )
+
+    async def _anot_found(
+        self, schedule_id: str, run_context: Optional[RunContext], missing: str = "Schedule not found"
+    ) -> str:
+        """Async version of _not_found."""
+        try:
+            stored = await self.manager.aget(schedule_id)
+        except Exception:
+            stored = None
+        return (
+            _company_routine_refusal(stored)
+            or _not_owner_refusal(stored, self._owner(run_context))
+            or json.dumps({"error": f"{missing}: {schedule_id}"})
+        )
+
     @property
     def _code_defined(self) -> Optional[CodeDefinedProbe]:
         """Probe over this toolkit's in-process components, or None when it has none.
@@ -764,7 +812,7 @@ class SchedulerTools(Toolkit):
         try:
             schedule = self.manager.get(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return self._not_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -799,7 +847,7 @@ class SchedulerTools(Toolkit):
             deleted = self.manager.delete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
-            return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
+            return self._not_found(schedule_id, run_context, "Schedule not found or could not be deleted")
         except Exception as e:
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
@@ -817,7 +865,7 @@ class SchedulerTools(Toolkit):
         try:
             existing = self.manager.get(schedule_id, user_id=self._owner(run_context))
             if existing is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return self._not_found(schedule_id, run_context)
             routine_refusal = _company_routine_refusal(existing)
             if routine_refusal:
                 return routine_refusal
@@ -877,7 +925,7 @@ class SchedulerTools(Toolkit):
                 )
             schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return self._not_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "status": "enabled",
@@ -906,7 +954,7 @@ class SchedulerTools(Toolkit):
                 return routine_refusal
             schedule = self.manager.disable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return self._not_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "status": "disabled",
@@ -937,7 +985,7 @@ class SchedulerTools(Toolkit):
             owner = self._owner(run_context)
             schedule = self.manager.get(schedule_id, user_id=owner)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return self._not_found(schedule_id, run_context)
             private_target = _manager_member_refusal(schedule.endpoint)
             if private_target:
                 return json.dumps({"error": private_target, "error_type": "target_internal"})
@@ -1153,7 +1201,7 @@ class SchedulerTools(Toolkit):
         try:
             schedule = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return await self._anot_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -1190,7 +1238,7 @@ class SchedulerTools(Toolkit):
             deleted = await self.manager.adelete(schedule_id, user_id=self._owner(run_context))
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
-            return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
+            return await self._anot_found(schedule_id, run_context, "Schedule not found or could not be deleted")
         except Exception as e:
             logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
@@ -1208,7 +1256,7 @@ class SchedulerTools(Toolkit):
         try:
             existing = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
             if existing is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return await self._anot_found(schedule_id, run_context)
             routine_refusal = _company_routine_refusal(existing)
             if routine_refusal:
                 return routine_refusal
@@ -1268,7 +1316,7 @@ class SchedulerTools(Toolkit):
                 )
             schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return await self._anot_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "status": "enabled",
@@ -1299,7 +1347,7 @@ class SchedulerTools(Toolkit):
                 return routine_refusal
             schedule = await self.manager.adisable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return await self._anot_found(schedule_id, run_context)
             return json.dumps(
                 {
                     "status": "disabled",
@@ -1330,7 +1378,7 @@ class SchedulerTools(Toolkit):
             owner = self._owner(run_context)
             schedule = await self.manager.aget(schedule_id, user_id=owner)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return await self._anot_found(schedule_id, run_context)
             private_target = _manager_member_refusal(schedule.endpoint)
             if private_target:
                 return json.dumps({"error": private_target, "error_type": "target_internal"})

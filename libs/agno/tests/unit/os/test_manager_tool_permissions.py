@@ -99,6 +99,10 @@ TASK_RUN_TOOLS = {
 }
 
 
+# Async only. test_super_agent_schedule_control.py checks each with the permissions of the API route it uses.
+SCHEDULE_TOOLS = {"pause_schedule", "resume_schedule", "delete_schedule"}
+
+
 class OneToolModel(Model):
     """Call one tool, then return the tool result as the reply."""
 
@@ -204,7 +208,7 @@ def company_records(os):
 
 def test_matrix_covers_every_tool_super_agent_holds(platform):
     os, _ = platform
-    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL} | TASK_RUN_TOOLS | FILE_TREE_TOOLS
+    assert held_tools(os) == set(MOVED_TOOLS) | {CONFIRMED_TOOL} | TASK_RUN_TOOLS | FILE_TREE_TOOLS | SCHEDULE_TOOLS
     assert [member.id for member in os.manager.members] == [BUILDER_ID]
     # The platform read tools left off Super Agent stay in the toolkit.
     left_off = set(AgentOSTools(db=os.db).functions) - held_tools(os)

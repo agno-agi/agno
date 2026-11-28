@@ -2144,14 +2144,14 @@ async def test_runtime_automation_schedule_rejects_public_mutation(system, tmp_p
     assert resumed.status_code == 200 and resumed.json()["enabled"] is True, resumed.text
     manager = ScheduleManager(db)
     for method in ("update", "delete", "enable", "disable", "aupdate", "adelete", "aenable", "adisable"):
-        with pytest.raises(ValueError, match="runtime-managed"):
+        with pytest.raises(ValueError, match="It cannot be changed here"):
             if method.startswith("a"):
                 await getattr(manager, method)(schedule["id"])
             else:
                 getattr(manager, method)(schedule["id"])
     tools = SchedulerTools(db=db)
-    assert "runtime-managed" in json.loads(tools.disable_schedule(schedule["id"]))["error"]
-    assert "runtime-managed" in json.loads(await tools.adisable_schedule(schedule["id"]))["error"]
+    assert "It cannot be changed here" in json.loads(tools.disable_schedule(schedule["id"]))["error"]
+    assert "It cannot be changed here" in json.loads(await tools.adisable_schedule(schedule["id"]))["error"]
     # User Routines still support the existing pause/resume domain.
     assert (await client.post("/company/routines/" + routine["id"] + "/pause")).status_code == 200
     assert (await client.post("/company/routines/" + routine["id"] + "/resume")).status_code == 200
@@ -3303,7 +3303,7 @@ async def test_runtime_automation_schedule_rejects_upsert_and_tool_creation(syst
     before = await _call(db, "get_schedule", schedule["id"])
     try:
         for asynchronous in (False, True):
-            with pytest.raises(ValueError, match="runtime-managed"):
+            with pytest.raises(ValueError, match="It cannot be changed here"):
                 if asynchronous:
                     await manager.acreate(**arguments, if_exists="update")
                 else:
@@ -3314,7 +3314,7 @@ async def test_runtime_automation_schedule_rejects_upsert_and_tool_creation(syst
                 if asynchronous
                 else tools.create_schedule(**tool_arguments)
             )
-            assert "runtime-managed" in json.loads(result)["error"]
+            assert "It cannot be changed here" in json.loads(result)["error"]
             assert await _call(db, "get_schedule", schedule["id"]) == before
         # Read-only create-or-skip remains idempotent; reconciliation still works.
         assert (await manager.acreate(**arguments, if_exists="skip")).id == schedule["id"]
