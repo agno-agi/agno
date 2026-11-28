@@ -197,8 +197,81 @@ def _worker_env() -> Dict[str, str]:
     return {key: value for key, value in os.environ.items() if key != _TOKEN_ENV}
 
 
+# An oversize event's text is never cut below this many characters. Run, session and agent ids
+# are shorter, so the host still finds the identity it checks on every event.
+_MIN_EVENT_TEXT = 1024
+
+
+def _frame(event: Dict[str, Any]) -> bytes:
+    return _encode({"type": "event", "event": event}) + b"\n"
+
+
+def _shorten(value: Any, keep: int) -> Any:
+    """``value`` with every string longer than ``keep`` characters cut in the middle.
+
+    The start and the end are kept, because a command's output often ends with its error, and
+    a line between them says how much was cut and why.
+    """
+    if isinstance(value, str) and len(value) > keep:
+        head = keep // 2
+        return (
+            f"{value[:head]}\n[... {len(value) - keep} of {len(value)} characters cut here: this event was "
+            f"larger than the sandbox runtime allows for one event ...]\n{value[len(value) - (keep - head) :]}"
+        )
+    if isinstance(value, dict):
+        return {key: _shorten(item, keep) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shorten(item, keep) for item in value]
+    return value
+
+
+def _shorten_event(event: Dict[str, Any], keep: int) -> Dict[str, Any]:
+    """``event`` shortened, with a permission request it carries left whole.
+
+    A paused event holds every tool call of the turn so far, so earlier output can put it over
+    the limit. It also holds the action a person is asked to confirm: in the request, in its
+    requirement and in the waiting tool call. The host checks that action against the digest
+    taken of it here, so a cut there would make the request impossible to confirm.
+    """
+    request = event.get("external_agent_request")
+    if not isinstance(request, dict):
+        return _shorten(event, keep)
+    waiting = request.get("tool_call_id")
+    shortened: Dict[str, Any] = {}
+    for key, value in event.items():
+        if key in ("external_agent_request", "requirements"):
+            shortened[key] = value
+        elif key == "tools" and isinstance(value, list):
+            shortened[key] = [
+                tool if isinstance(tool, dict) and tool.get("tool_call_id") == waiting else _shorten(tool, keep)
+                for tool in value
+            ]
+        else:
+            shortened[key] = _shorten(value, keep)
+    return shortened
+
+
+def _fit(event: Dict[str, Any]) -> bytes:
+    """The event's journal frame, with its long text shortened when the frame is over its limit.
+
+    One event carries whatever the harness produced in one step, such as a command's whole
+    output, and that has no bound. Refusing the event would end a turn whose work is otherwise
+    fine, so its long strings are cut instead, further each time until the frame fits. An event
+    that is still too large with every string at ``_MIN_EVENT_TEXT`` is returned as it is, for
+    the caller to refuse.
+    """
+    payload = _frame(event)
+    keep = _MAX_FRAME // 4
+    while len(payload) > _MAX_FRAME and keep >= _MIN_EVENT_TEXT:
+        shortened = _frame(_shorten_event(event, keep))
+        if len(shortened) <= _MAX_FRAME:
+            return shortened
+        keep //= 2
+    return payload
+
+
 def _append(directory: Path, event: Dict[str, Any]) -> None:
-    payload = _encode({"type": "event", "event": event}) + b"\n"
+    payload = _fit(event)
     if len(payload) > _MAX_FRAME:
         raise SandboxError("Runtime event exceeds its frame limit")
     path = directory / "events.jsonl"
