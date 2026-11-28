@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
     # Example 2: Image Generation
     agent = Agent(
-        tools=[OpenAITools(image_model="gpt-image-2")],
+        tools=[OpenAITools(image_model="gpt-image-2.6-sunburst")],
         markdown=True,
     )
 

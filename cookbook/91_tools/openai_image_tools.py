@@ -29,7 +29,7 @@ agent_custom = Agent(
         OpenAITools(
             enable_transcription=False,
             enable_speech_generation=False,
-            image_model="gpt-image-2",
+            image_model="gpt-image-2.6-sunburst",
             image_size="1536x1024",
             image_quality="high",
         )

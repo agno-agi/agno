@@ -24,7 +24,7 @@ from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    tools=[OpenAITools(image_model="gpt-image-2")],
+    tools=[OpenAITools(image_model="gpt-image-2.6-sunburst")],
     markdown=True,
 )
 

@@ -14,7 +14,13 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
-from agno.tools.openai import IMAGE_MODEL_OPTIONS, STYLE_DEPRECATION, validate_image_options
+from agno.tools.openai import (
+    DEFAULT_IMAGE_MODEL,
+    IMAGE_MODEL_OPTIONS,
+    STYLE_DEPRECATION,
+    validate_image_options,
+    warn_if_retiring,
+)
 
 
 class DalleTools(Toolkit):
@@ -22,10 +28,10 @@ class DalleTools(Toolkit):
 
     def __init__(
         self,
-        model: str = "gpt-image-2",
+        model: str = DEFAULT_IMAGE_MODEL,
         n: int = 1,
         size: Optional[str] = "1024x1024",
-        quality: Literal["auto", "low", "medium", "high"] = "auto",
+        quality: Literal["auto", "low", "medium", "high", "xhigh", "max"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
@@ -47,6 +53,7 @@ class DalleTools(Toolkit):
         if model not in IMAGE_MODEL_OPTIONS:
             raise ValueError(f"Invalid model. Please choose from {', '.join(IMAGE_MODEL_OPTIONS)}.")
         validate_image_options(model, n, size, quality)
+        warn_if_retiring(model, "model")
         if style is not None:
             log_warning(STYLE_DEPRECATION)
 

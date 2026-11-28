@@ -32,22 +32,33 @@ def test_default_gpt_image_request_uses_supported_quality():
 
     _, request = _generate(tools, [_image_data(b64_json=base64.b64encode(b"png").decode())])
 
-    assert request["model"] == "gpt-image-2"
+    assert request["model"] == "gpt-image-2.6-sunburst"
     assert request["quality"] == "auto"
 
 
-@pytest.mark.parametrize("quality", ["auto", "low", "medium", "high"])
+@pytest.mark.parametrize("quality", ["auto", "low", "medium", "high", "xhigh", "max"])
 def test_gpt_image_accepts_gpt_image_qualities(quality):
     assert DalleTools(api_key="test-key", quality=quality).quality == quality
 
 
 @pytest.mark.parametrize("quality", ["standard", "hd"])
 def test_gpt_image_rejects_dalle_qualities(quality):
-    with pytest.raises(ValueError, match="Invalid quality for gpt-image-2"):
+    with pytest.raises(ValueError, match="Invalid quality for gpt-image-2.6-sunburst"):
         DalleTools(api_key="test-key", quality=quality)
 
 
-@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-1.5", "gpt-image-1-mini"])
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-image-2.6-sunburst",
+        "gpt-image-2.6-flare",
+        "gpt-image-2.5-sunburst",
+        "gpt-image-2.5-flare",
+        "gpt-image-2",
+        "gpt-image-1.5",
+        "gpt-image-1-mini",
+    ],
+)
 def test_accepts_supported_models(model):
     assert DalleTools(api_key="test-key", model=model).model == model
 
@@ -59,12 +70,12 @@ def test_rejects_retired_models(model):
 
 
 def test_rejects_unknown_model_and_lists_valid_ones():
-    with pytest.raises(ValueError, match="gpt-image-2"):
+    with pytest.raises(ValueError, match="gpt-image-2.6-sunburst"):
         DalleTools(api_key="test-key", model="dall-e-4")
 
 
 @pytest.mark.parametrize("size", ["auto", "1024x1024", "1536x1024", "1024x1536", "1792x1024", "2048x1152"])
-def test_gpt_image_2_accepts_fixed_and_custom_sizes(size):
+def test_default_model_accepts_fixed_and_custom_sizes(size):
     assert DalleTools(api_key="test-key", size=size).size == size
 
 
@@ -130,3 +141,19 @@ def test_init_logs_deprecation_pointing_to_openai_tools():
     message = log_warning.call_args.args[0]
     assert "DalleTools is deprecated" in message
     assert "OpenAITools" in message
+
+
+def test_retiring_model_warns_with_the_shutdown_date():
+    """gpt-image-2 still works, but OpenAI shuts it down on February 10, 2027."""
+    with patch("agno.tools.openai.log_warning") as log_warning:
+        DalleTools(api_key="test-key", model="gpt-image-2")
+
+    warnings = [call.args[0] for call in log_warning.call_args_list]
+    assert any("February 10, 2027" in message and "gpt-image-2.6-sunburst" in message for message in warnings)
+
+
+def test_default_model_does_not_warn_about_retirement():
+    with patch("agno.tools.openai.log_warning") as log_warning:
+        DalleTools(api_key="test-key")
+
+    assert log_warning.call_args_list == []
