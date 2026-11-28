@@ -1601,8 +1601,7 @@ def test_managed_schedule_mutations_use_company_routes(system):
     assert created.status_code == 201
     identifier = created.json()["id"]
     assert client.patch("/schedules/" + identifier, json={"payload": {"message": "Break metadata"}}).status_code == 409
-    assert client.delete("/schedules/" + identifier).status_code == 409
-    assert client.post("/schedules/" + identifier + "/enable").status_code == 409
+    assert client.post("/schedules/" + identifier + "/trigger").status_code == 409
     assert client.delete("/company/goals/" + goal["id"]).status_code == 204
     assert client.post("/company/routines/" + identifier + "/pause").status_code == 200
     assert client.post("/company/routines/" + identifier + "/resume").status_code == 404

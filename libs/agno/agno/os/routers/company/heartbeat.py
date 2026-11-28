@@ -512,6 +512,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(db.add_goal_routine, goal_id, routine_id)
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
 
+    # The Scheduler API resumes a Routine through this when an administrator enables one there.
+    agent_os._routine_api_resume = resume_routine
+
     @router.post("/routines/{routine_id}/cancel")
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
