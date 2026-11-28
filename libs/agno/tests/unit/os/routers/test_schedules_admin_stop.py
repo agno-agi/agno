@@ -331,3 +331,27 @@ async def test_an_administrator_by_a_stored_role_finds_and_stops_schedules_under
             assert client.post(path + "/disable", headers=admin).json()["enabled"] is False
             assert client.post(path + "/enable", headers=admin).json()["enabled"] is True
             assert client.delete(path, headers=admin).status_code == 204
+
+
+def test_without_authorization_a_declared_user_still_lists_and_stops_only_their_own_schedules(db):
+    agent_os = AgentOS(
+        id="admin-stop",
+        db=db,
+        agents=[Agent(id="reader", db=db, telemetry=False)],
+        company=CompanyConfig(),
+        telemetry=False,
+        user_isolation=True,
+    )
+    with TestClient(agent_os.get_app()) as client:
+        body = dict(cron_expr="0 2 * * *", endpoint="/agents/reader/runs", payload={"message": "Run"})
+        own = client.post("/schedules", params={"user_id": "sam"}, json={**body, "name": "sam-nightly"}).json()["id"]
+        other = client.post("/schedules", params={"user_id": "lee"}, json={**body, "name": "lee-nightly"}).json()["id"]
+        sam = {"user_id": "sam"}
+
+        assert [row["id"] for row in client.get("/schedules", params=sam).json()["data"]] == [own]
+        assert client.get("/schedules/" + other, params=sam).status_code == 404
+        assert client.post(f"/schedules/{other}/disable", params=sam).status_code == 404
+        assert client.post(f"/schedules/{other}/enable", params=sam).status_code == 404
+        assert client.delete("/schedules/" + other, params=sam).status_code == 404
+        assert db.get_schedule(other)["enabled"] is True
+        assert client.post(f"/schedules/{own}/disable", params=sam).json()["enabled"] is False
