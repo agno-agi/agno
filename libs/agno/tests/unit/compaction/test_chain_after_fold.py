@@ -514,12 +514,14 @@ def test_an_answer_regenerated_as_it_was_before_the_fold_is_not_continued_from(k
 @pytest.mark.parametrize("kind", ["agent", "team"])
 def test_an_answer_regenerated_twice_is_not_continued_from(kind, clock, tmp_path):
     """The second regeneration replaces the first, which holds the message the fold is anchored
-    on. So it is rebuilt without the fold, although the run it was rebuilt from is newer than it."""
+    on. It finds that message among its own, so it is rebuilt from the fold: the summary and then
+    its own question. Its reply is still not continued from, as for any regenerated run."""
     model, owner, first_kept, _ = _compacted(kind, clock, tmp_path)
 
     once = _regenerate(owner, clock, first_kept)
     _regenerate(owner, clock, once)
-    assert not _has_summary(model.requests[-1]) and model.continued[-1][-1] is not None
+    # Sent in full from the summary: it holds no reply to continue from.
+    assert _has_summary(model.requests[-1]) and not any(model.continued[-1])
 
     _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)
 
