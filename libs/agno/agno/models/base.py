@@ -2880,7 +2880,6 @@ class Model(ABC):
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
-                                continue
 
                         if isinstance(item, CustomEvent):
                             function_call_output += str(item)
@@ -3021,7 +3020,6 @@ class Model(ABC):
 
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
-                                    continue
 
                             elif isinstance(item, CustomEvent):
                                 function_call_output += str(item)
