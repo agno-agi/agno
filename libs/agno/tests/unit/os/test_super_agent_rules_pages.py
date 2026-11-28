@@ -15,8 +15,9 @@ NONE = (
     HEADER + "only wiki/brief.md and wiki/status.md, which still hold the text they were created with. "
     "Nobody has written in the wiki yet, so the company has no rules to read."
 )
-# Said after the written pages while both default pages are as created.
-DEFAULTS = " Also wiki/brief.md and wiki/status.md, still the text created with the wiki."
+# Said after the written pages while both default pages are as created. It says they hold no rule, so
+# they are not read for rules with the pages a person wrote.
+DEFAULTS = " Also wiki/brief.md and wiki/status.md, still the text created with the wiki, which holds no rule."
 
 
 def context(authorization=None):
@@ -71,7 +72,9 @@ def test_a_default_page_a_person_changed_is_named(db, mode):
     company.get_wiki()
     company.write_wiki(goal_id=None, path="brief.md", content="# Lumen Desk\n\nNo pushes.\n", expected_version=1)
     # The one still as created is named apart from it.
-    assert read(pages, mode) == HEADER + "wiki/brief.md. Also wiki/status.md, still the text created with the wiki."
+    assert read(pages, mode) == (
+        HEADER + "wiki/brief.md. Also wiki/status.md, still the text created with the wiki, which holds no rule."
+    )
     company.write_wiki(goal_id=None, path="status.md", content="# Status\n\nShipping 3.3.\n", expected_version=1)
     assert read(pages, mode) == HEADER + "wiki/brief.md, wiki/status.md."
 

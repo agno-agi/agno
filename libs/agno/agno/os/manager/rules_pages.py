@@ -55,7 +55,8 @@ def _note(metas: List[Any]) -> str:
     # A page's name is text a person chose: it is kept on one line and cannot start a new one.
     names = ["wiki/" + " ".join(path.split())[:_NAME_LENGTH] for path in paths[:_NAMED]]
     more = f", and {len(paths) - _NAMED} more: list wiki/ to see them" if len(paths) > _NAMED else ""
-    also = f" Also {unchanged}, still the text created with the wiki." if unchanged else ""
+    # Said to hold no rule: named without that, they were read for rules along with the written pages.
+    also = f" Also {unchanged}, still the text created with the wiki, which holds no rule." if unchanged else ""
     return f"{_HEADER} {_FROM}: {', '.join(names)}{more}.{also}"
 
 
