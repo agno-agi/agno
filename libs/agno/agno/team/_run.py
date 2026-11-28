@@ -5028,19 +5028,41 @@ def _stores_run_in_flight(team: "Team", run_response: TeamRunOutput) -> bool:
     return team._store_run_in_flight and not (run_response.run_id and is_worker_managed(run_response.run_id))
 
 
-def _before_in_flight_write(session: TeamSession, run_response: TeamRunOutput) -> Tuple[List[Optional[str]], Any]:
-    return [run.run_id for run in session.runs or []], run_response.session_state
+# What a run adds to its session state for its tools to read. Saving a session removes them from it.
+_RUN_IDS_IN_STATE = ("current_session_id", "current_user_id", "current_run_id")
 
 
-def _after_in_flight_write(session: TeamSession, run_response: TeamRunOutput, before: Tuple[Any, Any]) -> None:
-    """Leave the run and the session held in memory as they were before the write.
+def _state_a_write_saves(session: TeamSession, run_context: Optional[RunContext]) -> Any:
+    """The session state dictionary a write of the run saves, and takes the run's ids out of."""
+    if run_context is not None and run_context.session_state is not None:
+        return run_context.session_state
+    return (session.session_data or {}).get("session_state")
+
+
+def _before_in_flight_write(
+    session: TeamSession, run_response: TeamRunOutput, run_context: Optional[RunContext] = None
+) -> Tuple[List[Optional[str]], Any, Any, Dict[str, Any]]:
+    live = _state_a_write_saves(session, run_context)
+    ids = {key: live[key] for key in _RUN_IDS_IN_STATE if key in live} if isinstance(live, dict) else {}
+    return [run.run_id for run in session.runs or []], run_response.session_state, live, ids
+
+
+def _after_in_flight_write(
+    session: TeamSession, run_response: TeamRunOutput, before: Tuple[List[Optional[str]], Any, Any, Dict[str, Any]]
+) -> None:
+    """Leave the run, the session and the session state held in memory as they were before the write.
 
     History is read from that session by a count of runs, so a run that has not ended must not take
     a place in it. The write also copies the session state onto the run, which the write at the end
     of a run does not always do. Undoing both keeps what a run that ends is sent and stores.
+
+    Saving the session takes the run's own ids out of the session state, which is the dictionary
+    the run's tools read. The run goes on, so they are put back. The stored state does not hold them.
     """
-    held, state = before
+    held, state, live, ids = before
     run_response.session_state = state
+    if isinstance(live, dict):
+        live.update(ids)
     if run_response.run_id not in held and session.runs:
         session.runs = [run for run in session.runs if run.run_id != run_response.run_id]
 
@@ -5060,7 +5082,7 @@ def store_team_run_in_flight(
     """
     if not _stores_run_in_flight(team, run_response):
         return
-    before = _before_in_flight_write(session, run_response)
+    before = _before_in_flight_write(session, run_response, run_context)
     try:
         _persist_team_run_in_session(team, run_response, session, run_context)
     except Exception as e:
@@ -5078,7 +5100,7 @@ async def astore_team_run_in_flight(
     """Async variant of :func:`store_team_run_in_flight`."""
     if not _stores_run_in_flight(team, run_response):
         return
-    before = _before_in_flight_write(session, run_response)
+    before = _before_in_flight_write(session, run_response, run_context)
     try:
         await _apersist_team_run_in_session(team, run_response, session, run_context)
     except Exception as e:

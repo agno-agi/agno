@@ -9,6 +9,7 @@ import pytest
 from agno.db.base import SessionType
 from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
 from agno.db.sqlite import SqliteDb
+from agno.os import AgentOS, OSManager
 from agno.os.manager.finished_work import FINISHED_WORK_LABEL
 from agno.os.manager.interrupted_turn import INTERRUPTED_REPLY, InterruptedTurns, _cut_turns
 from agno.os.manager.linked_work import LINKED_WORK_KEY
@@ -212,6 +213,32 @@ def test_the_run_that_has_not_ended_takes_no_place_in_the_history_window(chat, m
     assert "First message" in history
 
 
+@pytest.mark.parametrize("mode", MODES)
+def test_a_tool_still_reads_the_ids_of_its_run_in_the_session_state(tmp_path, mode):
+    # Saving a session takes the run's ids out of the session state, and the early write saves it
+    # while the run's tools still have to read them.
+    seen = {}
+
+    def whoami(run_context: RunContext) -> str:
+        """Say who is asking."""
+        seen.update({key: value for key, value in run_context.session_state.items() if key.startswith("current_")})
+        return "ok"
+
+    db = SqliteDb(db_file=str(tmp_path / "ids.db"))
+    try:
+        agent_os = AgentOS(db=db, manager=OSManager(model=Scripted(), tools=[whoami]), telemetry=False)
+        agent_os.get_app()
+        assert agent_os.manager._store_run_in_flight
+        agent_os.manager.model = Scripted([("whoami", {})])
+        turn(agent_os.manager, "Who am I?", mode)
+        (run,) = [run for run in db.get_session(session_id="chat", session_type=SessionType.TEAM).runs]
+        assert seen == {"current_user_id": "alice", "current_session_id": "chat", "current_run_id": run.run_id}
+        # They are the run's own, and are not stored with the conversation.
+        assert not set(seen) & set(agent_os.manager.get_session_state(session_id="chat"))
+    finally:
+        db.close()
+
+
 # ----------------------------------------------------------------- the next turn
 
 
@@ -344,6 +371,23 @@ def test_a_registered_run_is_read_as_executing(chat, mode):  # noqa: F811
     finally:
         cleanup_run(run.run_id)
     assert stored(chat)[0].status == RunStatus.running
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_a_turn_that_ended_after_the_conversation_was_loaded_keeps_its_reply(chat, mode):  # noqa: F811
+    # A second message loads the conversation while the first turn is executing, and looks for cut
+    # turns after the first one ended: it holds the turn as running, and nothing executes it.
+    cut(chat, "First message", mode)
+    loaded = chat.db.get_session(session_id="chat", session_type=SessionType.TEAM)
+    (ended,) = stored(chat)
+    ended.status, ended.content = RunStatus.completed, "The answer"
+    chat.db.upsert_run(run=ended, session_id="chat", user_id="alice", run_index=0)
+    turns = InterruptedTurns(lambda: chat.os.manager)
+    second = RunContext(run_id="second", session_id="chat", user_id="alice")
+    note = turns.read(second, loaded) if mode == "sync" else asyncio.run(turns.aread(second, loaded))
+    assert note is None
+    (run,) = stored(chat)
+    assert (run.status, run.content) == (RunStatus.completed, "The answer")
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])

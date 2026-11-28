@@ -10,6 +10,7 @@ never run again here: it may have started work.
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional, Set, Tuple
 
+from agno.db.base import AsyncBaseDb
 from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
 from agno.os.manager.linked_work import _entries
 from agno.run.authorization import in_finished_work_report
@@ -147,6 +148,21 @@ class InterruptedTurns:
         run.status = RunStatus.error
         run.content = INTERRUPTED_REPLY
 
+    @staticmethod
+    def _ended_meanwhile(row: Any) -> bool:
+        """Whether the stored run has ended since this turn loaded the conversation.
+
+        A turn loads the conversation when it starts and looks for cut turns later. A turn that was
+        executing at the load and ended in between is held here as running and nothing executes it.
+        It was not cut, and storing it as failed would replace its reply. A turn stores its end
+        before it leaves the list of executing runs, so the row is read after that list.
+        A database that keeps no row for the run says nothing, and the run is taken as it is held.
+        """
+        if not isinstance(row, dict):
+            return False
+        status = row.get("status")
+        return str(getattr(status, "value", status) or "").upper() != "RUNNING"
+
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
             from agno.run.cancel import get_active_runs
@@ -154,8 +170,14 @@ class InterruptedTurns:
             from agno.team._session import save_run
 
             found = self._find(run_context, session, set(get_active_runs()))
+            db = getattr(self.team(), "db", None)
+            cut = []
             for run, running in found:
                 if running:
+                    # A synchronous run cannot read an asynchronous database, nor write to it below.
+                    if db is not None and not isinstance(db, AsyncBaseDb):
+                        if self._ended_meanwhile(db.get_run(run.run_id, deserialize=False)):
+                            continue
                     self._end(run)
                     try:
                         index = resolve_run_index(session, run)
@@ -163,7 +185,8 @@ class InterruptedTurns:
                     except Exception as exc:
                         # A synchronous run cannot write to an asynchronous database. The note is still given.
                         log_warning(f"Could not store run {run.run_id} as cut by a restart: {exc}")
-            return _note(run_context, [run for run, _ in found])
+                cut.append(run)
+            return _note(run_context, cut)
         except Exception as exc:
             log_warning(f"Could not read the turns a restart cut in this conversation: {exc}")
             return None
@@ -175,15 +198,24 @@ class InterruptedTurns:
             from agno.team._session import asave_run
 
             found = self._find(run_context, session, set(await aget_active_runs()))
+            db = getattr(self.team(), "db", None)
+            cut = []
             for run, running in found:
                 if running:
+                    if isinstance(db, AsyncBaseDb):
+                        row = await db.get_run(run.run_id, deserialize=False)
+                    else:
+                        row = db.get_run(run.run_id, deserialize=False) if db is not None else None
+                    if self._ended_meanwhile(row):
+                        continue
                     self._end(run)
                     try:
                         index = resolve_run_index(session, run)
                         await asave_run(self.team(), run, session.session_id, session.user_id, index)
                     except Exception as exc:
                         log_warning(f"Could not store run {run.run_id} as cut by a restart: {exc}")
-            return _note(run_context, [run for run, _ in found])
+                cut.append(run)
+            return _note(run_context, cut)
         except Exception as exc:
             log_warning(f"Could not read the turns a restart cut in this conversation: {exc}")
             return None
