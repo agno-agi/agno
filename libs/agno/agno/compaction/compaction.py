@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import time
 from typing import TYPE_CHECKING, Any, Callable, Collection, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
-from agno.compaction._cut import choose_boundary, is_offload_envelope
+from agno.compaction._cut import choose_boundary, is_offload_envelope, leading_system_count
 from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens, is_async_callable
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
@@ -20,6 +21,7 @@ from agno.compaction.prompts import (
     SUMMARY_CUT_NOTE_SEARCHABLE,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
+from agno.exceptions import ContextWindowExceededError, ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -34,8 +36,9 @@ if TYPE_CHECKING:
 DEFAULT_TOKENIZER_MODEL_ID = "gpt-5.4"
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
-# overflow. Trim what the summarizer reads, oldest first, to this budget - about
-# 100k tokens, so a fold at the default compact_at_tokens fits in one call.
+# overflow, so one summarizer call reads at most this many characters - about
+# 100k tokens. A larger fold is read in parts, oldest first. A text-heavy fold at
+# the default compact_at_tokens is larger than this, so it takes more than one call.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 400_000
 
 # Bounds on what one archive search can return. The result lands in the context window, so an
@@ -625,6 +628,45 @@ class Compaction:
         )
         return fitted
 
+    def _summary_parts(self, messages: List[Message]) -> List[List[Message]]:
+        """The messages to fold, split oldest first into parts one summarizer call can read.
+
+        A fold larger than the summarizer's budget used to be read from its newest end only, so
+        the older part left the context without reaching any summary. Each part is summarized in
+        turn with the summary so far carried into the next, so every folded message is read once.
+        A single message larger than the budget is a part of its own.
+        """
+        parts: List[List[Message]] = []
+        size = 0
+        for message in messages:
+            length = len(render_message(message)) + 2  # + the block separator
+            if not parts or size + length > DEFAULT_SUMMARIZE_CHAR_BUDGET:
+                parts.append([])
+                size = 0
+            parts[-1].append(message)
+            size += length
+        return parts
+
+    @staticmethod
+    def _split_rejected_part(parts: List[List[Message]], index: int, error: Exception) -> bool:
+        """Split in two, in place, a part the summarizer rejected as too long. False when that cannot help.
+
+        A part is sized in characters and the summarizer's limit is in tokens. Text that is dense
+        in tokens - ids, hashes, some languages - can fit the character budget and still be more
+        than the summarizer reads. Giving up would leave a fold that fails the same way on every
+        run, so the part is halved and read again. A single message cannot be split, and any
+        other error is not about size.
+        """
+        if isinstance(error, ModelProviderError):
+            error = ModelProviderError.classify(error)
+        part = parts[index]
+        if len(part) < 2 or not isinstance(error, ContextWindowExceededError):
+            return False
+        middle = len(part) // 2
+        parts[index : index + 1] = [part[:middle], part[middle:]]
+        log_info(f"Compaction: the summarizer rejected {len(part)} messages as too long, so they are read in two parts")
+        return True
+
     def _summarize(
         self,
         messages: List[Message],
@@ -637,12 +679,33 @@ class Compaction:
             log_warning("No compaction model available")
             return None
         try:
-            response = model.response(messages=self._summary_messages(messages, previous, archived))
+            # Splitting renders every message, and a message that cannot be rendered must leave
+            # the history as it is, the same as a summarizer call that fails.
+            parts = self._summary_parts(messages)
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
-        self._accumulate(response, run_metrics)
-        return response.content
+        if len(parts) > 1:
+            log_info(
+                f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
+            )
+        summary = previous
+        index = 0
+        while index < len(parts):
+            try:
+                response = model.response(messages=self._summary_messages(parts[index], summary, archived))
+            except Exception as e:
+                if self._split_rejected_part(parts, index, e):
+                    continue
+                log_error(f"Error compacting conversation: {e}")
+                return None
+            self._accumulate(response, run_metrics)
+            if not response.content:
+                # A part with no summary would drop what it held: leave the history as it is.
+                return None
+            summary = response.content
+            index += 1
+        return summary if parts else None
 
     async def _asummarize(
         self,
@@ -656,12 +719,33 @@ class Compaction:
             log_warning("No compaction model available")
             return None
         try:
-            response = await model.aresponse(messages=self._summary_messages(messages, previous, archived))
+            # Splitting renders every message, and a message that cannot be rendered must leave
+            # the history as it is, the same as a summarizer call that fails.
+            parts = self._summary_parts(messages)
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
-        self._accumulate(response, run_metrics)
-        return response.content
+        if len(parts) > 1:
+            log_info(
+                f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
+            )
+        summary = previous
+        index = 0
+        while index < len(parts):
+            try:
+                response = await model.aresponse(messages=self._summary_messages(parts[index], summary, archived))
+            except Exception as e:
+                if self._split_rejected_part(parts, index, e):
+                    continue
+                log_error(f"Error compacting conversation: {e}")
+                return None
+            self._accumulate(response, run_metrics)
+            if not response.content:
+                # A part with no summary would drop what it held: leave the history as it is.
+                return None
+            summary = response.content
+            index += 1
+        return summary if parts else None
 
     def _summary_model(self) -> Optional[Model]:
         # __post_init__ resolved any string, so this is a Model or None.
@@ -756,10 +840,11 @@ class Compaction:
         messages_compacted: int,
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
+        started_at: Optional[int] = None,
     ) -> CompactionRecord:
         from uuid import uuid4
 
-        return CompactionRecord(
+        record = CompactionRecord(
             id=uuid4().hex,
             run_id=run_id,
             messages_compacted=messages_compacted,
@@ -767,6 +852,12 @@ class Compaction:
             first_kept_message_id=first_kept_message_id,
             tokens_before=tokens_before,
         )
+        if started_at is not None:
+            # Stamped with when the fold started, before the summary was written: every reply
+            # already in the conversation is then older than the record, and the first reply made
+            # from the fold is newer. The view tells the two apart by this.
+            record.created_at = started_at
+        return record
 
     def measure(self, record: CompactionRecord, before: List[Message], after: List[Message]) -> None:
         """Record what this fold cost and saved.
@@ -830,6 +921,17 @@ class Compaction:
             if message.id == previous.first_kept_message_id:
                 return index
         return 0
+
+    @staticmethod
+    def _span_to_fold(messages: List[Message], already: int, boundary: int) -> List[Message]:
+        """The messages this fold summarizes and archives: from the previous cut to the new one.
+
+        Never the leading system messages. The list folded after a refused request is the one the
+        model call holds, which has them in front, and every view keeps them as they are in front
+        of the summary. Folded, the instructions would be summarized as if they were conversation
+        and stored where a search finds them.
+        """
+        return messages[max(already, leading_system_count(messages)) : boundary]
 
     def _worth_compacting(self, to_compact: List[Message], kept: List[Message]) -> bool:
         """Whether folding this span can pay for the summary that replaces it.
@@ -956,8 +1058,11 @@ class Compaction:
             return None
 
         already = self._resolved_boundary(messages, previous)
-        to_compact = messages[already:boundary]
+        to_compact = self._span_to_fold(messages, already, boundary)
+        if not to_compact:
+            return None
         archive = self.archive_for(session_id, db, user_id)
+        started_at = int(time())
 
         summary = self._summarize(
             to_compact,
@@ -970,7 +1075,13 @@ class Compaction:
         summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
-            messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
+            messages,
+            summary,
+            messages[boundary].id,
+            len(to_compact),
+            tokens_before,
+            run_id=run_id,
+            started_at=started_at,
         )
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
@@ -1016,8 +1127,11 @@ class Compaction:
             return None
 
         already = self._resolved_boundary(messages, previous)
-        to_compact = messages[already:boundary]
+        to_compact = self._span_to_fold(messages, already, boundary)
+        if not to_compact:
+            return None
         archive = self.archive_for(session_id, db, user_id)
+        started_at = int(time())
 
         summary = await self._asummarize(
             to_compact,
@@ -1030,7 +1144,13 @@ class Compaction:
         summary = self._fit_to_budget(summary, searchable=bool(self.search_compacted_messages and archive is not None))
 
         record = self.build_record(
-            messages, summary, messages[boundary].id, len(to_compact), tokens_before, run_id=run_id
+            messages,
+            summary,
+            messages[boundary].id,
+            len(to_compact),
+            tokens_before,
+            run_id=run_id,
+            started_at=started_at,
         )
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
