@@ -464,8 +464,14 @@ class AgentCoreSandbox(Sandbox):
                     await self._stop(handle.provider_ref)
                 raise SandboxError("AgentCore computer refused the command: " + err.strip()[-500:])
         try:
-            if code or timed_out:
-                raise ValueError(err[-500:] or "command transport timed out")
+            if code != 0 or timed_out:
+                if timed_out:
+                    reason = "command transport timed out"
+                elif code is None:
+                    reason = "AgentCore did not provide an exit code"
+                else:
+                    reason = f"command transport ended with exit code {code} and left no message"
+                raise ValueError(err[-500:] or reason)
             result = ExecResult(**json.loads(out))
         except (TypeError, ValueError) as error:
             await self.astop(handle)
@@ -474,7 +480,7 @@ class AgentCoreSandbox(Sandbox):
             await self.astop(handle)
         return result
 
-    def _command(self, provider_ref: str, command: str, timeout: float) -> tuple:
+    def _command(self, provider_ref: str, command: str, timeout: float) -> tuple[Optional[int], str, str, bool]:
         response = self._call(
             self._commands.invoke_agent_runtime_command,
             agentRuntimeArn=self.runtime_arn,
@@ -494,7 +500,8 @@ class AgentCoreSandbox(Sandbox):
                 stop = chunk["contentStop"]
         if stop is None:
             raise SandboxError("AgentCore command stream ended without an exit status")
-        return int(stop.get("exitCode", -1)), "".join(stdout), "".join(stderr), stop.get("status") == "TIMED_OUT"
+        code = int(stop["exitCode"]) if "exitCode" in stop else None
+        return code, "".join(stdout), "".join(stderr), stop.get("status") == "TIMED_OUT"
 
     def _record_stop(self, provider_ref: str) -> None:
         now = time.monotonic()

@@ -520,12 +520,18 @@ async def test_automatic_disable_leaves_routine_updated_at(system, clock, cause,
         await _call(db, "update_schedule", routine["id"], endpoint="/agents/other/runs")
     elif cause == "invalid_cron":
         await _call(db, "update_schedule", routine["id"], cron_expr="not a cron")
-    else:
-        goal_id = (await _call(db, "get_schedule", routine["id"]))["payload"]["metadata"]["goal_id"]
-        assert (await client.delete("/company/goals/" + goal_id)).status_code == 204
     claimed = await claim_routine(db, routine["id"])
     edited = await stored_updated_at(db, routine["id"])
     clock[0] += 1000
+    if cause == "archived_goal":
+        # The Goal is deleted while the scheduler holds the Routine. The delete pauses it at once,
+        # and the run that was already claimed is refused by the scheduler's own check.
+        goal_id = claimed["payload"]["metadata"]["goal_id"]
+        assert (await client.delete("/company/goals/" + goal_id)).status_code == 204
+        paused = await _call(db, "get_schedule", routine["id"])
+        assert paused["enabled"] is False and paused["disabled_reason"] == reason
+        assert paused["updated_at"] == edited
+        clock[0] += 1000
     await (await company_executor(system)).execute(claimed, db)
     saved = await _call(db, "get_schedule", routine["id"])
     assert saved["enabled"] is False and saved["disabled_reason"] == reason

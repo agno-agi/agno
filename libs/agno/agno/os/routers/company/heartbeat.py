@@ -79,6 +79,15 @@ class RoutinePayload(BaseModel):
 class RoutineResponse(ScheduleResponse):
     payload: RoutinePayload  # type: ignore[assignment]
     schedule_type: Literal["scheduled", "on_demand"]
+    routine_name: str = Field(description="The Routine's own name, without its Goal's ID in front.")
+    goal_id: Optional[str] = None
+    goal_name: Optional[str] = None
+    goal_status: Literal["active", "archived", "missing"] = Field(
+        description=(
+            "archived: the Goal was deleted and can be restored. missing: no Goal is stored for this Routine. "
+            "A Routine of a Goal that is not active does not run. It can be paused, archived and deleted."
+        )
+    )
     last_run: Optional[RoutineLastRun] = None
     deleted_at: Optional[int] = None
     auto_accept_note: Optional[str] = Field(
@@ -161,7 +170,24 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(404, "Goal not found")
         return row
 
-    async def routine(routine_id, request, include_deleted=False):
+    async def active_goal(row):
+        """The Routine's Goal, for the routes that run or change a Routine."""
+        goal_id = row["payload"]["metadata"]["goal_id"]
+        stored = await goal(goal_id, include_deleted=True)
+        if stored.get("deleted_at") is not None:
+            raise HTTPException(
+                404,
+                f"The Routine's Goal is archived. Restore it with POST /company/goals/{goal_id}/restore, "
+                "or pause or delete the Routine.",
+            )
+        return stored
+
+    def stored_metadata(row):
+        return (row.get("payload") or {}).get("metadata") or {}
+
+    async def routine(routine_id, request, include_deleted=False, needs_goal=True):
+        """Read a Routine. needs_goal is False for the routes that read, stop or remove a Routine:
+        those serve a Routine that names no Goal as well."""
         from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 
         if routine_id == COMPANY_AUTOMATION_SCHEDULE_ID:
@@ -170,11 +196,13 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         if row.get("managed_by") != "company":
             raise HTTPException(404, "Routine not found")
         _require_migrated_routine(routine_id, row.get("payload"), schedule_db.schedules_table_name)
-        if not (row.get("payload") or {}).get("metadata", {}).get("goal_id"):
-            raise HTTPException(409, "Routine is missing its Goal metadata")
-        if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
+        metadata = stored_metadata(row)
+        if needs_goal and not metadata.get("goal_id"):
+            raise HTTPException(409, "Routine is missing its Goal metadata. It can be paused or deleted.")
+        if not include_deleted and metadata.get("deleted_at") is not None:
             raise HTTPException(404, "Routine not found")
-        return row
+        # Every Routine has a payload with metadata from here on, whatever was stored.
+        return {**row, "payload": {**(row.get("payload") or {}), "metadata": metadata}}
 
     def outlived(run, row, request):
         from agno.scheduler.executor import run_deadline
@@ -199,6 +227,20 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if page * 100 >= total:
                 return runs
             page += 1
+
+    async def live_runs(routine_id, request):
+        """The running runs the cancel route can stop. The Scheduler API refuses to delete a Routine over these."""
+        try:
+            row = await routine(routine_id, request, include_deleted=True)
+            await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
+        except HTTPException as exc:
+            if exc.status_code not in (404, 409):
+                raise
+            # A schedule with no Goal behind it is out of the cancel route's reach, so nothing holds its delete back.
+            return []
+        return await running_runs(row, request)
+
+    agent_os._routine_api_live_runs = live_runs
 
     def schedule_type(row):
         return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
@@ -246,20 +288,38 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
     async def routine_responses(rows):
         latest = await call(schedule_db.get_latest_schedule_runs, [row["id"] for row in rows])
-        policies = [await returned_policy(row["payload"]["metadata"].get("auto_accept")) for row in rows]
+        policies = [await returned_policy(stored_metadata(row).get("auto_accept")) for row in rows]
         rows = [
-            {**row, "payload": {**row["payload"], "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}}
-            for row, policy in zip(rows, policies)
-        ]
-        return [
             {
                 **row,
-                "schedule_type": schedule_type(row),
-                "last_run": latest.get(row["id"]),
-                "deleted_at": (row.get("payload") or {}).get("metadata", {}).get("deleted_at"),
+                "payload": {**(row.get("payload") or {}), "metadata": {**stored_metadata(row), "auto_accept": policy}},
             }
-            for row in rows
+            for row, policy in zip(rows, policies)
         ]
+        goals: Dict[str, Any] = {}
+        for goal_id in {row["payload"]["metadata"].get("goal_id") for row in rows} - {None}:
+            goals[goal_id] = await call(manager.get, goal_id, include_deleted=True)
+        responses = []
+        for row in rows:
+            goal_id = row["payload"]["metadata"].get("goal_id")
+            stored_goal = goals.get(goal_id)
+            responses.append(
+                {
+                    **row,
+                    "schedule_type": schedule_type(row),
+                    "last_run": latest.get(row["id"]),
+                    "deleted_at": row["payload"]["metadata"].get("deleted_at"),
+                    "routine_name": row["name"].removeprefix(goal_id + ".") if goal_id else row["name"],
+                    "goal_id": goal_id,
+                    "goal_name": stored_goal["name"] if stored_goal else None,
+                    "goal_status": "missing"
+                    if stored_goal is None
+                    else "archived"
+                    if stored_goal.get("deleted_at") is not None
+                    else "active",
+                }
+            )
+        return responses
 
     async def routine_response(row):
         return (await routine_responses([row]))[0]
@@ -327,13 +387,16 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if row.managed_by == "company":
                 # A Routine that is not migrated would be left out of the list without a word.
                 _require_migrated_routine(row.id, row.payload, schedule_db.schedules_table_name)
+        from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+
+        # A Routine that names no Goal is listed with the rest, so it can be found and removed.
         selected = [
             row.to_dict()
             for row in rows
             if row.managed_by == "company"
-            and (row.payload or {}).get("metadata", {}).get("goal_id")
-            and (goal_id is None or (row.payload or {}).get("metadata", {}).get("goal_id") == goal_id)
-            and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
+            and row.id != COMPANY_AUTOMATION_SCHEDULE_ID
+            and (goal_id is None or stored_metadata(row.to_dict()).get("goal_id") == goal_id)
+            and (include_deleted or stored_metadata(row.to_dict()).get("deleted_at") is None)
         ]
         selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
@@ -341,7 +404,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
     @router.get("/routines/{routine_id}", response_model=RoutineResponse)
     async def get_routine(routine_id: str, request: Request, include_deleted: bool = False, _: bool = Depends(auth)):
-        return await routine_response(await routine(routine_id, request, include_deleted=include_deleted))
+        return await routine_response(
+            await routine(routine_id, request, include_deleted=include_deleted, needs_goal=False)
+        )
 
     @router.post("/routines/{routine_id}/trigger", response_model=ScheduleRunResponse)
     async def trigger_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
@@ -367,7 +432,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             grantor = grant.get("user_id")
             if getattr(request.state, "user_id", None) != grantor:
                 raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
-        await goal(row["payload"]["metadata"]["goal_id"])
+        await active_goal(row)
         if not row["enabled"]:
             raise HTTPException(409, "Routine is paused")
         return await call(handlers["trigger_schedule"], routine_id, request)
@@ -414,7 +479,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await goal(row["payload"]["metadata"]["goal_id"])
+        await active_goal(row)
         updates: Dict[str, Any] = body.model_dump(exclude_unset=True)
         if any(value is None for key, value in updates.items() if key != "cron_expr"):
             raise HTTPException(422, "Routine fields cannot be null")
@@ -489,8 +554,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
-        row = await routine(routine_id, request)
-        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
+        row = await routine(routine_id, request, needs_goal=False)
         if is_on_demand(row["cron_expr"]):
             raise HTTPException(409, "On-demand Routines cannot be paused")
         return await routine_response(await call(handlers["disable_schedule"], routine_id, request))
@@ -499,7 +563,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     async def resume_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
         goal_id = row["payload"]["metadata"]["goal_id"]
-        await goal(goal_id)
+        await active_goal(row)
         # A disabled on-demand routine still resumes: that is its only checked way back to usable.
         if is_on_demand(row["cron_expr"]) and row["enabled"]:
             raise HTTPException(409, "On-demand Routine is already enabled")
@@ -512,10 +576,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(db.add_goal_routine, goal_id, routine_id)
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
 
+    # The Scheduler API resumes a Routine through this when an administrator enables one there.
+    agent_os._routine_api_resume = resume_routine
+
     @router.post("/routines/{routine_id}/cancel")
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
-        row = await routine(routine_id, request)
-        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
+        row = await routine(routine_id, request, needs_goal=False)
         runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
         if not runs:
             raise HTTPException(409, "Routine has no running run")
@@ -560,8 +626,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
     @router.post("/routines/{routine_id}/archive", response_model=RoutineResponse)
     async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
-        row = await routine(routine_id, request)
-        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
+        row = await routine(routine_id, request, needs_goal=False)
         if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
@@ -569,27 +634,28 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
-        # An archived Routine leaves the Goal's routine_ids, so Goal Routine counts skip it.
-        await call(manager._unlink_routine, metadata["goal_id"], routine_id)
-        return await routine_response(await routine(routine_id, request, include_deleted=True))
+        if metadata.get("goal_id"):
+            # An archived Routine leaves the Goal's routine_ids, so Goal Routine counts skip it.
+            await call(manager._unlink_routine, metadata["goal_id"], routine_id)
+        return await routine_response(await routine(routine_id, request, include_deleted=True, needs_goal=False))
 
     @router.delete("/routines/{routine_id}", status_code=204)
     async def delete_routine(routine_id: str, request: Request, _: bool = Depends(auth)) -> None:
-        row = await routine(routine_id, request, include_deleted=True)
-        goal_id = row["payload"]["metadata"]["goal_id"]
-        await goal(goal_id, include_deleted=True)
+        row = await routine(routine_id, request, include_deleted=True, needs_goal=False)
+        goal_id = row["payload"]["metadata"].get("goal_id")
         if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
             )
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
-        await call(manager._unlink_routine, goal_id, routine_id)
+        if goal_id:
+            await call(manager._unlink_routine, goal_id, routine_id)
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request, include_deleted=True)
-        await goal(row["payload"]["metadata"]["goal_id"])
+        await active_goal(row)
         metadata = dict(row["payload"]["metadata"])
         if metadata.pop("deleted_at", None) is None:
             raise HTTPException(409, "Routine is not archived")
@@ -608,7 +674,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):
-        await routine(routine_id, request)
+        await routine(routine_id, request, needs_goal=False)
         return await call(handlers["list_schedule_runs"], routine_id, request, limit=limit, page=page)
 
     @router.post("/setup", status_code=201)

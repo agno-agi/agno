@@ -14,6 +14,7 @@ from agno.db.schemas.projects import (
     refuse_default_project,
 )
 from agno.db.utils import is_unique_violation
+from agno.utils.log import log_error
 
 
 def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
@@ -27,6 +28,20 @@ def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[
 def _same_text(sent: Optional[str], stored: Optional[str]) -> bool:
     """Whether two texts have the same words. No text and empty text are the same, and spacing is not compared."""
     return (sent or "").split() == (stored or "").split()
+
+
+# Why a Routine's schedule is off when its Goal is archived. The scheduler writes the same reason
+# when such a Routine comes due.
+GOAL_ARCHIVED_REASON = "company_goal_archived"
+
+
+def _is_goal_routine(schedule: Any, goal_id: str) -> bool:
+    """Whether a schedule is a Routine of this Goal that runs on a cron."""
+    return (
+        schedule.managed_by == "company"
+        and ((schedule.payload or {}).get("metadata") or {}).get("goal_id") == goal_id
+        and schedule.cron_expr != ""
+    )
 
 
 def _routine_provenance(endpoint: str) -> Dict[str, Any]:
@@ -368,11 +383,40 @@ class CompanyManager:
         return self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
 
     def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
-        return self.db.delete_goal(goal_id, user_id=user_id)
+        """Archive a Goal and its children atomically, then pause its Routines; active Tasks raise ValueError."""
+        archived = self.db.delete_goal(goal_id, user_id=user_id)
+        if archived:
+            self._pause_goal_routines(goal_id)
+        return archived
+
+    def _pause_goal_routines(self, goal_id: str) -> None:
+        """Pause every scheduled Routine of an archived Goal, with the reason the scheduler gives.
+
+        A failure is logged and the Goal stays archived: the scheduler pauses such a Routine itself
+        when it comes due. The pause is not an edit, so the Routine keeps its updated_at.
+        """
+        from agno.scheduler import ScheduleManager
+        from agno.scheduler.executor import _preserve_updated_at
+
+        try:
+            schedules = ScheduleManager(self.schedule_db)
+            for schedule in schedules.list_all(enabled=True, raise_on_error=False):
+                if _is_goal_routine(schedule, goal_id):
+                    schedules._call(
+                        "update_schedule",
+                        schedule.id,
+                        enabled=False,
+                        disabled_reason=GOAL_ARCHIVED_REASON,
+                        **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
+                    )
+        except Exception as exc:
+            log_error(f"Routines of archived Goal {goal_id} were not paused: {type(exc).__name__}: {exc}")
 
     def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Goal and only children archived by it; return None if already active."""
+        """Restore a Goal and only children archived by it; return None if already active.
+
+        Its Routines stay paused. A person resumes each one.
+        """
         return self.db.restore_goal(goal_id, user_id=user_id)
 
     def create_project(
@@ -690,6 +734,7 @@ class CompanyManager:
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title and the Project change, the rest requires a
@@ -697,13 +742,15 @@ class CompanyManager:
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
-        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
-        on its history.
+        Goal takes the Goal of the Project it moves into, or goal_id when it moves into or stays in
+        the Default Project. An accepted Task moves while it is Ready, In review or Done, into an
+        active Project, and only a person moves it: moved_by is recorded on its history.
         """
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
+        if goal_id is not None and "project_id" not in fields:
+            raise ValueError("A Task is filed under a Goal together with its Project")
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
@@ -731,6 +778,17 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if goal_id is not None and goal_id != (existing["goal_id"] or project["goal_id"]):
+                if existing["goal_id"] is not None:
+                    raise ValueError("A Task keeps its Goal")
+                # Refused for a Project of another Goal, as for a Task that already had this one.
+                _task_goal(goal_id, project)
+                if self.db.get_goal(goal_id) is None:
+                    raise LookupError("Goal not found")
+                # The Default Project has no Goal: the Task takes the one named, which storage
+                # is given by name beside the fields.
+                project = {**project, "goal_id": goal_id}
+                fields["goal_id"] = goal_id
             if _require_goal_consent(existing, project, moved_by) and expected_status is None:
                 # An acceptance that lands after this check is not carried into the Goal unseen.
                 expected_status = existing["status"]
@@ -1495,11 +1553,40 @@ class AsyncCompanyManager:
         return await self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
 
     async def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
-        return await self.db.delete_goal(goal_id, user_id=user_id)
+        """Archive a Goal and its children atomically, then pause its Routines; active Tasks raise ValueError."""
+        archived = await self.db.delete_goal(goal_id, user_id=user_id)
+        if archived:
+            await self._pause_goal_routines(goal_id)
+        return archived
+
+    async def _pause_goal_routines(self, goal_id: str) -> None:
+        """Pause every scheduled Routine of an archived Goal, with the reason the scheduler gives.
+
+        A failure is logged and the Goal stays archived: the scheduler pauses such a Routine itself
+        when it comes due. The pause is not an edit, so the Routine keeps its updated_at.
+        """
+        from agno.scheduler import ScheduleManager
+        from agno.scheduler.executor import _preserve_updated_at
+
+        try:
+            schedules = ScheduleManager(self.schedule_db)
+            for schedule in await schedules.alist_all(enabled=True, raise_on_error=False):
+                if _is_goal_routine(schedule, goal_id):
+                    await schedules._acall(
+                        "update_schedule",
+                        schedule.id,
+                        enabled=False,
+                        disabled_reason=GOAL_ARCHIVED_REASON,
+                        **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
+                    )
+        except Exception as exc:
+            log_error(f"Routines of archived Goal {goal_id} were not paused: {type(exc).__name__}: {exc}")
 
     async def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Goal and only children archived by it; return None if already active."""
+        """Restore a Goal and only children archived by it; return None if already active.
+
+        Its Routines stay paused. A person resumes each one.
+        """
         return await self.db.restore_goal(goal_id, user_id=user_id)
 
     async def create_project(
@@ -1817,6 +1904,7 @@ class AsyncCompanyManager:
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title and the Project change, the rest requires a
@@ -1824,13 +1912,15 @@ class AsyncCompanyManager:
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
-        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
-        on its history.
+        Goal takes the Goal of the Project it moves into, or goal_id when it moves into or stays in
+        the Default Project. An accepted Task moves while it is Ready, In review or Done, into an
+        active Project, and only a person moves it: moved_by is recorded on its history.
         """
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
+        if goal_id is not None and "project_id" not in fields:
+            raise ValueError("A Task is filed under a Goal together with its Project")
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
@@ -1858,6 +1948,17 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if goal_id is not None and goal_id != (existing["goal_id"] or project["goal_id"]):
+                if existing["goal_id"] is not None:
+                    raise ValueError("A Task keeps its Goal")
+                # Refused for a Project of another Goal, as for a Task that already had this one.
+                _task_goal(goal_id, project)
+                if await self.db.get_goal(goal_id) is None:
+                    raise LookupError("Goal not found")
+                # The Default Project has no Goal: the Task takes the one named, which storage
+                # is given by name beside the fields.
+                project = {**project, "goal_id": goal_id}
+                fields["goal_id"] = goal_id
             if _require_goal_consent(existing, project, moved_by) and expected_status is None:
                 # An acceptance that lands after this check is not carried into the Goal unseen.
                 expected_status = existing["status"]
