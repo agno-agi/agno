@@ -460,52 +460,90 @@ def _has_summary(request):
     return any(m.role == "user" and str(m.content).startswith(SUMMARY_PREFIX) for m in request)
 
 
-@pytest.mark.parametrize("kind", ["agent", "team"])
-@pytest.mark.parametrize("regenerated", ["the latest answer", "an earlier answer, kept beside the new one"])
-def test_an_answer_regenerated_as_it_was_before_the_fold_is_not_continued_from(kind, regenerated, clock, tmp_path):
-    """The run is rebuilt as its source run was, which was before the fold: it is sent the turns
-    the fold replaced, and its reply is new. Continued from, it would bring those turns back."""
+def _regenerate(owner, clock, run_id, **kwargs):
+    clock.advance()
+    owner.continue_run(run_id=run_id, session_id="s", regenerate=True, **kwargs)
+    return owner.get_last_run_output(session_id="s").run_id
+
+
+def _compacted(kind, clock, tmp_path):
+    """Six turns and a manual fold that keeps the last two. Returns the model, the owner and the
+    ids of the two kept runs."""
     model = _chaining_model()
     owner = _conversation_owner(kind, model, tmp_path)
-    latest_run_id = _ask(owner, clock, 6)
-    earlier_run_id = [run.run_id for run in owner.get_session(session_id="s").runs if run.parent_run_id is None][-2]
+    _ask(owner, clock, 6)
+    first_kept, latest = [run.run_id for run in owner.get_session(session_id="s").runs if run.parent_run_id is None][
+        -2:
+    ]
     clock.advance()
     assert owner.compact(session_id="s").record is not None
+    return model, owner, first_kept, latest
 
-    clock.advance()
-    if regenerated == "the latest answer":
-        owner.continue_run(run_id=latest_run_id, session_id="s", regenerate=True)
-    else:
-        owner.continue_run(run_id=earlier_run_id, session_id="s", regenerate=True, replace_original=False)
-    # Rebuilt without the fold, so it was continued from a reply made before it.
-    assert not _has_summary(model.requests[-1]) and model.continued[-1][-1] is not None
-    regenerated_reply = f"resp_{len(model.requests)}"
+
+def _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock):
+    rebuilt_replies = {f"resp_{number}" for number in range(7, len(model.requests) + 1)}
 
     _ask(owner, clock, 1, start=6)
-    # The next turn is sent in full, from the summary: nothing in it can be continued from.
+    # Sent in full, from the summary: nothing in it can be continued from.
     assert _has_summary(model.requests[-1])
     assert model.continued[-1] and set(model.continued[-1]) == {None}
 
     _ask(owner, clock, 1, start=7)
     # That turn's reply was made from the fold, so the conversation is continued from it again.
     assert model.continued[-1][-1] == f"resp_{len(model.requests) - 1}"
-    assert regenerated_reply not in model.continued[-1]
+    assert not rebuilt_replies & set(model.continued[-1])
 
 
 @pytest.mark.parametrize("kind", ["agent", "team"])
-def test_an_answer_regenerated_from_the_fold_is_still_continued_from(kind, clock, tmp_path):
-    """Its source run was made from the fold, so the regenerated run is too."""
-    model = _chaining_model()
-    owner = _conversation_owner(kind, model, tmp_path)
-    _ask(owner, clock, 6)
-    clock.advance()
-    assert owner.compact(session_id="s").record is not None
-    latest_run_id = _ask(owner, clock, 1, start=6)
+@pytest.mark.parametrize("regenerated", ["the latest answer", "an earlier answer, kept beside the new one"])
+def test_an_answer_regenerated_as_it_was_before_the_fold_is_not_continued_from(kind, regenerated, clock, tmp_path):
+    """The run is rebuilt as its source run was, which was before the fold: it is sent the turns
+    the fold replaced, and its reply is new. Continued from, it would bring those turns back."""
+    model, owner, first_kept, latest = _compacted(kind, clock, tmp_path)
 
+    if regenerated == "the latest answer":
+        _regenerate(owner, clock, latest)
+    else:
+        _regenerate(owner, clock, first_kept, replace_original=False)
+    # Rebuilt without the fold, so it was continued from a reply made before it.
+    assert not _has_summary(model.requests[-1]) and model.continued[-1][-1] is not None
+
+    _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_an_answer_regenerated_twice_is_not_continued_from(kind, clock, tmp_path):
+    """The second regeneration replaces the first, which holds the message the fold is anchored
+    on. So it is rebuilt without the fold, although the run it was rebuilt from is newer than it."""
+    model, owner, first_kept, _ = _compacted(kind, clock, tmp_path)
+
+    once = _regenerate(owner, clock, first_kept)
+    _regenerate(owner, clock, once)
+    assert not _has_summary(model.requests[-1]) and model.continued[-1][-1] is not None
+
+    _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_a_fork_of_a_regenerated_answer_is_not_continued_from(kind, clock, tmp_path):
+    """The fork copies the regenerated reply into its own messages, with what it continues from."""
+    model, owner, _, latest = _compacted(kind, clock, tmp_path)
+
+    regenerated = _regenerate(owner, clock, latest)
     clock.advance()
-    owner.continue_run(run_id=latest_run_id, session_id="s", regenerate=True)
+    owner.continue_run(run_id=regenerated, session_id="s", fork=True, input="a follow-up " + "pad " * 50)
+
+    _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_a_turn_after_any_regenerated_answer_is_sent_in_full_once(kind, clock, tmp_path):
+    """Which fold a regenerated run was sent is not stored, so its reply is not continued from even
+    when it was made from the fold. The cost is this one request."""
+    model, owner, _, _ = _compacted(kind, clock, tmp_path)
+    latest = _ask(owner, clock, 1, start=10)
+
+    _regenerate(owner, clock, latest)
     assert _has_summary(model.requests[-1])
-    regenerated_reply = f"resp_{len(model.requests)}"
 
-    _ask(owner, clock, 1, start=7)
-    assert model.continued[-1][-1] == regenerated_reply
+    _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)

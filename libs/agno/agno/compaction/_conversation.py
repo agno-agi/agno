@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence,
 from agno.compaction._cut import leading_system_count
 from agno.compaction._tokens import acount_request, count_request, estimate_tokens
 from agno.compaction._view import without_chaining
-from agno.compaction.archive import made_at_or_before
 from agno.compaction.compaction import Compaction
 from agno.compaction.types import CompactionRecord, CompactionResult, CompactionStatus
 from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
@@ -122,31 +121,33 @@ def _compaction_as_of(run_response: Optional["CompactionRun"]) -> Optional[str]:
     return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
 
 
-def _without_replies_built_without(
+def _without_rebuilt_runs_chaining(
     session: "CompactionSession", history: List[Message], record: Optional[CompactionRecord]
 ) -> List[Message]:
-    """``history``, with nothing to continue from on the replies of a run rebuilt without this fold.
+    """``history``, with nothing to continue from on the replies of a regenerated or forked run.
 
-    A regenerated or forked run is rebuilt as its source run was. When the fold was made after that
-    source run, the rebuilt run was sent the turns the fold replaced, and so the provider's
+    Such a run is rebuilt as its source run was, and that can be without the fold in force: the
+    fold was made after the source run, or the message it is anchored on is in the run being
+    replaced. The rebuilt run is then sent the turns the fold replaced, so the provider's
     conversation behind its replies holds them. Those replies are new, so their time says they
     were made from the fold. Continuing from one would bring the folded turns back and the summary
-    would never be sent. The stored messages are not changed.
+    would never be sent.
+
+    Which fold a rebuilt run was sent is not stored, so none of them is continued from. That costs
+    one request sent in full after a regeneration or a fork, and the reply to that request is
+    continued from as usual. A fork copies its source run's messages with the same ids, so the
+    copied replies and the ones they were copied from are covered too. The stored messages are
+    not changed.
     """
     if record is None or not record.summary:
         return history
-    unsafe: Set[str] = set()
+    rebuilt: Set[str] = set()
     for run in getattr(session, "runs", None) or []:
-        source_run_id = _compaction_as_of(run)
-        if source_run_id is None:
-            continue
-        earlier_run_ids, started_at = _runs_before(session, source_run_id)
-        if made_at_or_before(record.run_id, record.created_at, {source_run_id, *earlier_run_ids}, started_at):
-            continue
-        unsafe.update(m.id for m in run.messages or [] if m.role == "assistant" and m.id is not None)
-    if not unsafe:
+        if _compaction_as_of(run) is not None:
+            rebuilt.update(m.id for m in run.messages or [] if m.role == "assistant" and m.id is not None)
+    if not rebuilt:
         return history
-    return [without_chaining(m) if m.id in unsafe else m for m in history]
+    return [without_chaining(m) if m.id in rebuilt else m for m in history]
 
 
 def _estimated_context_tokens(
@@ -335,7 +336,7 @@ def history_for_run(
         if start is not None:
             history = everything[start:]
 
-    history = _without_replies_built_without(session, history, record)
+    history = _without_rebuilt_runs_chaining(session, history, record)
     if compaction.compact_at_tokens is not None:
         # A threshold is the limit, so compaction owns the window: everything since the last fold
         # is replayed. Capping it at num_history_runs meant a threshold above a few turns never
