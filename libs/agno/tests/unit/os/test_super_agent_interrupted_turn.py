@@ -2,7 +2,9 @@
 turn is told what was cut. A turn that ends is stored as it always was."""
 
 import asyncio
+import os
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -18,9 +20,7 @@ from agno.run import RunContext
 from agno.run.authorization import authorization_scope
 from agno.run.base import RunStatus
 from agno.run.cancel import cleanup_run, register_run
-from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
 from agno.run.team import TeamRunInput, TeamRunOutput
-from agno.session.team import TeamSession
 from agno.team import Team
 from tests.unit.os.test_company_decision_tools import (
     chat,  # noqa: F401
@@ -31,12 +31,20 @@ from tests.unit.os.test_super_agent_linked_work import ADD, Scripted
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
 CUT = "from the person that got no reply (from AgentOS, not written by the person)"
+EXITED_OWNER = "simulated-owner-that-exited"
 MODES = ["sync", "async", "sync stream", "async stream"]
 
 
 @pytest.fixture(autouse=True)
 def scripted_models_are_sent_the_note(monkeypatch):
-    from agno.os.manager import linked_work
+    from agno.os.manager import interrupted_turn, linked_work
+    from agno.run._checkpoint_owner import checkpoint_owner_exited
+
+    monkeypatch.setattr(
+        interrupted_turn,
+        "checkpoint_owner_exited",
+        lambda owner: owner == EXITED_OWNER or checkpoint_owner_exited(owner),
+    )
 
     monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
 
@@ -64,14 +72,16 @@ def turn(team, message, mode, session="chat", **options):
             return list(team.run(message, user_id="alice", session_id=session, stream=True, **options))
 
         async def consume():
-            return [event async for event in team.arun(message, user_id="alice", session_id=session, stream=True)]
+            return [
+                event async for event in team.arun(message, user_id="alice", session_id=session, stream=True, **options)
+            ]
 
         return asyncio.run(consume())
 
 
 def cut(chat, message, mode, calls=(), session="chat"):  # noqa: F811
     chat.os.manager.model = KilledAfter(calls)
-    with pytest.raises(Killed):
+    with patch("agno.os.manager.interrupted_turn.checkpoint_owner", return_value=EXITED_OWNER), pytest.raises(Killed):
         turn(chat.os.manager, message, mode, session)
 
 
@@ -105,7 +115,8 @@ def test_a_turn_killed_while_it_runs_leaves_the_message_stored_as_running(chat, 
     (run,) = stored(chat)
     assert run.status == RunStatus.running
     assert run.input.input_content == "Research the reminder rules and wait"
-    assert not run.messages and run.content is None
+    assert [m.content for m in run.messages if m.role == "user"] == ["Research the reminder rules and wait"]
+    assert run.content is None
 
 
 # A Task is added in an asynchronous run only.
@@ -126,37 +137,6 @@ def test_a_team_that_does_not_ask_stores_nothing_before_a_run_ends(tmp_path):
     found = db.get_session(session_id="chat", session_type=SessionType.TEAM)
     assert found is None or not found.runs
     db.close()
-
-
-@pytest.mark.parametrize("mode", ["sync", "async"])
-def test_a_run_the_queue_owns_is_not_stored_in_flight(chat, mode, monkeypatch):  # noqa: F811
-    from agno.team import _run
-
-    written = []
-    monkeypatch.setattr(_run, "_persist_team_run_in_session", lambda *a, **k: written.append(a))
-
-    async def apersist(*a, **k):
-        written.append(a)
-
-    monkeypatch.setattr(_run, "_apersist_team_run_in_session", apersist)
-    team = chat.os.manager
-    session = TeamSession(session_id="chat", runs=[])
-    run = TeamRunOutput(run_id="queued-run", session_id="chat", team_id=team.id)
-    mark_worker_managed("queued-run")
-    try:
-        if mode == "sync":
-            _run.store_team_run_in_flight(team, run, session)
-        else:
-            asyncio.run(_run.astore_team_run_in_flight(team, run, session))
-    finally:
-        unmark_worker_managed("queued-run")
-    assert written == []
-    run.run_id = "inline-run"
-    if mode == "sync":
-        _run.store_team_run_in_flight(team, run, session)
-    else:
-        asyncio.run(_run.astore_team_run_in_flight(team, run, session))
-    assert len(written) == 1
 
 
 # ----------------------------------------------------------------- a turn that ends is stored as before
@@ -194,12 +174,16 @@ def test_turns_that_end_are_stored_and_sent_history_as_without_the_early_write(c
 
     with_it = conversation(chat, mode)
     other = System(tmp_path / "other")
-    other.os.manager._store_run_in_flight = False
+    other.os.manager.checkpoint = "runs"
     try:
         without = conversation(other, mode)
     finally:
         other.db.close()
-    assert with_it == without
+    # Tool-batch checkpoints also expose their latest message index.
+    assert with_it[1:] == without[1:]
+    for checkpointed, terminal in zip(with_it[0], without[0]):
+        assert checkpointed[:-1] == terminal[:-1]
+        assert set(checkpointed[-1]) - {"last_checkpoint_at_message_index"} == set(terminal[-1])
     assert [status for status, *_ in with_it[0]] == [RunStatus.completed, RunStatus.completed]
 
 
@@ -228,7 +212,7 @@ def test_a_tool_still_reads_the_ids_of_its_run_in_the_session_state(tmp_path, mo
     try:
         agent_os = AgentOS(db=db, manager=OSManager(model=Scripted(), tools=[whoami]), telemetry=False)
         agent_os.get_app()
-        assert agent_os.manager._store_run_in_flight
+        assert agent_os.manager.checkpoint == "tool-batch"
         agent_os.manager.model = Scripted([("whoami", {})])
         turn(agent_os.manager, "Who am I?", mode)
         (run,) = [run for run in db.get_session(session_id="chat", session_type=SessionType.TEAM).runs]
@@ -304,7 +288,12 @@ def test_a_model_that_is_not_sent_the_note_still_has_the_cut_turn_stored_as_fail
 
 def a_run(run_id, status, text="Hello", **fields):
     return TeamRunOutput(
-        run_id=run_id, team_id="superagent", status=status, input=TeamRunInput(input_content=text), **fields
+        run_id=run_id,
+        team_id="superagent",
+        status=status,
+        input=TeamRunInput(input_content=text),
+        checkpoint_owner=EXITED_OWNER,
+        **fields,
     )
 
 
@@ -407,3 +396,83 @@ def test_the_note_sits_between_who_the_person_is_and_the_work(mode):
     text = context.read(run_context) if mode == "sync" else asyncio.run(context.aread(run_context))
     head, middle, tail = text.split("\n\n")
     assert head.startswith("Who you are talking to") and (middle, tail) == ("CUT", "WORK")
+
+
+def _hold_worker_turn(db_file, entered, finish, continue_id=None):
+    class Held(Scripted):
+        def invoke(self, messages, tools=None, **kwargs):
+            entered.set()
+            if not finish.wait(45):
+                raise RuntimeError("Test worker did not receive its release signal")
+            return super().invoke(messages, tools, **kwargs)
+
+    db = SqliteDb(db_file=db_file)
+    try:
+        agent_os = AgentOS(db=db, manager=OSManager(model=Held()), telemetry=False)
+        agent_os.get_app()
+        if continue_id:
+            with authorization_scope(lambda: person(None)):
+                agent_os.manager.continue_run(run_id=continue_id, session_id="chat", user_id="alice")
+        else:
+            turn(agent_os.manager, "First worker's question", "sync")
+    finally:
+        db.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX process locks")
+@pytest.mark.parametrize("scenario", ["live-worker", "killed-worker", "continued-run"])
+def test_two_workers_share_a_conversation(chat, scenario):  # noqa: F811
+    import multiprocessing
+
+    kill_owner = scenario == "killed-worker"
+    continue_id = None
+    if scenario == "continued-run":
+        cut(chat, "First worker's question", "sync")
+        continue_id = stored(chat)[0].run_id
+    ctx = multiprocessing.get_context("spawn")
+    entered, finish = ctx.Event(), ctx.Event()
+    worker = ctx.Process(target=_hold_worker_turn, args=(chat.db.db_file, entered, finish, continue_id))
+    worker.start()
+    try:
+        assert entered.wait(30), "First worker did not reach the model"
+        (first,) = stored(chat)
+        assert first.status == RunStatus.running and first.checkpoint_owner
+        if kill_owner:
+            worker.kill()
+            worker.join(10)
+            assert worker.exitcode is not None
+        note = say(chat, "Did that go through?", "async")
+        assert (CUT in note) == kill_owner
+        assert stored(chat)[0].status == (RunStatus.error if kill_owner else RunStatus.running)
+        if not kill_owner:
+            finish.set()
+            worker.join(15)
+            assert worker.exitcode == 0
+            assert stored(chat)[0].status == RunStatus.completed
+    finally:
+        if worker.is_alive():
+            worker.kill()
+        worker.join(10)
+
+
+@pytest.mark.parametrize("owner", [None, "invalid", "0" * 32 + "." + "1" * 32])
+def test_unverifiable_owner_is_left_running(owner):
+    run = a_run("old", RunStatus.running)
+    run.checkpoint_owner = owner
+    assert cut_ids([run]) == []
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_checkpoint_taken_over_after_the_session_read_is_preserved(chat, mode):  # noqa: F811
+    from agno.run._checkpoint_owner import checkpoint_owner
+
+    cut(chat, "First message", mode)
+    loaded = chat.db.get_session(session_id="chat", session_type=SessionType.TEAM)
+    (newer,) = stored(chat)
+    newer.checkpoint_owner = checkpoint_owner()
+    chat.db.upsert_run(run=newer, session_id="chat", user_id="alice", run_index=0)
+    turns = InterruptedTurns(lambda: chat.os.manager)
+    second = RunContext(run_id="second", session_id="chat", user_id="alice")
+    note = turns.read(second, loaded) if mode == "sync" else asyncio.run(turns.aread(second, loaded))
+    assert note is None
+    assert stored(chat)[0].status == RunStatus.running

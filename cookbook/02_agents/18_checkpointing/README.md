@@ -1,10 +1,10 @@
 # Checkpointing & Crash Recovery
 
-The persistence foundation. `checkpoint="tool-batch"` writes a run to the DB
-**after each tool batch** (a post-gather barrier) instead of only at terminal
-states. For a run with K tool batches plus a final no-tool turn you get K + 1
-writes (K mid-run + 1 terminal). That mid-run durability is what makes a run
-recoverable after a crash, and what the `/continue` features build on.
+With `checkpoint="tool-batch"`, an agent saves a fresh foreground run before
+the first model call and again after each batch of tool results. The final
+write updates the same run. A run with K tool batches has K + 2 writes.
+If the process exits before any tools return, the stored run already contains
+the user's input and the messages needed for an explicit continuation.
 
 The three `/continue` capabilities that operate on a persisted run live in
 sibling folders:

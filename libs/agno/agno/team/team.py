@@ -209,7 +209,7 @@ class Team:
     # --- Checkpointing ---
     # When to persist run state to the database. Mirrors Agent.checkpoint.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "tool-batch" — write after each team-level model turn (post-gather barrier)
+    #   "tool-batch" — write before the first model call and after each batch of tool results
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
@@ -468,11 +468,6 @@ class Team:
     # Internal: an object with read(run_context, session) and aread(...) that returns text for a
     # fresh run, or None. The Team sends it as an unstored user message right before the run's input.
     _message_context: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
-
-    # Internal: store each fresh run as running, with its input and the session state, when it starts
-    # and after each batch of tool results, so a run cut by a killed process leaves what was asked.
-    # The write at the end of the run replaces the same row.
-    _store_run_in_flight: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __init__(
         self,

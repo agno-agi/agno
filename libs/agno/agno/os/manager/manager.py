@@ -500,6 +500,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     team = Team(
         id=config.id,
+        checkpoint="tool-batch",
         metadata={"_agno": {"internal": True, "id": config.id}},
         name=config.name,
         model=model,
@@ -545,9 +546,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         interrupted=InterruptedTurns(lambda: team),
         pages=RulesPages(company_db) if company_db is not None else None,
     )
-    # A turn is stored as running when it starts and after each batch of tool results, so a server
-    # killed in the middle of one leaves what was asked and the work the turn had recorded.
-    team._store_run_in_flight = True
     # That message is where Super Agent reads the time, so the time is left out of its system message:
     # a timestamp there differs on every request, which stops the provider caching the prompt, and it
     # goes stale in a conversation the provider continues without being sent the system message again.

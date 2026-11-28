@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import time
 from collections import deque
-from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -79,7 +79,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
@@ -95,7 +95,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import continue_history_session, resolve_run_index
+from agno.session._utils import checkpoint_snapshot, continue_history_session, resolve_run_index
 from agno.team._members import member_storage
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -337,6 +337,7 @@ def _run_tasks(
             tools=_tools,
             **kwargs,
         )
+        checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
@@ -687,6 +688,7 @@ def _run_tasks_stream(
             tools=_tools,
             **kwargs,
         )
+        checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
@@ -1180,8 +1182,6 @@ def _run(
                     # Consume the generator without yielding
                     deque(pre_hook_iterator, maxlen=0)
 
-                store_team_run_in_flight(team, run_response, session, run_context)
-
                 # 2. Determine tools for model
                 # Initialize team run context
                 team_run_context: Dict[str, Any] = {}
@@ -1228,6 +1228,8 @@ def _run(
                     tools=_tools,
                     **kwargs,
                 )
+                if attempt == 0:
+                    checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1545,8 +1547,6 @@ def _run_stream(
                     for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
 
-                store_team_run_in_flight(team, run_response, session, run_context)
-
                 # 2. Determine tools for model
                 # Initialize team run context
                 team_run_context: Dict[str, Any] = {}
@@ -1593,6 +1593,8 @@ def _run_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if attempt == 0:
+                    checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -2240,6 +2242,7 @@ async def _arun_tasks(
             tools=_tools,
             **kwargs,
         )
+        await acheckpoint_team_run(team, run_response, team_session, run_context, initial_messages=run_messages)
 
         # 4. Start memory and learning creation in background
         memory_task = await _astart_memory_task(
@@ -2623,6 +2626,7 @@ async def _arun_tasks_stream(
             tools=_tools,
             **kwargs,
         )
+        await acheckpoint_team_run(team, run_response, team_session, run_context, initial_messages=run_messages)
 
         # 4. Start memory creation in background
         memory_task = await _astart_memory_task(
@@ -3163,8 +3167,6 @@ async def _arun(
                     async for _ in pre_hook_iterator:
                         pass
 
-                await astore_team_run_in_flight(team, run_response, team_session, run_context)
-
                 # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
@@ -3219,6 +3221,10 @@ async def _arun(
                     tools=_tools,
                     **kwargs,
                 )
+                if attempt == 0:
+                    await acheckpoint_team_run(
+                        team, run_response, team_session, run_context, initial_messages=run_messages
+                    )
 
                 team.model = cast(Model, team.model)
 
@@ -3740,8 +3746,6 @@ async def _arun_stream(
                     async for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
 
-                await astore_team_run_in_flight(team, run_response, team_session, run_context)
-
                 # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
@@ -3796,6 +3800,10 @@ async def _arun_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if attempt == 0:
+                    await acheckpoint_team_run(
+                        team, run_response, team_session, run_context, initial_messages=run_messages
+                    )
 
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
@@ -4928,7 +4936,10 @@ def _persist_team_run_in_session(
             _member_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
+    storage_copy.checkpoint_owner = run_context._checkpoint_owner if run_context else None
     scrub_run_output_for_storage(team, storage_copy)
+    if storage_copy.last_checkpoint_at_message_index is not None:
+        storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
@@ -4988,7 +4999,10 @@ async def _apersist_team_run_in_session(
             await _amember_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
+    storage_copy.checkpoint_owner = run_context._checkpoint_owner if run_context else None
     scrub_run_output_for_storage(team, storage_copy)
+    if storage_copy.last_checkpoint_at_message_index is not None:
+        storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
@@ -5020,95 +5034,6 @@ async def _apersist_team_run_in_session(
     )
 
 
-def _stores_run_in_flight(team: "Team", run_response: TeamRunOutput) -> bool:
-    from agno.run.concurrency import is_worker_managed
-
-    # A run a queue worker owns is left alone: the queue stored its row when it accepted the run,
-    # and ends it when its worker is lost.
-    return team._store_run_in_flight and not (run_response.run_id and is_worker_managed(run_response.run_id))
-
-
-# What a run adds to its session state for its tools to read. Saving a session removes them from it.
-_RUN_IDS_IN_STATE = ("current_session_id", "current_user_id", "current_run_id")
-
-
-def _state_a_write_saves(session: TeamSession, run_context: Optional[RunContext]) -> Any:
-    """The session state dictionary a write of the run saves, and takes the run's ids out of."""
-    if run_context is not None and run_context.session_state is not None:
-        return run_context.session_state
-    return (session.session_data or {}).get("session_state")
-
-
-def _before_in_flight_write(
-    session: TeamSession, run_response: TeamRunOutput, run_context: Optional[RunContext] = None
-) -> Tuple[List[Optional[str]], Any, Any, Dict[str, Any]]:
-    live = _state_a_write_saves(session, run_context)
-    ids = {key: live[key] for key in _RUN_IDS_IN_STATE if key in live} if isinstance(live, dict) else {}
-    return [run.run_id for run in session.runs or []], run_response.session_state, live, ids
-
-
-def _after_in_flight_write(
-    session: TeamSession, run_response: TeamRunOutput, before: Tuple[List[Optional[str]], Any, Any, Dict[str, Any]]
-) -> None:
-    """Leave the run, the session and the session state held in memory as they were before the write.
-
-    History is read from that session by a count of runs, so a run that has not ended must not take
-    a place in it. The write also copies the session state onto the run, which the write at the end
-    of a run does not always do. Undoing both keeps what a run that ends is sent and stores.
-
-    Saving the session takes the run's own ids out of the session state, which is the dictionary
-    the run's tools read. The run goes on, so they are put back. The stored state does not hold them.
-    """
-    held, state, live, ids = before
-    run_response.session_state = state
-    if isinstance(live, dict):
-        live.update(ids)
-    if run_response.run_id not in held and session.runs:
-        session.runs = [run for run in session.runs if run.run_id != run_response.run_id]
-
-
-def store_team_run_in_flight(
-    team: "Team",
-    run_response: TeamRunOutput,
-    session: TeamSession,
-    run_context: Optional[RunContext] = None,
-) -> None:
-    """Store a run that has not ended yet, for a Team that sets ``_store_run_in_flight``.
-
-    The run is written as it stands, with its input and the session state, when it starts and after
-    each batch of tool results. If the process is then killed, the database still holds what was
-    asked and what the session state recorded. The write at the end of the run replaces the same
-    row, so a run that ends is stored as it is without this. A failure here never stops the run.
-    """
-    if not _stores_run_in_flight(team, run_response):
-        return
-    before = _before_in_flight_write(session, run_response, run_context)
-    try:
-        _persist_team_run_in_session(team, run_response, session, run_context)
-    except Exception as e:
-        log_warning(f"Could not store run {run_response.run_id} while it runs: {e}")
-    finally:
-        _after_in_flight_write(session, run_response, before)
-
-
-async def astore_team_run_in_flight(
-    team: "Team",
-    run_response: TeamRunOutput,
-    session: TeamSession,
-    run_context: Optional[RunContext] = None,
-) -> None:
-    """Async variant of :func:`store_team_run_in_flight`."""
-    if not _stores_run_in_flight(team, run_response):
-        return
-    before = _before_in_flight_write(session, run_response, run_context)
-    try:
-        await _apersist_team_run_in_session(team, run_response, session, run_context)
-    except Exception as e:
-        log_warning(f"Could not store run {run_response.run_id} while it runs: {e}")
-    finally:
-        _after_in_flight_write(session, run_response, before)
-
-
 def _sync_team_run_response_with_model_response(
     run_response: TeamRunOutput,
     run_messages: "RunMessages",  # noqa: F821
@@ -5124,7 +5049,7 @@ def _sync_team_run_response_with_model_response(
     delegation. Carry it over by ``tool_call_id``, mirroring the streaming merge
     in :mod:`agno.team._response`.
     """
-    if model_response.tool_executions is not None:
+    if model_response.tool_executions:
         existing_child_run_ids = {
             tool.tool_call_id: tool.child_run_id
             for tool in (run_response.tools or [])
@@ -5139,13 +5064,27 @@ def _sync_team_run_response_with_model_response(
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
-def _mark_team_checkpoint_message(run_response: TeamRunOutput) -> None:
-    """Mark the current message boundary as checkpointed for client timelines."""
-    if not run_response.messages:
-        return
-    message = run_response.messages[-1]
-    message.checkpoint_status = run_response.status.value if run_response.status else None
-    message.checkpoint_created_at = int(unix_time())
+def _transfer_checkpoint_owner(team: "Team", run: TeamRunOutput, run_context: RunContext) -> Any:
+    """An explicit continuation takes ownership before it calls the model.
+
+    A concurrent recovery check compares this same field atomically. If the run already
+    changed, the old checkpoint no longer identifies a running turn we could mark interrupted.
+    """
+    from agno.run._checkpoint_owner import checkpoint_owner
+
+    update = getattr(team.db, "update_run_if_matches", None)
+    previous = run.checkpoint_owner
+    run.checkpoint_owner = None  # A terminal write releases ownership.
+    if not callable(update):
+        return None
+    run_context._checkpoint_owner = checkpoint_owner()
+    return update(
+        run_id=run.run_id,
+        session_id=run_context.session_id,
+        user_id=run_context.user_id,
+        expected={"status": RunStatus.running.value, "checkpoint_owner": previous, "queue_attempt": None},
+        fields={"checkpoint_owner": run_context._checkpoint_owner},
+    )
 
 
 def checkpoint_team_run(
@@ -5153,14 +5092,19 @@ def checkpoint_team_run(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
+    *,
+    initial_messages: Optional["RunMessages"] = None,
 ) -> None:
     """Persist a mid-run team checkpoint. No-op unless ``team.checkpoint == "tool-batch"``."""
-    if team.checkpoint != "tool-batch":
+    if team.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
         return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_team_checkpoint_message(run_response)
-    _persist_team_run_in_session(team, run_response, session, run_context)
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        _persist_team_run_in_session(team, run_response, session, run_context)
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
 
 
 async def acheckpoint_team_run(
@@ -5168,14 +5112,19 @@ async def acheckpoint_team_run(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
+    *,
+    initial_messages: Optional["RunMessages"] = None,
 ) -> None:
     """Async variant of :func:`checkpoint_team_run`."""
-    if team.checkpoint != "tool-batch":
+    if team.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
         return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_team_checkpoint_message(run_response)
-    await _apersist_team_run_in_session(team, run_response, session, run_context)
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        await _apersist_team_run_in_session(team, run_response, session, run_context)
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
 
 
 def build_team_after_tool_results_callback(
@@ -5192,9 +5141,6 @@ def build_team_after_tool_results_callback(
     model_response and writes a checkpoint to the session.
     """
     if team.checkpoint != "tool-batch":
-        if team._store_run_in_flight:
-            # The run as it stands and the session state the tools just changed. No checkpoint is marked.
-            return lambda model_response: store_team_run_in_flight(team, run_response, session, run_context)
         return None
 
     def _callback(model_response):
@@ -5213,12 +5159,6 @@ def abuild_team_after_tool_results_callback(
 ) -> Optional[Any]:
     """Async variant of :func:`build_team_after_tool_results_callback`."""
     if team.checkpoint != "tool-batch":
-        if team._store_run_in_flight:
-
-            async def _store(model_response):
-                await astore_team_run_in_flight(team, run_response, session, run_context)
-
-            return _store
         return None
 
     async def _callback(model_response):
@@ -7186,6 +7126,7 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
+    forked.checkpoint_owner = None
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
@@ -8407,6 +8348,8 @@ def _continue_run(
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
 
+    if run_response.checkpoint_owner:
+        _transfer_checkpoint_owner(team, run_response, run_context)
     register_run(run_response.run_id)  # type: ignore
 
     # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
@@ -8600,6 +8543,8 @@ def _continue_run_stream(
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
 
+    if run_response.checkpoint_owner:
+        _transfer_checkpoint_owner(team, run_response, run_context)
     register_run(run_response.run_id)  # type: ignore
 
     # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
@@ -9713,6 +9658,10 @@ async def _acontinue_run(
                     # loop run with whatever messages survived. Same as sync.
                     _did_snapshot_dispatch = True
 
+                if run_response.checkpoint_owner:
+                    transferred = _transfer_checkpoint_owner(team, run_response, run_context)
+                    if inspect.isawaitable(transferred):
+                        await transferred
                 await aregister_run(run_response.run_id)  # type: ignore
 
                 # Emit RunContinued event (matching streaming variant behaviour)
@@ -10200,6 +10149,10 @@ async def _acontinue_run_stream(
                     # loop run with whatever messages survived. Same as sync.
                     _did_snapshot_dispatch = True
 
+                if run_response.checkpoint_owner:
+                    transferred = _transfer_checkpoint_owner(team, run_response, run_context)
+                    if inspect.isawaitable(transferred):
+                        await transferred
                 await aregister_run(run_response.run_id)  # type: ignore
 
                 run_response.requirements = _reclaim_own_requirements(

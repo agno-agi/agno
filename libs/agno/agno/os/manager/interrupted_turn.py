@@ -8,11 +8,12 @@ never run again here: it may have started work.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Callable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
 from agno.os.manager.linked_work import _entries
+from agno.run._checkpoint_owner import checkpoint_owner, checkpoint_owner_exited
 from agno.run.authorization import in_finished_work_report
 from agno.run.base import RunStatus
 from agno.utils.log import log_warning
@@ -52,10 +53,8 @@ def _cut_turns(session: Any, run_context: Any, team_id: Any, active: Set[str]) -
     """The person's turns at the end of the conversation that were cut, newest first, each with
     whether it is still stored as running.
 
-    A turn stored as running that no run in this process is executing was cut, unless the durable
-    queue holds it: the queue ends its own runs. Another server process may still be executing it;
-    this process cannot tell, and that process's last write replaces the row if it is. The walk stops
-    at the newest turn that ended any other way, so a cut turn is named until a later turn ends.
+    Only classify a foreground run when its recorded worker has exited. An absent registry
+    entry alone can also mean the run belongs to another API worker.
     """
     current = getattr(run_context, "run_id", None)
     found: List[Tuple[Any, bool]] = []
@@ -66,7 +65,12 @@ def _cut_turns(session: Any, run_context: Any, team_id: Any, active: Set[str]) -
             continue
         status = _status(run)
         if status in ("PENDING", "RUNNING"):
-            if status == "RUNNING" and getattr(run, "queue_attempt", None) is None and run.run_id not in active:
+            if (
+                status == "RUNNING"
+                and getattr(run, "queue_attempt", None) is None
+                and run.run_id not in active
+                and checkpoint_owner_exited(getattr(run, "checkpoint_owner", None))
+            ):
                 found.append((run, True))
             continue
         if status == "ERROR" and getattr(run, "content", None) == INTERRUPTED_REPLY:
@@ -142,50 +146,42 @@ class InterruptedTurns:
         # Nobody is present in a finished-work report: the person's next message is told.
         if session is None or in_finished_work_report(run_context):
             return []
+        run_context._checkpoint_owner = checkpoint_owner()
         return _cut_turns(session, run_context, getattr(self.team(), "id", None), active)
 
     @staticmethod
     def _end(run: Any) -> None:
+        run.checkpoint_owner = None
         run.status = RunStatus.error
         run.content = INTERRUPTED_REPLY
 
     @staticmethod
-    def _ended_meanwhile(row: Any) -> bool:
-        """Whether the stored run has ended since this turn loaded the conversation.
-
-        A turn loads the conversation when it starts and looks for cut turns later. A turn that was
-        executing at the load and ended in between is held here as running and nothing executes it.
-        It was not cut, and storing it as failed would replace its reply. A turn stores its end
-        before it leaves the list of executing runs, so the row is read after that list.
-        A database that keeps no row for the run says nothing, and the run is taken as it is held.
-        """
-        if not isinstance(row, dict):
-            return False
-        status = row.get("status")
-        return str(getattr(status, "value", status) or "").upper() != "RUNNING"
+    def _update(session: Any, run: Any) -> Dict[str, Any]:
+        return dict(
+            run_id=run.run_id,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            expected={
+                "status": RunStatus.running.value,
+                "checkpoint_owner": run.checkpoint_owner,
+                "queue_attempt": None,
+            },
+            fields={"status": RunStatus.error.value, "content": INTERRUPTED_REPLY, "checkpoint_owner": None},
+        )
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
             from agno.run.cancel import get_active_runs
-            from agno.session._utils import resolve_run_index
-            from agno.team._session import save_run
 
             found = self._find(run_context, session, set(get_active_runs()))
-            db = getattr(self.team(), "db", None)
+            db = self.team().db
+            update = getattr(db, "update_run_if_matches", None)
             cut = []
             for run, running in found:
                 if running:
-                    # A synchronous run cannot read an asynchronous database, nor write to it below.
-                    if db is not None and not isinstance(db, AsyncBaseDb):
-                        if self._ended_meanwhile(db.get_run(run.run_id, deserialize=False)):
-                            continue
+                    if isinstance(db, AsyncBaseDb) or not callable(update) or not update(**self._update(session, run)):
+                        continue
                     self._end(run)
-                    try:
-                        index = resolve_run_index(session, run)
-                        save_run(self.team(), run, session.session_id, session.user_id, index)
-                    except Exception as exc:
-                        # A synchronous run cannot write to an asynchronous database. The note is still given.
-                        log_warning(f"Could not store run {run.run_id} as cut by a restart: {exc}")
                 cut.append(run)
             return _note(run_context, cut)
         except Exception as exc:
@@ -195,26 +191,19 @@ class InterruptedTurns:
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
             from agno.run.cancel import aget_active_runs
-            from agno.session._utils import resolve_run_index
-            from agno.team._session import asave_run
 
             found = self._find(run_context, session, set(await aget_active_runs()))
-            db = getattr(self.team(), "db", None)
+            db = self.team().db
+            update = getattr(db, "update_run_if_matches", None)
             cut = []
             for run, running in found:
                 if running:
-                    if isinstance(db, AsyncBaseDb):
-                        row = await db.get_run(run.run_id, deserialize=False)
-                    else:
-                        row = db.get_run(run.run_id, deserialize=False) if db is not None else None
-                    if self._ended_meanwhile(row):
+                    if not callable(update):
+                        continue
+                    result = update(**self._update(session, run))
+                    if not (await result if isinstance(db, AsyncBaseDb) else result):
                         continue
                     self._end(run)
-                    try:
-                        index = resolve_run_index(session, run)
-                        await asave_run(self.team(), run, session.session_id, session.user_id, index)
-                    except Exception as exc:
-                        log_warning(f"Could not store run {run.run_id} as cut by a restart: {exc}")
                 cut.append(run)
             return _note(run_context, cut)
         except Exception as exc:

@@ -549,7 +549,7 @@ def test_the_switch_off_starts_no_finished_work_report(tmp_path):
 def test_a_conversation_with_a_turn_going_is_not_interrupted(system, stored_when_it_starts):
     # Super Agent stores a turn as running when it starts. With that off, only this process knows
     # the turn is going, and that alone must hold the report back.
-    system.os.manager._store_run_in_flight = stored_when_it_starts
+    system.os.manager.checkpoint = "tool-batch" if stored_when_it_starts else "runs"
 
     async def steps():
         run_id = await system.start()
