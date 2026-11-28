@@ -336,7 +336,8 @@ async def test_uncertain_commands_stop_compute_and_are_never_resent(no_sleep):
     "reply, stderr, said, not_said",
     [
         ({"exitCode": 137, "status": "COMPLETED"}, "", "exit code 137 and left no message", "timed out"),
-        ({"status": "COMPLETED"}, "", "exit code -1 and left no message", "timed out"),
+        ({"status": "COMPLETED"}, "", "AgentCore did not provide an exit code", "exit code -1"),
+        ({"exitCode": -1, "status": "COMPLETED"}, "", "exit code -1 and left no message", "did not provide"),
         ({"exitCode": -1, "status": "TIMED_OUT"}, "", "command transport timed out", "exit code"),
         ({"exitCode": 2, "status": "COMPLETED"}, "runner: no such file\n", "runner: no such file", "left no message"),
     ],
