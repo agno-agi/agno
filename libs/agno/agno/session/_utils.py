@@ -76,6 +76,7 @@ def checkpoint_snapshot(
     from time import time
 
     from agno.run.base import RunStatus
+    from agno.utils.media_offload import offload_cache_for
 
     # Tool-result boundaries are also shown on the completed run's timeline.
     if initial_messages is None:
@@ -84,6 +85,8 @@ def checkpoint_snapshot(
         if run.messages:
             run.messages[-1].checkpoint_status = RunStatus.running.value
             run.messages[-1].checkpoint_created_at = int(time())
+    # All snapshots and the terminal write reuse the references created by the first upload.
+    offload_cache_for(run)
     run = copy(run)
     if initial_messages is not None:
         run.status = RunStatus.running

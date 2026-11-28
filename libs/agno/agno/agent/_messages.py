@@ -261,6 +261,8 @@ def _history_for_run(
     summary along with the turns it replaced. What sits in front of it is already folded.
     """
 
+    session = continue_history_session(session, run_response)
+
     def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
         return session.get_messages(
             last_n_runs=last_n_runs,
@@ -2414,9 +2416,7 @@ def _build_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history, stored_record, replay_ids = _history_for_run(
-            agent, continue_history_session(session, run_response), run_response, skip_role
-        )
+        history, stored_record, replay_ids = _history_for_run(agent, session, run_response, skip_role)
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]

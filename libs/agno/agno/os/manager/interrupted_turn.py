@@ -8,7 +8,7 @@ never run again here: it may have started work.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
@@ -49,8 +49,8 @@ def _is_report(run: Any) -> bool:
     return (_input_text(run) or "").startswith(FINISHED_WORK_LABEL)
 
 
-def _cut_turns(session: Any, run_context: Any, team_id: Any, active: Set[str]) -> List[Tuple[Any, bool]]:
-    """The person's turns at the end of the conversation that were cut, newest first, each with
+def _cut_turns(session: Any, run_context: Any, team_id: Any) -> List[Tuple[Any, bool]]:
+    """The person's interrupted turns, newest first, each with
     whether it is still stored as running.
 
     Only classify a foreground run when its recorded worker has exited. An absent registry
@@ -58,6 +58,7 @@ def _cut_turns(session: Any, run_context: Any, team_id: Any, active: Set[str]) -
     """
     current = getattr(run_context, "run_id", None)
     found: List[Tuple[Any, bool]] = []
+    include_reported = True
     for run in reversed(getattr(session, "runs", None) or []):
         if getattr(run, "parent_run_id", None) is not None or getattr(run, "team_id", None) != team_id:
             continue
@@ -68,15 +69,16 @@ def _cut_turns(session: Any, run_context: Any, team_id: Any, active: Set[str]) -
             if (
                 status == "RUNNING"
                 and getattr(run, "queue_attempt", None) is None
-                and run.run_id not in active
                 and checkpoint_owner_exited(getattr(run, "checkpoint_owner", None))
             ):
                 found.append((run, True))
             continue
         if status == "ERROR" and getattr(run, "content", None) == INTERRUPTED_REPLY:
-            found.append((run, False))
+            if include_reported:
+                found.append((run, False))
             continue
-        break
+        # A later answer acknowledges earlier notices. An older run can still die after that answer.
+        include_reported = False
     return found
 
 
@@ -142,12 +144,13 @@ class InterruptedTurns:
     def __init__(self, team: Callable[[], Any]):
         self.team = team
 
-    def _find(self, run_context: Any, session: Any, active: Set[str]) -> List[Tuple[Any, bool]]:
+    def _find(self, run_context: Any, session: Any) -> List[Tuple[Any, bool]]:
         # Nobody is present in a finished-work report: the person's next message is told.
         if session is None or in_finished_work_report(run_context):
             return []
-        run_context._checkpoint_owner = checkpoint_owner()
-        return _cut_turns(session, run_context, getattr(self.team(), "id", None), active)
+        # Keep unverified ownership distinct from a regular Team run without an owner.
+        run_context._checkpoint_owner = checkpoint_owner() or "unverified"
+        return _cut_turns(session, run_context, getattr(self.team(), "id", None))
 
     @staticmethod
     def _end(run: Any) -> None:
@@ -171,9 +174,7 @@ class InterruptedTurns:
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
-            from agno.run.cancel import get_active_runs
-
-            found = self._find(run_context, session, set(get_active_runs()))
+            found = self._find(run_context, session)
             db = self.team().db
             update = getattr(db, "update_run_if_matches", None)
             cut = []
@@ -190,9 +191,7 @@ class InterruptedTurns:
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
-            from agno.run.cancel import aget_active_runs
-
-            found = self._find(run_context, session, set(await aget_active_runs()))
+            found = self._find(run_context, session)
             db = self.team().db
             update = getattr(db, "update_run_if_matches", None)
             cut = []

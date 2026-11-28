@@ -11,6 +11,7 @@ import pytest
 from agno.db.base import SessionType
 from agno.db.schemas.scheduler import FINISHED_WORK_REPORT_METADATA_KEY
 from agno.db.sqlite import SqliteDb
+from agno.exceptions import RunNotContinuableError
 from agno.os import AgentOS, OSManager
 from agno.os.manager.finished_work import FINISHED_WORK_LABEL
 from agno.os.manager.interrupted_turn import INTERRUPTED_REPLY, InterruptedTurns, _cut_turns
@@ -19,7 +20,6 @@ from agno.os.manager.person import Person, TurnContext
 from agno.run import RunContext
 from agno.run.authorization import authorization_scope
 from agno.run.base import RunStatus
-from agno.run.cancel import cleanup_run, register_run
 from agno.run.team import TeamRunInput, TeamRunOutput
 from agno.team import Team
 from tests.unit.os.test_company_decision_tools import (
@@ -38,6 +38,7 @@ MODES = ["sync", "async", "sync stream", "async stream"]
 @pytest.fixture(autouse=True)
 def scripted_models_are_sent_the_note(monkeypatch):
     from agno.os.manager import interrupted_turn, linked_work
+    from agno.run import _checkpoint_owner
     from agno.run._checkpoint_owner import checkpoint_owner_exited
 
     monkeypatch.setattr(
@@ -46,6 +47,7 @@ def scripted_models_are_sent_the_note(monkeypatch):
         lambda owner: owner == EXITED_OWNER or checkpoint_owner_exited(owner),
     )
 
+    monkeypatch.setattr(_checkpoint_owner, "checkpoint_owner_exited", interrupted_turn.checkpoint_owner_exited)
     monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
 
 
@@ -297,15 +299,18 @@ def a_run(run_id, status, text="Hello", **fields):
     )
 
 
-def cut_ids(runs, active=(), current="now"):
+def cut_ids(runs, current="now"):
     session = SimpleNamespace(runs=runs)
-    found = _cut_turns(session, RunContext(run_id=current, session_id="chat"), "superagent", set(active))
+    found = _cut_turns(session, RunContext(run_id=current, session_id="chat"), "superagent")
     return [(run.run_id, running) for run, running in found]
 
 
 def test_a_turn_still_executing_in_this_process_is_not_cut():
-    assert cut_ids([a_run("a", RunStatus.running)], active={"a"}) == []
-    assert cut_ids([a_run("a", RunStatus.running)]) == [("a", True)]
+    from agno.run._checkpoint_owner import checkpoint_owner
+
+    live = a_run("a", RunStatus.running)
+    live.checkpoint_owner = checkpoint_owner()
+    assert cut_ids([live]) == []
 
 
 def test_the_run_being_built_is_not_its_own_cut_turn():
@@ -327,17 +332,19 @@ def test_a_finished_work_report_and_a_members_run_are_not_the_persons_turns():
     assert cut_ids(runs) == []
 
 
-def test_the_walk_stops_at_the_newest_turn_that_ended_another_way():
+def test_recovery_checks_older_running_rows_without_repeating_acknowledged_notices():
     runs = [
+        a_run("acknowledged", RunStatus.error, content=INTERRUPTED_REPLY),
         a_run("old", RunStatus.running),
         a_run("answered", RunStatus.completed),
         a_run("stored", RunStatus.error, content=INTERRUPTED_REPLY),
         a_run("report", RunStatus.completed, text=FINISHED_WORK_LABEL + ". Work ended."),
         a_run("new", RunStatus.running),
     ]
-    assert cut_ids(runs) == [("new", True), ("stored", False)]
-    # A turn that failed for its own reason ends the walk like one that was answered.
-    assert cut_ids([a_run("old", RunStatus.running), a_run("failed", RunStatus.error, content="boom")]) == []
+    assert cut_ids(runs) == [("new", True), ("stored", False), ("old", True)]
+    assert cut_ids([a_run("old", RunStatus.running), a_run("failed", RunStatus.error, content="boom")]) == [
+        ("old", True)
+    ]
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -351,15 +358,23 @@ def test_a_finished_work_report_neither_stores_nor_tells(mode):
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_a_registered_run_is_read_as_executing(chat, mode):  # noqa: F811
+def test_a_stale_redis_registration_does_not_hide_a_dead_owner(chat, mode, monkeypatch):  # noqa: F811
+    import fakeredis
+
+    from agno.run import cancel
+    from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
+
     cut(chat, "Research and wait", mode)
     (run,) = stored(chat)
-    register_run(run.run_id)
-    try:
-        assert say(chat, "Hello again", mode) == ""
-    finally:
-        cleanup_run(run.run_id)
-    assert stored(chat)[0].status == RunStatus.running
+    server = fakeredis.FakeServer()
+    registry = RedisRunCancellationManager(
+        redis_client=fakeredis.FakeRedis(server=server), async_redis_client=fakeredis.FakeAsyncRedis(server=server)
+    )
+    registry.register_run(run.run_id)
+    monkeypatch.setattr(cancel, "_cancellation_manager", registry)
+    assert CUT in say(chat, "Hello again", mode)
+    assert run.run_id in registry.get_active_runs()
+    assert stored(chat)[0].status == RunStatus.error
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -420,16 +435,24 @@ def _hold_worker_turn(db_file, entered, finish, continue_id=None):
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Requires POSIX process locks")
-@pytest.mark.parametrize("scenario", ["live-worker", "killed-worker", "continued-run"])
+@pytest.mark.parametrize("scenario", ["live-worker", "killed-worker", "continued-run", "newer-answer"])
 def test_two_workers_share_a_conversation(chat, scenario):  # noqa: F811
     import multiprocessing
 
-    kill_owner = scenario == "killed-worker"
+    kill_owner = scenario in ("killed-worker", "newer-answer")
+    ctx = multiprocessing.get_context("spawn")
     continue_id = None
     if scenario == "continued-run":
-        cut(chat, "First worker's question", "sync")
+        started = ctx.Event()
+        release = ctx.Event()
+        previous = ctx.Process(target=_hold_worker_turn, args=(chat.db.db_file, started, release))
+        previous.start()
+        try:
+            assert started.wait(30)
+        finally:
+            previous.kill()
+            previous.join(10)
         continue_id = stored(chat)[0].run_id
-    ctx = multiprocessing.get_context("spawn")
     entered, finish = ctx.Event(), ctx.Event()
     worker = ctx.Process(target=_hold_worker_turn, args=(chat.db.db_file, entered, finish, continue_id))
     worker.start()
@@ -437,6 +460,16 @@ def test_two_workers_share_a_conversation(chat, scenario):  # noqa: F811
         assert entered.wait(30), "First worker did not reach the model"
         (first,) = stored(chat)
         assert first.status == RunStatus.running and first.checkpoint_owner
+        if scenario == "newer-answer":
+            assert say(chat, "A second question", "sync") == ""
+        if scenario == "live-worker":
+            model = Scripted()
+            chat.os.manager.model = model
+            for mode in (*MODES, "background"):
+                with pytest.raises(RunNotContinuableError, match="owner"):
+                    resume(chat, first.run_id, mode)
+            assert not model.requests
+            assert stored(chat)[0].checkpoint_owner == first.checkpoint_owner
         if kill_owner:
             worker.kill()
             worker.join(10)
@@ -475,4 +508,82 @@ def test_checkpoint_taken_over_after_the_session_read_is_preserved(chat, mode): 
     second = RunContext(run_id="second", session_id="chat", user_id="alice")
     note = turns.read(second, loaded) if mode == "sync" else asyncio.run(turns.aread(second, loaded))
     assert note is None
+    assert stored(chat)[0].status == RunStatus.running
+
+
+def resume(chat, run_id, mode, **options):  # noqa: F811
+    manager = chat.os.manager
+    kwargs = dict(run_id=run_id, session_id="chat", user_id="alice", **options)
+    with authorization_scope(lambda: person(None)):
+        if mode == "sync":
+            return manager.continue_run(**kwargs)
+        if mode == "sync stream":
+            return list(manager.continue_run(stream=True, **kwargs))
+        if mode == "async":
+            return asyncio.run(manager.acontinue_run(**kwargs))
+
+        async def consume():
+            return [
+                event async for event in manager.acontinue_run(stream=True, background=mode == "background", **kwargs)
+            ]
+
+        return asyncio.run(consume())
+
+
+@pytest.mark.parametrize("mode", [*MODES, "background"])
+def test_a_lost_checkpoint_claim_preserves_the_winning_answer(chat, mode):  # noqa: F811
+    cut(chat, "First question", "sync")
+    (first,) = stored(chat)
+    update = chat.db.update_run_if_matches
+
+    def finish_before_claim(**claim):
+        assert update(
+            **{**claim, "fields": {"status": "COMPLETED", "content": "Winning answer", "checkpoint_owner": None}}
+        )
+        return update(**claim)
+
+    model = Scripted()
+    chat.os.manager.model = model
+    with patch.object(chat.db, "update_run_if_matches", side_effect=finish_before_claim) as claim:
+        with pytest.raises(RunNotContinuableError, match="checkpoint changed"):
+            resume(chat, first.run_id, mode)
+    claim.assert_called_once()
+    assert not model.requests
+    (winner,) = stored(chat)
+    assert (winner.status, winner.content) == (RunStatus.completed, "Winning answer")
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_recovery_precedes_history_selection(chat, mode):  # noqa: F811
+    chat.os.manager.num_history_runs = 1
+    say(chat, "Use pounds for the estimate", mode)
+    cut(chat, "Estimate the budget", mode)
+    model = Scripted()
+    assert CUT in say(chat, "What estimate should I use?", mode, model=model)
+    assert [content for role, content, old in model.requests[0] if role == "user" and old] == [
+        "Use pounds for the estimate"
+    ]
+
+
+def test_abandoned_continue_stream_leaves_checkpoint_available(chat):  # noqa: F811
+    cut(chat, "First question", "sync")
+    (first,) = stored(chat)
+    stream = chat.os.manager.continue_run(run_id=first.run_id, session_id="chat", user_id="alice", stream=True)
+    stream.close()
+    assert stored(chat)[0].checkpoint_owner == first.checkpoint_owner
+    assert CUT in say(chat, "Did it finish?", "sync")
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_checkpoint_without_a_verifiable_worker_cannot_be_taken_over(chat, mode):  # noqa: F811
+    chat.os.manager.model = KilledAfter()
+    with patch("agno.os.manager.interrupted_turn.checkpoint_owner", return_value=None), pytest.raises(Killed):
+        turn(chat.os.manager, "First question", mode)
+    (first,) = stored(chat)
+    model = Scripted()
+    chat.os.manager.model = model
+    with pytest.raises(RunNotContinuableError, match="owner"):
+        resume(chat, first.run_id, mode)
+    assert not model.requests
+    assert say(chat, "Second question", mode) == ""
     assert stored(chat)[0].status == RunStatus.running
