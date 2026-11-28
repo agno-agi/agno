@@ -486,13 +486,10 @@ async def _stamp_auto_accept(request, payload, agent_os=None, stored=None):
     return payload
 
 
-def _person_routine_request(agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
-    """A Routine API request from a person in chat, as the API's middleware would describe it."""
+def _person_request(app: Any, authority: Any, user_id: Any, method: str, path: str) -> Any:
+    """An API request from a person in chat, as the API's middleware would describe it."""
     from starlette.requests import Request
 
-    app = getattr(agent_os, "_company_app", None)
-    if app is None or getattr(agent_os, "_routine_api_update", None) is None:
-        raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
     context = authority.context if authority is not None else None
     state = {
         "user_id": user_id,
@@ -505,16 +502,16 @@ def _person_routine_request(agent_os: Any, authority: Any, user_id: Any, method:
         "is_internal_service": False,
     }
     return Request(
-        {
-            "type": "http",
-            "method": method,
-            "path": f"/company/routines/{routine_id}",
-            "headers": [],
-            "query_string": b"",
-            "app": app,
-            "state": state,
-        }
+        {"type": "http", "method": method, "path": path, "headers": [], "query_string": b"", "app": app, "state": state}
     )
+
+
+def _person_routine_request(agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
+    """A Routine API request from a person in chat, as the API's middleware would describe it."""
+    app = getattr(agent_os, "_company_app", None)
+    if app is None or getattr(agent_os, "_routine_api_update", None) is None:
+        raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+    return _person_request(app, authority, user_id, method, f"/company/routines/{routine_id}")
 
 
 async def _set_auto_accept_as(agent_os: Any, authority: Any, user_id: Any, routine_id: str, auto_accept: Any) -> Any:

@@ -34,6 +34,7 @@ from agno.agent import (
     _utils,
 )
 from agno.agent.followup import FollowupConfig, resolve_followup_settings
+from agno.compaction._setup import disable_compaction_without_records
 from agno.compaction.compaction import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
@@ -154,7 +155,7 @@ class Agent:
     # --- Checkpointing ---
     # When to persist run state to the database.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "tool-batch" — write after each model turn (post-gather barrier)
+    #   "tool-batch" — write before the first model call and after each batch of tool results
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
@@ -745,7 +746,7 @@ class Agent:
         self._callable_knowledge_cache: Dict[str, Any] = {}
 
         _init.get_models(self)
-        _init.disable_compaction_without_records(self)
+        disable_compaction_without_records(self)
 
     # ---------------------------------------------------------------
     # Properties

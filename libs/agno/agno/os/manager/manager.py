@@ -333,6 +333,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.finished_work import FinishedWorkBoundary
+    from agno.os.manager.schedule_control import ScheduleControlTools
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -422,6 +423,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         *config.tools,
         runner,
         AgentOSTools(db=db, include_tools=["get_run_activity", "list_schedules"], add_instructions=False),
+        ScheduleControlTools(agent_os),
         _diagnostics_tool(agent_os, config.required_env),
     ]
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
@@ -500,6 +502,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     team = Team(
         id=config.id,
+        checkpoint="tool-batch",
         metadata={"_agno": {"internal": True, "id": config.id}},
         name=config.name,
         model=model,
@@ -517,6 +520,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         read_chat_history=True,
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
+        compaction=config.compaction,
     )
     finished_work_boundary.served = ref(team)
     from agno.os.manager import linked_work
@@ -527,12 +531,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     # The work a conversation started: its Tasks when Company is on, and its background runs.
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
+    from agno.os.manager.interrupted_turn import InterruptedTurns
     from agno.os.manager.person import Person, TurnContext
     from agno.os.manager.rules_pages import RulesPages
 
-    # Who the person is, which wiki pages exist, then that work, in one message right before theirs.
-    # The role store is the Authorization object when it manages roles; agent_os.authorization itself
-    # is only a switch.
+    # Who the person is, which wiki pages exist, a message of theirs that a restart cut, then that
+    # work, in one message right before theirs. The role store is the Authorization object when it
+    # manages roles; agent_os.authorization itself is only a switch.
     team._message_context = TurnContext(
         Person(
             lambda: getattr(agent_os, "user_directory", None),
@@ -541,6 +546,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         work,
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
+        interrupted=InterruptedTurns(lambda: team),
         pages=RulesPages(company_db) if company_db is not None else None,
     )
     # That message is where Super Agent reads the time, so the time is left out of its system message:

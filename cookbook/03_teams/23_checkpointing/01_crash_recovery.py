@@ -3,7 +3,7 @@
 Team parity with ../../02_agents/18_checkpointing/01_crash_recovery.py.
 
 A team persists its own run only at terminal states unless ``checkpoint`` is
-raised. With ``checkpoint="tool-batch"`` the team writes after each team-level
+raised. With ``checkpoint="tool-batch"`` the team writes at the start and after each team-level
 tool batch (a delegation to a member IS a tool batch) with status RUNNING, so a
 worker that dies mid-run leaves the last RUNNING checkpoint behind and
 ``/continue`` resumes it in place.

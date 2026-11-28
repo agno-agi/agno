@@ -17,13 +17,17 @@ SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
 # (see ``is_reserved_principal``) and it may not own a schedule.
 INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
 
-# Reserved runtime schedule: public management must not stop Company pickup.
+# The built-in hourly schedule of Company. An administrator pauses and resumes it through the
+# Scheduler API. Nothing else changes it.
 COMPANY_AUTOMATION_SCHEDULE_ID = "agno-company-automation"
 
 
 def _require_mutable_schedule(schedule_id: str) -> None:
     if schedule_id == COMPANY_AUTOMATION_SCHEDULE_ID:
-        raise ValueError("Company automation is a runtime-managed schedule and cannot be modified")
+        raise ValueError(
+            "Company automation is the built-in hourly schedule of Company. It cannot be changed here. "
+            "An administrator can pause and resume it."
+        )
 
 
 # Matches a run endpoint and captures resource type + ID. ``\Z`` rather than ``$`` so a trailing

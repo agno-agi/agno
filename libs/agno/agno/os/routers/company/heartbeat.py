@@ -577,6 +577,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
 
     # The Scheduler API resumes a Routine through this when an administrator enables one there.
+    # Super Agent's chat tools pause, resume and delete a Routine through these, as the chatting person.
+    agent_os._routine_api_pause = pause_routine
     agent_os._routine_api_resume = resume_routine
 
     @router.post("/routines/{routine_id}/cancel")
@@ -651,6 +653,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(handlers["delete_schedule"], routine_id, request)
         if goal_id:
             await call(manager._unlink_routine, goal_id, routine_id)
+
+    agent_os._routine_api_delete = delete_routine
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):

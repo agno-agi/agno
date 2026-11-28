@@ -1103,17 +1103,9 @@ def _get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        # Only skip messages from history when system_message_role is NOT a standard conversation role.
-        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-        # to preserve conversation continuity.
-        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+        from agno.team import _compaction
 
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
+        history, stored_record, replay_ids = _compaction.history_for_run(team, session, run_response)
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
@@ -1127,6 +1119,20 @@ def _get_run_messages(
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            # Replace the older part of the leader's history with a summary once it has grown
+            # past the configured threshold. Without compaction the history comes back as it is.
+            history_copy = _compaction.apply_compaction(
+                team,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1169,6 +1175,8 @@ def _get_run_messages(
             if text is not None:
                 # Sent as a user message of its own and not stored with the run. A provider that
                 # refuses two user messages in a row has to merge them in its own formatter.
+                # A fold after a refused request leaves it out: team/_compaction.py knows it by
+                # being a user message that is not stored and not from history.
                 run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
 
     # Set messages on run_context so tool hooks can access the current message history
@@ -1256,16 +1264,9 @@ async def _aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        # Only skip messages from history when system_message_role is NOT a standard conversation role.
-        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-        # to preserve conversation continuity.
-        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
+        from agno.team import _compaction
+
+        history, stored_record, replay_ids = _compaction.history_for_run(team, session, run_response)
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
@@ -1279,6 +1280,20 @@ async def _aget_run_messages(
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            # Replace the older part of the leader's history with a summary once it has grown
+            # past the configured threshold. Without compaction the history comes back as it is.
+            history_copy = await _compaction.aapply_compaction(
+                team,
+                session,
+                history_copy,
+                stored_record,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+                replay_ids=replay_ids,
+            )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1321,6 +1336,8 @@ async def _aget_run_messages(
             if text is not None:
                 # Sent as a user message of its own and not stored with the run. A provider that
                 # refuses two user messages in a row has to merge them in its own formatter.
+                # A fold after a refused request leaves it out: team/_compaction.py knows it by
+                # being a user message that is not stored and not from history.
                 run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
 
     # Set messages on run_context so tool hooks can access the current message history

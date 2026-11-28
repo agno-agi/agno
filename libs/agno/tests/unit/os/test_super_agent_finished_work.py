@@ -9,9 +9,9 @@ import pytest
 
 from agno.agent import Agent
 from agno.db.schemas.scheduler import (
+    FINISHED_WORK_REPORT_METADATA_KEY,
     REQUESTED_FROM_METADATA_KEY,
     RESERVED_RUN_METADATA_KEYS,
-    FINISHED_WORK_REPORT_METADATA_KEY,
 )
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
@@ -22,13 +22,13 @@ from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
 from agno.os.manager import finished_work, linked_work
-from agno.os.manager.linked_work import LINKED_WORK_KEY
 from agno.os.manager.finished_work import (
-    READ_TOOLS,
     FINISHED_WORK_LABEL,
     FINISHED_WORK_REPORT_LIMIT,
+    READ_TOOLS,
     FinishedWorkReports,
 )
+from agno.os.manager.linked_work import LINKED_WORK_KEY
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run import background as run_background
@@ -545,12 +545,18 @@ def test_the_switch_off_starts_no_finished_work_report(tmp_path):
 # ----------------------------------------------------------------- only when idle
 
 
-def test_a_conversation_with_a_turn_going_is_not_interrupted(system):
+@pytest.mark.parametrize("stored_when_it_starts", [True, False])
+def test_a_conversation_with_a_turn_going_is_not_interrupted(system, stored_when_it_starts):
+    # Super Agent stores a turn as running when it starts. With that off, only this process knows
+    # the turn is going, and that alone must hold the report back.
+    system.os.manager.checkpoint = "tool-batch" if stored_when_it_starts else "runs"
+
     async def steps():
         run_id = await system.start()
         turn = await system.say_held("What is 17 times 23?")
-        # The person's turn is not stored yet: only this process knows it is going.
-        assert len(system.turns()) == 1
+        assert [finished_work._status(row) for row in system.turns()][1:] == (
+            ["RUNNING"] if stored_when_it_starts else []
+        )
         await system.finish()
         assert system.row(run_id)["status"] == "COMPLETED"
         assert system.reports_stored() == []
@@ -774,6 +780,10 @@ REFUSED = {
     "review_company_task",
     "turn_on_routine_auto_accept",
     "turn_off_routine_auto_accept",
+    # Schedules a person stops, restarts or removes
+    "pause_schedule",
+    "resume_schedule",
+    "delete_schedule",
     # File writes
     "write_company_file",
     "save_company_page",

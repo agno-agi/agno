@@ -29,6 +29,9 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
+    # Set by Super Agent for the foreground run's checkpoints.
+    _checkpoint_owner: Optional[str] = field(default=None, init=False, repr=False, compare=False)
+
     # Runtime-only caller authority. Never reconstructed from persisted run metadata.
     authorization: Any = field(default_factory=current_authorization, repr=False, compare=False)
 

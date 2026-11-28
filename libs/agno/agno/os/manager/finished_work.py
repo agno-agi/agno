@@ -94,6 +94,7 @@ READ_TOOLS = frozenset(
         "read_past_session",
         "read_result",
         "search_result",
+        "search_compacted_history",
         "search_knowledge_base",
     }
 )

@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent.followup import FollowupConfig
+from agno.compaction.compaction import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -33,6 +34,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionResult
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -59,6 +61,7 @@ from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.team import (
+    _compaction,
     _default_tools,
     _init,
     _managers,
@@ -209,7 +212,7 @@ class Team:
     # --- Checkpointing ---
     # When to persist run state to the database. Mirrors Agent.checkpoint.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "tool-batch" — write after each team-level model turn (post-gather barrier)
+    #   "tool-batch" — write before the first model call and after each batch of tool results
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
@@ -341,6 +344,15 @@ class Team:
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
+
+    # --- Compaction ---
+    # Keep a long conversation inside the context window: the team leader's
+    # older messages are stored as they were and replaced in context by a
+    # summary, and the leader can search what was stored. True compacts only
+    # when the model rejects a request as too long; a Compaction sets the size
+    # to compact at, what to keep verbatim and the summary model. Members are
+    # not compacted by this setting. Needs SqliteDb or PostgresDb.
+    compaction: Optional[Union[bool, "Compaction"]] = None
 
     # --- Result Offloading ---
     # Store tool results and member answers longer than a threshold as files
@@ -564,6 +576,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction: Optional[Union[bool, Compaction]] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -683,6 +696,7 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            compaction=compaction,
             offload_tool_results=offload_tool_results,
             metadata=metadata,
             reasoning_model=reasoning_model,
@@ -1769,6 +1783,23 @@ class Team:
         return await _session.aupdate_session_state(
             self, session_state_updates=session_state_updates, session_id=session_id
         )
+
+    def compact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Compact the team leader's history in this session now, without waiting for the size trigger.
+
+        Only the leader's conversation is folded; members are left as they are. The stored
+        conversation is never modified - compaction shortens what is sent to the model.
+
+        Returns a CompactionResult carrying a status and a human-readable message. A fold can be
+        declined, for example when the span is too small to pay for its summary; a decline is
+        returned as a status, not raised. Check ``result.compacted``, or show ``result.message``. ``result.metrics`` carries the summarizer's token usage under
+        ``compaction_model``, or None when no summary was made.
+        """
+        return _compaction.compact_session(self, session_id=session_id, user_id=user_id)
+
+    async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Async variant of :meth:`compact`."""
+        return await _compaction.acompact_session(self, session_id=session_id, user_id=user_id)
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)

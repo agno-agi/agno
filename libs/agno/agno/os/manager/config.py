@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
 
 if TYPE_CHECKING:
+    from agno.compaction import Compaction
     from agno.offload import ResultStore
 
 from agno.registry._reserved import MANAGER_TEAM_ID
@@ -46,6 +47,13 @@ class OSManager:
         instructions: Extra instructions for the manager.
         required_env: Environment variables to check during diagnostics.
         num_history_runs: Number of past runs to include in the manager's context.
+        compaction: Keep a long conversation with the manager inside the context window:
+            its older messages are stored as they were and replaced in context by a
+            summary, and the manager can search what was stored. Off by default. True
+            compacts only when the model rejects a request as too long; a Compaction
+            sets the size to compact at, and then every turn since the last
+            compaction is sent, not only the last num_history_runs. Platform Builder
+            is not compacted. Needs SqliteDb or PostgresDb.
         tool_call_limit: Maximum ordinary tool executions per manager run,
             including delegations. Defaults to 96; None disables the limit. With
             Company on, each Mini Agent run is under the same limit.
@@ -69,6 +77,7 @@ class OSManager:
     instructions: Optional[str] = None
     required_env: Tuple[str, ...] = ()
     num_history_runs: int = 5
+    compaction: Optional[Union[bool, "Compaction"]] = None
     tool_call_limit: Optional[int] = 96
     member_tool_call_limit: Optional[int] = 96
     report_finished_work: bool = True

@@ -13,7 +13,7 @@ where the filesystem backend is implemented for SQLite and PostgreSQL only.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Collection, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.models.message import Message
@@ -83,12 +83,43 @@ def stores_compaction_records(db: Any) -> bool:
 
 
 class CompactionArchive:
-    """Reads and writes one session's compaction records."""
+    """Reads and writes one session's compaction records.
 
-    def __init__(self, db: Any, session_id: str, user_id: Optional[str] = None) -> None:
+    A Team and its members run in one session, so one session can hold the records of more than
+    one conversation. ``message_ids`` names the messages of the conversation being read: a record
+    is read only when the message it is anchored on is one of them. None reads every record of the
+    session, which is right when the session holds one conversation. Given as a function, the ids
+    are read each time records are, so a long-lived archive sees messages stored after it was made.
+
+    ``run_id`` is the run this archive is held by. A fold that run makes is anchored on a message
+    the session does not hold until the run is stored, so its records are read by their run id.
+    """
+
+    def __init__(
+        self,
+        db: Any,
+        session_id: str,
+        user_id: Optional[str] = None,
+        message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
+        run_id: Optional[str] = None,
+    ) -> None:
         self.db = db
         self.session_id = session_id
         self.user_id = user_id
+        self.message_ids = message_ids
+        self.run_id = run_id
+
+    def _in_this_conversation(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The rows this conversation made, or every row when no conversation is named."""
+        message_ids = self.message_ids() if callable(self.message_ids) else self.message_ids
+        if message_ids is None:
+            return rows
+        return [
+            row
+            for row in rows
+            if row.get("first_kept_message_id") in message_ids
+            or (self.run_id is not None and row.get("run_id") == self.run_id)
+        ]
 
     def _row(self, record: Any, messages: List[Message]) -> Dict[str, Any]:
         return {
@@ -131,12 +162,21 @@ class CompactionArchive:
             log_warning(f"Could not store compaction record: {e}")
         return False
 
-    def latest(self, up_to_run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def latest(
+        self,
+        up_to_run_id: Optional[str] = None,
+        earlier_run_ids: Optional[Collection[str]] = None,
+        started_at: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         """The record in force, as of ``up_to_run_id`` when one is given.
 
         Resuming or forking an earlier run must use the fold *that run saw*. A later record
         summarizes turns the earlier run never had, and its anchor sits ahead of where that run
         was, so applying it would show the resumed run a summary of its own future.
+
+        Most runs make no fold and inherit one from a run before them. ``earlier_run_ids`` names
+        the runs before the target, so their folds count. ``started_at`` is when the target began,
+        which places a manual fold: it has no run, only a time.
         """
         try:
             rows = self._method("get_compactions_for_session")(self.session_id)
@@ -145,16 +185,18 @@ class CompactionArchive:
         except Exception as e:  # noqa: BLE001
             log_warning(f"Could not read compaction records: {e}")
             return None
+        rows = self._in_this_conversation(rows or [])
         if not rows:
             return None
         if up_to_run_id is None:
             return rows[0]
-        # Rows are newest first, so the first at or before the target run is the one it saw.
-        seen_target = False
+        # Rows are newest first, so the first made at or before the target run is the one it saw.
+        at_or_before = {up_to_run_id, *(earlier_run_ids or ())}
         for row in rows:
-            if row.get("run_id") == up_to_run_id:
-                seen_target = True
-            if seen_target:
+            run_id = row.get("run_id")
+            if run_id in at_or_before:
+                return row
+            if run_id is None and started_at is not None and (row.get("created_at") or 0) < started_at:
                 return row
         return None
 
@@ -169,7 +211,7 @@ class CompactionArchive:
         if not terms:
             return []
         try:
-            return self._method("search_compactions")(self.session_id, terms, limit)
+            return self._in_this_conversation(self._method("search_compactions")(self.session_id, terms, limit))
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001
