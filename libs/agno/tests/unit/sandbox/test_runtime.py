@@ -243,6 +243,95 @@ def test_frame_and_journal_limits(dispatch, monkeypatch):
         runtime._append(directory, {"content": "too large"})
 
 
+def test_turn_with_an_oversize_event_finishes_and_the_event_is_shortened(dispatch):
+    root, _, request = dispatch
+    text = "start " + "x" * 300_000 + " end"
+    request["input"] = text
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    page = runtime._poll(root, "e", 0)
+    assert page["result"]["type"] == "execution_finished"
+    assert page["result"]["run"]["content"] == text
+    (frame,) = page["frames"]
+    content = frame["event"]["content"]
+    assert len(runtime._frame(frame["event"])) <= runtime._MAX_FRAME
+    assert content.startswith("start xxx") and content.endswith("xxx end")
+    kept = runtime._MAX_FRAME // 4
+    assert f"[... {len(text) - kept} of {len(text)} characters cut here: this event was larger" in content
+    assert frame["event"]["run_id"] == "r" and frame["event"]["session_id"] == "s"
+
+
+@pytest.mark.asyncio
+async def test_command_output_over_the_frame_limit_does_not_end_the_turn(tmp_path, monkeypatch):
+    from dataclasses import dataclass
+
+    from agno.agents.base import BaseExternalAgent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+
+    output = "diff --git a/requirements.txt b/requirements.txt\n" + "+line\n" * 50_000 + "[exit code 1]"
+
+    @dataclass
+    class Engineer(BaseExternalAgent):
+        async def _arun_adapter_stream(self, input, **kwargs):
+            call = dict(tool_call_id="c1", tool_name="shell", tool_args={"command": "git diff"})
+            yield ToolCallStartedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call))
+            yield ToolCallCompletedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call, result=output))
+            yield RunContentEvent(content="done", run_id=kwargs["run_id"])
+
+    def make_agent(request, native):
+        return Engineer(id="a", db=SqliteDb(db_file=str(native / "history.db")), strict_persistence=True)
+
+    monkeypatch.setenv("HOME", os.environ.get("HOME", ""))
+    monkeypatch.setenv("CODEX_HOME", "unused")
+    monkeypatch.setattr(runtime, "_agent", make_agent)
+    directory = tmp_path / "jobs/e"
+    directory.mkdir(parents=True)
+    result = await runtime._execute(directory, {"sdk": "codex", "run_id": "r", "session_id": "s", "input": "upgrade"})
+    assert result["type"] == "execution_finished" and result["run"]["content"] == "done"
+    # The run the host stores keeps the whole output; only the journaled event is shortened.
+    assert result["run"]["tools"][0]["result"] == output
+    lines = (directory / "events.jsonl").read_bytes().splitlines(keepends=True)
+    assert all(len(line) <= runtime._MAX_FRAME for line in lines)
+    events = [json.loads(line)["event"] for line in lines]
+    assert [event["event"] for event in events][-3:] == ["ToolCallStarted", "ToolCallCompleted", "RunContent"]
+    shown = events[-2]["tool"]["result"]
+    assert shown.startswith("diff --git a/requirements.txt") and shown.endswith("[exit code 1]")
+    assert f"of {len(output)} characters cut here" in shown
+    assert events[-2]["tool"]["tool_args"] == {"command": "git diff"}
+
+
+def test_oversize_event_is_cut_until_its_encoded_frame_fits():
+    # Each of these characters takes six bytes once encoded, so the first cut is not enough.
+    text = "é" * 100_000
+    frame = runtime._fit({"event": "RunContent", "run_id": "r", "content": text, "reasoning_content": text})
+    assert len(frame) <= runtime._MAX_FRAME
+    event = json.loads(frame)["event"]
+    for key in ("content", "reasoning_content"):
+        assert event[key].startswith("é") and event[key].endswith("é")
+        assert f"of {len(text)} characters cut here" in event[key]
+    assert event["run_id"] == "r"
+
+
+def test_event_within_the_frame_limit_is_journaled_unchanged(dispatch):
+    root, _, request = dispatch
+    runtime._start(root, request)
+    event = {"event": "RunContent", "run_id": "r", "content": "x" * 200_000}
+    runtime._append(runtime._job(root, "e"), event)
+    assert runtime._poll(root, "e", 0)["frames"] == [{"type": "event", "event": event}]
+
+
+def test_event_that_cannot_be_shortened_to_fit_is_still_refused(dispatch):
+    root, _, request = dispatch
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    # No single string is long: there is nothing to cut that leaves a readable event.
+    with pytest.raises(SandboxError, match="frame limit"):
+        runtime._append(directory, {"event": "RunContent", "run_id": "r", "items": ["x" * 600] * 1000})
+    assert not (directory / "events.jsonl").exists()
+
+
 HANDLE = SandboxHandle("id", "name", "a", "s", 1, "running", "digest")
 
 
