@@ -8293,6 +8293,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
@@ -8329,7 +8330,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             if current is not None and fields.get("project_id") is not None:
                 fields.update(
-                    await sess.run_sync(require_move, goals, projects, current, fields["project_id"], moved_by)
+                    await sess.run_sync(require_move, goals, projects, current, fields["project_id"], moved_by, goal_id)
                 )
             result = (
                 await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
