@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence,
 
 from agno.compaction._cut import leading_system_count
 from agno.compaction._tokens import acount_request, count_request, estimate_tokens
+from agno.compaction._view import without_chaining
 from agno.compaction.compaction import Compaction
 from agno.compaction.types import CompactionRecord, CompactionResult, CompactionStatus
 from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
@@ -149,6 +150,40 @@ def _compaction_as_of(run_response: Optional["CompactionRun"]) -> Optional[str]:
     if run_response is None:
         return None
     return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
+
+
+def _without_rebuilt_runs_chaining(
+    session: "CompactionSession", history: List[Message], record: Optional[CompactionRecord]
+) -> List[Message]:
+    """``history``, with nothing to continue from on the replies of a regenerated or forked run.
+
+    Such a run is rebuilt as its source run was, and that can be without the fold in force: the
+    fold was made after the source run, or the message it is anchored on is in the run being
+    replaced. The rebuilt run is then sent the turns the fold replaced, so the provider's
+    conversation behind its replies holds them. Those replies are new, so their time says they
+    were made from the fold. Continuing from one would bring the folded turns back and the summary
+    would never be sent.
+
+    Which fold a rebuilt run was sent is not stored, so none of them is continued from. That costs
+    one request sent in full after a regeneration or a fork, and the reply to that request is
+    continued from as usual. A fork copies its source run's messages with the same ids, so the
+    copied replies and the ones they were copied from are covered too. The stored messages are
+    not changed.
+    """
+    if record is None or not record.summary:
+        return history
+    rebuilt: Set[str] = set()
+    for run in getattr(session, "runs", None) or []:
+        if _compaction_as_of(run) is not None:
+            rebuilt.update(m.id for m in run.messages or [] if m.role == "assistant" and m.id is not None)
+    if rebuilt:
+        for index in range(len(history) - 1, -1, -1):
+            if history[index].id in rebuilt:
+                # An older response ID would also skip the rebuilt run's tool calls on replay,
+                # leaving their results unpaired. Only replies after this one can resume the chain.
+                end = index + 1
+                return [without_chaining(m) for m in history[:end]] + history[end:]
+    return history
 
 
 def _estimated_context_tokens(
@@ -329,14 +364,19 @@ def history_for_run(
         return fetch(owner.num_history_runs, owner.num_history_messages), None, None
 
     history = fetch(_compaction_history_runs(owner), None)
-    record = _stored_compaction(owner, session, _compaction_as_of(run_response), own_message_ids=own_message_ids)
+    # A continued or regenerated run brings its own messages, where a fold made inside it is anchored
+    run_input = getattr(run_response, "messages", None) or []
+    record = _stored_compaction(
+        owner, session, _compaction_as_of(run_response), messages=run_input or None, own_message_ids=own_message_ids
+    )
     anchor = record.first_kept_message_id if record is not None and record.summary else None
-    if anchor is not None and not any(m.id == anchor for m in history):
+    if anchor is not None and not any(m.id == anchor for m in [*history, *run_input]):
         everything = fetch(None, None)
         start = next((i for i, m in enumerate(everything) if m.id == anchor), None)
         if start is not None:
             history = everything[start:]
 
+    history = _without_rebuilt_runs_chaining(session, history, record)
     if compaction.compact_at_tokens is not None:
         # A threshold is the limit, so compaction owns the window: everything since the last fold
         # is replayed. Capping it at num_history_runs meant a threshold above a few turns never
@@ -353,16 +393,18 @@ def replayed_history(
     history: List[Message],
     record: Optional[CompactionRecord],
     replay_ids: Optional[Counter[str]],
+    run_input: Optional[List[Message]] = None,
 ) -> List[Message]:
     """What a continued run sends from ``history``: the stored fold replayed, never a new one.
 
     The run checked this same history before it paused, and its own messages are never folded.
-    Without compaction the history comes back as it is.
+    ``run_input`` is the continued run's own messages, which a fold made inside that run is
+    anchored on. Without compaction the history comes back as it is.
     """
     compaction = compaction_of(owner)
     if compaction is None:
         return history
-    return _replayed_view(compaction, history, record, replay_ids)
+    return _replayed_view(compaction, history, record, replay_ids, run_input)
 
 
 def _replayed_view(
@@ -370,16 +412,22 @@ def _replayed_view(
     history: List[Message],
     record: Optional[CompactionRecord],
     replay_ids: Optional[Counter[str]],
+    run_input: Optional[List[Message]] = None,
 ) -> List[Message]:
     """What a run sends from ``history``.
 
     Once a fold exists, the summary and everything from its anchor onward - the anchor has to be
-    replayed, or the summary is dropped along with the turns it replaced. Before that, the replay
-    window when there is one, else all of ``history``.
+    replayed, or the summary is dropped along with the turns it replaced. When the anchor is in
+    ``run_input`` instead, all of ``history`` sits in front of it, so the summary is sent alone.
+    Before the first fold, the replay window when there is one, else all of ``history``.
     """
     if record is not None and record.summary and record.first_kept_message_id:
-        if any(m.id == record.first_kept_message_id for m in history):
+        anchor = record.first_kept_message_id
+        if any(m.id == anchor for m in history):
             return compaction.apply_record(history, record)
+        if any(m.id == anchor for m in run_input or []):
+            # A stand-in for the anchor lets the view place the summary; the run's input follows it
+            return compaction.apply_record([*history, Message(id=anchor, role="user")], record)[:-1]
     if replay_ids is None:
         return history
     # The window is the newest runs, so match it from the end, each id as many times as the window

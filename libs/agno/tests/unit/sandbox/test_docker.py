@@ -1030,7 +1030,13 @@ async def test_runtime_rpc_rejects_arbitrary_commands():
     "exit_code, stderr, oom_killed, expected",
     [
         (-9, "", b"true\n", "out of memory"),
-        (-9, "", b"false\n", ""),
+        (
+            -9,
+            "",
+            b"false\n",
+            "the runtime request was killed (signal 9); Docker has recorded no out-of-memory kill in this "
+            "sandbox, so the sandbox's own memory limit is not shown to be the cause",
+        ),
         (-9, "Traceback", b"true\n", "Traceback"),
         (1, "", b"true\n", ""),
     ],
