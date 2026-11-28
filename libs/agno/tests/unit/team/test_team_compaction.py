@@ -20,7 +20,13 @@ from agno.session import AgentSession, TeamSession
 from agno.team import Team
 from agno.team import _compaction as team_compaction
 from agno.team.mode import TeamMode
-from tests.unit.compaction.test_compaction import _RecordingModel, _StubModel
+from tests.unit.compaction.test_compaction import (
+    _RecordingModel,
+    _StubModel,
+    pause_after_a_refused_request,
+    refusing_model,
+    sends_the_summary_not_the_folded_turns,
+)
 
 MODES = ["run", "stream", "arun", "astream"]
 PAD = "pad " * 300
@@ -755,6 +761,37 @@ def test_the_unstored_context_is_kept_out_of_an_overflow_fold_that_reaches_the_n
     assert run_messages.messages is messages
     assert [m.content for m in messages[-2:]] == [_Note.TEXT, "the newest question"] and messages[-2] is note
     assert _Note.TEXT not in team.compaction.model.asked[-1]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_run_folded_on_its_own_question_continues_and_regenerates(use_async):
+    """The Team twin of the Agent test: a leader run paused after a fold anchored on its own
+    question is continued from the db and regenerated with the summary, not the folded turns."""
+    from agno.run.base import RunStatus
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def delete() -> str:
+        """Delete it."""
+        return "deleted"
+
+    team = _team(
+        model=refusing_model(2000, "delete"),
+        tools=[delete],
+        num_history_runs=6,
+        compaction=Compaction(on_context_overflow=True, uncompacted_runs=1, model=_Summarizer()),
+    )
+    paused = pause_after_a_refused_request(team)
+
+    kwargs = dict(run_id=paused.run_id, requirements=paused.requirements, session_id="s")
+    continued = asyncio.run(team.acontinue_run(**kwargs)) if use_async else team.continue_run(**kwargs)
+    assert continued.status == RunStatus.completed, continued.content
+    assert sends_the_summary_not_the_folded_turns(team.model.requests[-1])
+
+    kwargs = dict(run_id=paused.run_id, session_id="s", regenerate=True)
+    regenerated = asyncio.run(team.acontinue_run(**kwargs)) if use_async else team.continue_run(**kwargs)
+    assert regenerated.status == RunStatus.completed, regenerated.content
+    assert sends_the_summary_not_the_folded_turns(team.model.requests[-1])
 
 
 def test_overflow_recovery_does_nothing_without_compaction():

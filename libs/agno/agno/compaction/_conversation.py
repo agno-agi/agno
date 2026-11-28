@@ -298,9 +298,13 @@ def history_for_run(
         return fetch(owner.num_history_runs, owner.num_history_messages), None, None
 
     history = fetch(_compaction_history_runs(owner), None)
-    record = _stored_compaction(owner, session, _compaction_as_of(run_response), own_message_ids=own_message_ids)
+    # A continued or regenerated run brings its own messages, where a fold made inside it is anchored
+    run_input = getattr(run_response, "messages", None) or []
+    record = _stored_compaction(
+        owner, session, _compaction_as_of(run_response), messages=run_input or None, own_message_ids=own_message_ids
+    )
     anchor = record.first_kept_message_id if record is not None and record.summary else None
-    if anchor is not None and not any(m.id == anchor for m in history):
+    if anchor is not None and not any(m.id == anchor for m in [*history, *run_input]):
         everything = fetch(None, None)
         start = next((i for i, m in enumerate(everything) if m.id == anchor), None)
         if start is not None:
@@ -322,16 +326,18 @@ def replayed_history(
     history: List[Message],
     record: Optional[CompactionRecord],
     replay_ids: Optional[Counter[str]],
+    run_input: Optional[List[Message]] = None,
 ) -> List[Message]:
     """What a continued run sends from ``history``: the stored fold replayed, never a new one.
 
     The run checked this same history before it paused, and its own messages are never folded.
-    Without compaction the history comes back as it is.
+    ``run_input`` is the continued run's own messages, which a fold made inside that run is
+    anchored on. Without compaction the history comes back as it is.
     """
     compaction = compaction_of(owner)
     if compaction is None:
         return history
-    return _replayed_view(compaction, history, record, replay_ids)
+    return _replayed_view(compaction, history, record, replay_ids, run_input)
 
 
 def _replayed_view(
@@ -339,16 +345,22 @@ def _replayed_view(
     history: List[Message],
     record: Optional[CompactionRecord],
     replay_ids: Optional[Counter[str]],
+    run_input: Optional[List[Message]] = None,
 ) -> List[Message]:
     """What a run sends from ``history``.
 
     Once a fold exists, the summary and everything from its anchor onward - the anchor has to be
-    replayed, or the summary is dropped along with the turns it replaced. Before that, the replay
-    window when there is one, else all of ``history``.
+    replayed, or the summary is dropped along with the turns it replaced. When the anchor is in
+    ``run_input`` instead, all of ``history`` sits in front of it, so the summary is sent alone.
+    Before the first fold, the replay window when there is one, else all of ``history``.
     """
     if record is not None and record.summary and record.first_kept_message_id:
-        if any(m.id == record.first_kept_message_id for m in history):
+        anchor = record.first_kept_message_id
+        if any(m.id == anchor for m in history):
             return compaction.apply_record(history, record)
+        if any(m.id == anchor for m in run_input or []):
+            # A stand-in for the anchor lets the view place the summary; the run's input follows it
+            return compaction.apply_record([*history, Message(id=anchor, role="user")], record)[:-1]
     if replay_ids is None:
         return history
     # The window is the newest runs, so match it from the end, each id as many times as the window
