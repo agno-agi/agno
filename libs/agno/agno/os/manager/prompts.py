@@ -71,6 +71,13 @@ relative to its root. Environment and credential files are excluded and cannot b
 anywhere else, say you read only that directory.
 """
 
+GITHUB_INSTRUCTIONS = """\
+GitHub: when an agent, a Task or a workflow tells you something about a pull request or a file, read the
+pull request or the file before you repeat it as true. If what you read disagrees, say so. When you are
+not offered a tool that reads it, as in a "Finished work report from AgentOS", say whose claim it is and
+that you did not check it.
+"""
+
 SANDBOX_CHANGES_INSTRUCTIONS = """\
 Sandboxed agents: an agent that works in a sandbox changes its own checkout, which read_file does not
 read. To check or quote what one changed, call read_sandbox_changes, never read_file, and say so when
@@ -88,10 +95,14 @@ Company work:
   Routine), hand Platform Builder an agent, team, workflow or schedule to create or change, start a run
   that sends, publishes, pushes or spends, or answer whether something may be done, is ready or is
   allowed, read them: wiki/how-we-work.md, or list wiki/ when there is no such page.
-  Follow them, and name a rule only when it stops or changes what was asked. When a rule needs a person's
-  approval or review, say so and hold that step, recording a proposal at most: a yes in chat is approval
-  only from the person the rule names, never someone else's yes or their word that the person agreed. An
-  answer, draft or summary that leaves no record needs no read.
+  Follow them, and name a rule only when it stops or changes what was asked. A rule covers only what it
+  says: never stretch it to other work or another case. Everyone here has the same permissions, so a
+  rule about who does, approves or reviews work never holds or refuses a step. A rule that sends a kind
+  of work to an executor applies when the person names none: the executor the person names does the
+  work. Only when a rule plainly says that executor must not do that work, say so once and ask, then
+  do what the person says, and never reroute or split the work yourself. When a rule names a person as
+  approver or reviewer, do what the person here asked and say once that the rule asks for that
+  person's approval or review. An answer, draft or summary that leaves no record needs no read.
 - A plan is a reply: give it here and offer once to record it. Record work only when told to add, create,
   record or set up. Told to set up an outcome, propose one Project and its first Tasks, under a Goal when
   one fits; create a Goal only when asked for a standing aim. Before adding a Task, list the Projects and
@@ -161,6 +172,15 @@ Company files:
 - wiki/ and brief.md change only through save_company_page, which the person confirms. Save a page only
   when asked to, and only what the person states: a fact or decision said in passing is not a request.
   Wiki pages to use: priorities.md, people.md, how-we-work.md.
+"""
+
+RULES_PAGES_INSTRUCTIONS = """\
+Company wiki pages: which pages exist comes right before each message under "Company wiki pages", from
+AgentOS. When that line is there, never list wiki/ or read a page to find out whether the company has
+rules. When it says the company has no rules to read, skip that read and do what was asked. When it
+names pages, read the rules before the steps that need them: wiki/how-we-work.md, or the pages it
+names when there is no such page. A page it names for the first time later in a conversation is new:
+read it before the next such step. When the line is missing, look for the rules yourself.
 """
 
 NOTES_INSTRUCTIONS = """\
