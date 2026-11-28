@@ -984,8 +984,9 @@ class CompanyTools(Toolkit):
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
                 is required before accepting or running them.
-            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
-                Project's Goal and another Goal is refused.
+            goal_id: The Goal this Task serves: check list_company_goals. Its executor reads that
+                Goal's Sources, and none with no Goal. Null only when it serves no Goal. In a Project,
+                null takes the Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1354,8 +1355,9 @@ class CompanyTools(Toolkit):
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
                 is required before accepting or running them.
-            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
-                Project's Goal and another Goal is refused.
+            goal_id: The Goal this Task serves: check list_company_goals. Its executor reads that
+                Goal's Sources, and none with no Goal. Null only when it serves no Goal. In a Project,
+                null takes the Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
