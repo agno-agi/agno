@@ -204,3 +204,85 @@ async def test_without_authorization_every_caller_can_stop_a_company_schedule(db
         assert client.post(AUTOMATION + "/disable").json()["enabled"] is False
         assert client.post(AUTOMATION + "/enable").json()["enabled"] is True
         assert client.delete("/schedules/" + routine_id).status_code == 204
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trust_token_scopes", [None, False])
+async def test_an_administrator_by_a_stored_role_stops_company_schedules(db, trust_token_scopes):
+    from agno.os.authz import Authorization
+
+    authorization = Authorization(verification_keys=[SECRET], algorithm="HS256", trust_token_scopes=trust_token_scopes)
+    authorization.define_role("admin", ["agent_os:admin"])
+    authorization.define_role("member", ["schedules:read", "schedules:write", "schedules:delete", "agents:run"])
+    authorization.seed(admin="ada").assign("sam", "member")
+    agent_os = AgentOS(
+        id="admin-stop",
+        db=db,
+        agents=[Agent(id="reader", db=db, telemetry=False)],
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=authorization,
+    )
+    await _automation(db)
+    # The role is in the role store. The token carries no scope at all.
+    admin, member = _headers("ada", []), _headers("sam", [])
+    with TestClient(agent_os.get_app()) as client:
+        _, routine_id = _routine(client, headers=admin)
+        path = "/schedules/" + routine_id
+
+        assert client.post(AUTOMATION + "/disable", headers=member).status_code == 403
+        assert client.post(path + "/disable", headers=member).json()["detail"] == ROUTINES_ONLY
+
+        assert client.post(AUTOMATION + "/disable", headers=admin).json()["enabled"] is False
+        assert client.post(AUTOMATION + "/enable", headers=admin).json()["enabled"] is True
+        assert client.post(path + "/disable", headers=admin).json()["enabled"] is False
+        assert client.post(path + "/enable", headers=admin).json()["enabled"] is True
+        assert client.delete(path, headers=admin).status_code == 204
+
+
+def test_a_routine_with_a_live_run_is_not_deleted_until_the_run_stops(db):
+    import time
+
+    from agno.run.cancel import is_cancelled
+
+    with TestClient(_os(db).get_app()) as client:
+        _, routine_id = _routine(client)
+        now = int(time.time())
+        run = dict(id="schedule-run", schedule_id=routine_id, attempt=1, triggered_at=now, status="running")
+        db.create_schedule_run({**run, "run_id": "routine-run", "session_id": "routine-session", "created_at": now})
+
+        refused = client.delete("/schedules/" + routine_id, headers=OTHER_ADMIN)
+
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"].endswith(f"POST /company/routines/{routine_id}/cancel")
+        # The Routine and its run are still there, so the run can be cancelled.
+        assert db.get_schedule(routine_id) is not None
+        assert client.post(f"/company/routines/{routine_id}/cancel", headers=ADMIN).status_code == 200
+        assert is_cancelled("routine-run")
+        assert client.delete("/schedules/" + routine_id, headers=OTHER_ADMIN).status_code == 204
+        assert db.get_schedule(routine_id) is None
+
+
+def test_a_company_schedule_with_no_goal_is_deleted_with_a_live_run(db):
+    import time
+
+    with TestClient(_os(db).get_app()) as client:
+        orphan = Schedule(
+            id="orphan",
+            name="this-agentos.agentos-maintenance",
+            cron_expr="0 9 * * *",
+            endpoint="/agents/company-manager-internal/runs",
+            managed_by="company",
+            payload={"message": "Maintain"},
+            next_run_at=1,
+        )
+        db.create_schedule(orphan.to_dict())
+        now = int(time.time())
+        db.create_schedule_run(
+            dict(id="orphan-run", schedule_id="orphan", attempt=1, triggered_at=now, status="running", created_at=now)
+        )
+
+        # The cancel route cannot reach it, so refusing the delete would leave nobody able to remove it.
+        assert client.post("/company/routines/orphan/cancel", headers=ADMIN).status_code == 409
+        assert client.delete("/schedules/orphan", headers=ADMIN).status_code == 204
+        assert db.get_schedule("orphan") is None
