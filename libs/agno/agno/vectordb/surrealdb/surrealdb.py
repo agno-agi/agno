@@ -15,6 +15,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.surrealdb import arun_query, run_query
 from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace
 from agno.vectordb.distance import Distance
 
@@ -297,14 +298,15 @@ class SurrealDb(VectorDb):
         if self._schema_ensured:
             return
         log_debug(f"Ensuring schema for collection: {self.collection}")
-        self.client.query(
+        run_query(
+            self.client,
             self.CREATE_TABLE_QUERY.format(
                 collection=self.collection,
                 distance=self.distance,
                 dimensions=self.dimensions,
                 efc=self.efc,
                 m=self.m,
-            )
+            ),
         )
         self._schema_ensured = True
 
@@ -313,14 +315,15 @@ class SurrealDb(VectorDb):
         if self._schema_ensured:
             return
         log_debug(f"Ensuring schema for collection: {self.collection}")
-        await self.async_client.query(
+        await arun_query(
+            self.async_client,
             self.CREATE_TABLE_QUERY.format(
                 collection=self.collection,
                 distance=self.distance,
                 dimensions=self.dimensions,
                 efc=self.efc,
                 m=self.m,
-            )
+            ),
         )
         self._schema_ensured = True
 
@@ -339,7 +342,7 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if document exists: {name}")
-        result = self.client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
+        result = run_query(self.client, self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
         return bool(self._extract_result(result))
 
     def id_exists(self, id: str) -> bool:
@@ -354,7 +357,8 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Checking if document exists by ID: {id}")
         # Bind via type::record, the way the upsert writes it: a string never equals a record link
-        result = self.client.query(
+        result = run_query(
+            self.client,
             self.ID_EXISTS_QUERY.format(collection=self.collection),
             {"table": self.collection, "record_id": id},
         )
@@ -374,7 +378,8 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
-        result = self.client.query(
+        result = run_query(
+            self.client,
             self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
             params,
         )
@@ -462,7 +467,7 @@ class SurrealDb(VectorDb):
                 # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
-                self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+                run_query(self.client, self.UPSERT_QUERY, data)
             else:
                 self.client.create(self.collection, data)
 
@@ -510,7 +515,7 @@ class SurrealDb(VectorDb):
             search_params.update(self._build_filter_params(filters))
         if user_id is not None:
             search_params["scope_user_id"] = user_id
-        response: Any = self.client.query(search_query, search_params)
+        response: Any = run_query(self.client, search_query, search_params)
         log_debug(f"Search response: {response}")
 
         documents = []
@@ -529,7 +534,7 @@ class SurrealDb(VectorDb):
     def drop(self) -> None:
         """Drop the vector collection."""
         log_debug(f"Dropping collection: {self.collection}")
-        self.client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        run_query(self.client, self.DROP_TABLE_QUERY.format(collection=self.collection))
         # The table is gone, so the next create()/write must re-run the DEFINEs
         self._schema_ensured = False
 
@@ -541,7 +546,7 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if collection exists: {self.collection}")
-        response = self.client.query(self.INFO_DB_QUERY)
+        response = run_query(self.client, self.INFO_DB_QUERY)
         result = self._extract_result(response)
         if isinstance(result, dict) and "tables" in result:
             return self.collection in result["tables"]
@@ -555,7 +560,7 @@ class SurrealDb(VectorDb):
 
         """
         try:
-            self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
+            run_query(self.client, self.DELETE_ALL_QUERY.format(collection=self.collection))
             return True
         except Exception as e:
             log_error(f"Error deleting all documents: {str(e)}")
@@ -577,7 +582,8 @@ class SurrealDb(VectorDb):
             # The write folds the owner into the id, so match the shared record plus every owned
             # fold of it: this method takes no user_id and clears the document for all owners
             escaped = self._escape_record_id_part(id)
-            result = self.client.query(
+            result = run_query(
+                self.client,
                 self.DELETE_BY_ID_QUERY.format(collection=self.collection),
                 {"table": self.collection, "record_id": escaped, "owned_prefix": f"{escaped}:"},
             )
@@ -598,7 +604,9 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Deleting documents by name: {name}")
         try:
-            result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
+            result = run_query(
+                self.client, self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name}
+            )
             return bool(self._extract_result(result))
         except Exception as e:
             log_error(f"Error deleting documents by name '{name}': {str(e)}")
@@ -629,7 +637,7 @@ class SurrealDb(VectorDb):
             query = self.DELETE_BY_METADATA_QUERY.format(
                 collection=self.collection, conditions=" AND ".join(conditions)
             )
-            result = self.client.query(query, params)
+            result = run_query(self.client, query, params)
             return bool(self._extract_result(result))
         except Exception as e:
             log_error(f"Error deleting documents by metadata {metadata}: {str(e)}")
@@ -652,7 +660,8 @@ class SurrealDb(VectorDb):
             params: Dict[str, Any] = {"content_id": content_id}
             if user_id is not None:
                 params["scope_user_id"] = user_id
-            result = self.client.query(
+            result = run_query(
+                self.client,
                 self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection, scope_condition=scope_condition),
                 params,
             )
@@ -676,7 +685,8 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Deleting documents by content hash: {content_hash}")
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
-        result = self.client.query(
+        result = run_query(
+            self.client,
             self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
             params,
         )
@@ -711,7 +721,8 @@ class SurrealDb(VectorDb):
             True if the document exists, False otherwise.
 
         """
-        response = await self.async_client.query(
+        response = await arun_query(
+            self.async_client,
             self.NAME_EXISTS_QUERY.format(collection=self.collection),
             {"name": name},
         )
@@ -731,7 +742,8 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
-        response = await self.async_client.query(
+        response = await arun_query(
+            self.async_client,
             self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
             params,
         )
@@ -752,7 +764,8 @@ class SurrealDb(VectorDb):
         """
         log_debug(f"Deleting documents by content hash: {content_hash}")
         params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
-        result = await self.async_client.query(
+        result = await arun_query(
+            self.async_client,
             self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
             params,
         )
@@ -841,7 +854,7 @@ class SurrealDb(VectorDb):
                 # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
-                await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+                await arun_query(self.async_client, self.UPSERT_QUERY, data)
             else:
                 await self.async_client.create(self.collection, data)
 
@@ -888,7 +901,7 @@ class SurrealDb(VectorDb):
             search_params.update(self._build_filter_params(filters))
         if user_id is not None:
             search_params["scope_user_id"] = user_id
-        response: Any = await self.async_client.query(search_query, search_params)
+        response: Any = await arun_query(self.async_client, search_query, search_params)
         log_debug(f"Search response: {response}")
         documents = []
         for item in response:
@@ -906,7 +919,7 @@ class SurrealDb(VectorDb):
     async def async_drop(self) -> None:
         """Drop the vector collection asynchronously."""
         log_debug(f"Dropping collection: {self.collection}")
-        await self.async_client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        await arun_query(self.async_client, self.DROP_TABLE_QUERY.format(collection=self.collection))
         # See ``drop``
         self._schema_ensured = False
 
@@ -918,7 +931,7 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if collection exists: {self.collection}")
-        response = await self.async_client.query(self.INFO_DB_QUERY)
+        response = await arun_query(self.async_client, self.INFO_DB_QUERY)
         result = self._extract_result(response)
         if isinstance(result, dict) and "tables" in result:
             return self.collection in result["tables"]
@@ -945,7 +958,7 @@ class SurrealDb(VectorDb):
         try:
             # Query for documents with the given content_id
             query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
-            result: Any = self.client.query(query, {"content_id": content_id})
+            result: Any = run_query(self.client, query, {"content_id": content_id})
 
             if not result or not result[0].get("result"):
                 log_debug(f"No documents found with content_id: {content_id}")
@@ -976,7 +989,7 @@ class SurrealDb(VectorDb):
 
                 # Update the document
                 update_query = f"UPDATE {doc_id} SET meta_data = $metadata, filters = $filters"
-                self.client.query(update_query, {"metadata": updated_metadata, "filters": updated_filters})
+                run_query(self.client, update_query, {"metadata": updated_metadata, "filters": updated_filters})
                 updated_count += 1
 
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

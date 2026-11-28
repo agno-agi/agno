@@ -19,6 +19,7 @@ from agno.db.utils import (
     METRICS_TOKEN_DETAILS_FIELDS,
     build_aggregate_metrics_row,
 )
+from agno.utils.surrealdb import run_query
 
 # The columns of the row of the metrics refreshes table. SurrealDB keeps no field set to NONE
 _METRICS_REFRESH_COLUMNS = ("locked_by", "locked_at", "started_at", "finished_at", "status", "error", "fingerprint")
@@ -185,6 +186,15 @@ def get_all_sessions_with_legacy_runs_for_component_metrics_calculation(
     return [desurrealize_session(x) for x in results]
 
 
+def record_range_function(client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]) -> str:
+    """The function that builds a record id range: type::record on SurrealDB 3.x and later, type::thing before it."""
+    try:
+        probe = run_query(client, 'RETURN type::record("agno", "probe")')
+    except Exception:
+        return "type::thing"
+    return "type::record" if isinstance(probe, RecordID) else "type::thing"
+
+
 def get_all_runs_for_component_metrics_calculation(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     table: str,
@@ -213,6 +223,7 @@ def get_all_runs_for_component_metrics_calculation(
     # makes SurrealDB 2.x evaluate the projection for the whole day even with LIMIT.
     runs: List[Dict[str, Any]] = []
     last_id: Any = None
+    range_function = record_range_function(client)
     while True:
         bounds = "$last>.." if last_id is not None else ".."
         query = dedent(f"""
@@ -220,7 +231,7 @@ def get_all_runs_for_component_metrics_calculation(
                 id, run_id, session_id, run_type, agent_id, team_id, workflow_id, user_id, parent_run_id, status,
                 run_data.{{{_METRICS_RUN_DATA_FIELDS}, {_metrics_nested_runs_fields()}}} AS run_data
             FROM (
-                SELECT VALUE id FROM type::thing($table, {bounds})
+                SELECT VALUE id FROM {range_function}($table, {bounds})
                 WHERE created_at >= $start AND created_at < $end AND !run_data.forked_from_session_id
                 {"AND session_id IN $session_ids" if session_ids is not None else ""}
                 LIMIT {METRICS_BATCH_SIZE}
@@ -357,7 +368,8 @@ def bulk_upsert_metrics_rows(
     # One block is one transaction: the rows are written only while the refresh is still held, and a read never sees
     # half of them. The everyone row is written last, so its version never moves without the rows it tells of.
     # Queried directly, as utils.query_one returns a failed statement as None instead of raising it
-    held = client.query(
+    held = run_query(
+        client,
         dedent(f"""
             {{
                 LET $held = ({heartbeat_statement});
