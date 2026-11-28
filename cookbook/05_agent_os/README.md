@@ -3,7 +3,7 @@
 AgentOS is a FastAPI-based runtime that turns agents, teams, workflows, and
 knowledge into roughly 80 REST endpoints and makes them available to the
 [AgentOS control plane](https://os.agno.com). The same runtime can also expose
-MCP, A2A, AG-UI, Slack, Telegram, and WhatsApp interfaces.
+MCP, A2A, AG-UI, Slack, Telegram, WhatsApp, and Microsoft Teams interfaces.
 
 ## Start here
 
@@ -59,6 +59,7 @@ surface.
 | [26_authorization](./26_authorization/) | Replace the built-in scope check with managed roles, a user directory, an IdP, ReBAC, or your own provider. |
 | [28_compaction](./28_compaction/) | Keep long sessions inside the context window, and fold a session on demand over the `/compact` route. |
 | [32_github](./32_github/) | Receive a GitHub App's signed deliveries for chosen repositories, hand each new issue or comment to a handler, and act with the App's installation token. |
+| [32_msteams](./32_msteams/) | Serve Microsoft Teams agents, teams, and workflows with conversation-scoped sessions, inbound media, and personal-chat alerts. |
 
 ## Canonical ports
 
@@ -108,6 +109,7 @@ surface.
 | `26_authorization` | None for the local examples | Throwaway SQLite; `agno[os]`, and `agno[fga]` only to swap in a real OpenFGA |
 | `28_compaction` | `OPENAI_API_KEY` | `./cookbook/scripts/run_pgvector.sh`; AgentOS on 7777 for the REST script |
 | `32_github` | `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_REPOSITORY` for serving; none for `--check` | A GitHub App installed on the repository and ngrok; `--check` needs neither |
+| `32_msteams` | Required Microsoft app id, password, and tenant id; `OPENAI_API_KEY`; two credential sets for multiple instances | `agno[msteams]`, an Azure Bot registration, and a public HTTPS callback; live Teams checks require real credentials |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

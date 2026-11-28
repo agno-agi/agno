@@ -283,6 +283,24 @@ halves and record both observations.
 - Run the checked-in `AccuracyEval` from `demo.py` and record its observed
   result; do not leave the evaluation commented out or replace it with a stub.
 
+### 32_msteams
+
+- Verify all seven examples expose their status and POST message routes;
+  `multiple_instances.py` uses `/basic` and `/research` with separate app credentials.
+- Run the four `test_msteams_*.py` unit files offline, including real-signature JWT
+  tests, conversation-scoped resets, personal-only alerts past 60 newer sessions,
+  attachment token/size/type rules, URL-free failure logs, mentions and paused runs.
+- With owner-provided Azure/Teams credentials and a public HTTPS callback, test
+  personal, group and channel-thread isolation, then `/new` in each. Send a
+  personal message before testing alerts after a newer channel message.
+- Test pasted/paperclip images, PDF, zip, octet-stream and oversized attachments;
+  confirm skipped files preserve text. Verify mention-only and other-user mentions,
+  reasoning output, agent/team/workflow responses, two instances and paused-run notices.
+- Confirm `supportsFiles: true`, required tenant id, 1 GB cap, and the lack of
+  HITL approval, outbound media and streaming are documented. Do not claim live
+  delivery or cookbook execution without the real credentials and observed results.
+- Update `32_msteams/TEST_LOG.md` only after that live round.
+
 ## Required validation
 
 ```bash
