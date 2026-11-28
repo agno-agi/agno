@@ -1367,6 +1367,53 @@ async def test_a_routine_names_the_tools_as_they_are_now(database):
     assert INSTRUCTIONS_3_2_0 in (await _call(db.get_schedule, "a-persons-schedule"))["payload"]["message"]
 
 
+def _run_on_the_former_executor(database: _Database, routine: str) -> None:
+    """A Routine as agno 3.1 created it: the built-in agent of that release runs it."""
+    database.execute(
+        f"UPDATE {database._ref('agno_schedules')} SET endpoint = '/agents/company-manager-internal/runs', "
+        "target_id = 'company-manager-internal' WHERE id = :routine",
+        routine=routine,
+    )
+
+
+async def test_a_routine_on_the_agent_that_was_removed_runs_on_mini_agent(database):
+    _write_3_2_0(database)
+    for routine in (ROUTINE, ARCHIVED_ROUTINE, "a-persons-schedule"):
+        _run_on_the_former_executor(database, routine)
+    db = database.db()
+    before = await _call(db.get_schedule, ROUTINE)
+
+    await MigrationManager(db).up()
+
+    routine = await _call(db.get_schedule, ROUTINE)
+    assert routine["endpoint"] == "/agents/miniagent/runs"
+    assert (routine["target_type"], routine["target_id"]) == ("agent", "miniagent")
+    # The Routine is the same schedule: its id, cron, enabled state and last edit are as they were.
+    for kept in ("id", "name", "cron_expr", "timezone", "enabled", "next_run_at", "user_id", "updated_at"):
+        assert routine[kept] == before[kept], kept
+    archived = await _call(db.get_schedule, ARCHIVED_ROUTINE)
+    assert archived["endpoint"] == "/agents/miniagent/runs" and archived["enabled"] is False
+    # A schedule that is not a Routine keeps the endpoint its owner gave it.
+    assert (await _call(db.get_schedule, "a-persons-schedule"))["endpoint"] == "/agents/company-manager-internal/runs"
+
+
+def test_a_routine_in_mongodb_on_the_agent_that_was_removed_runs_on_mini_agent():
+    old = {**_stored_routine(0), "endpoint": "/agents/company-manager-internal/runs", "target_type": "agent"}
+    current = {**_stored_routine(1), "endpoint": "/agents/reader/runs", "target_type": "agent", "target_id": "reader"}
+    db = MongoDb([{**old, "target_id": "company-manager-internal"}, current], [])
+
+    assert v3_3_0.up(db, "schedules", "agno_schedules") is True
+
+    moved = db.schedules["routine-0"]
+    assert (moved["endpoint"], moved["target_type"], moved["target_id"]) == (
+        "/agents/miniagent/runs",
+        "agent",
+        "miniagent",
+    )
+    assert db.schedules["routine-1"]["endpoint"] == "/agents/reader/runs"
+    assert v3_3_0.up(db, "schedules", "agno_schedules") is False
+
+
 # ------------------------------------------------------------------------------ a Goal is optional
 
 
