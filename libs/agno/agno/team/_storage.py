@@ -565,6 +565,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
+    if team.search_chat_history:
+        config["search_chat_history"] = team.search_chat_history
 
     # --- System message settings ---
     if team.system_message is not None and isinstance(team.system_message, str):
@@ -1330,6 +1332,7 @@ def from_dict(
             num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
             num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
             read_chat_history=config.get("read_chat_history", False),
+            search_chat_history=config.get("search_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
             system_message_role=config.get("system_message_role", "system"),

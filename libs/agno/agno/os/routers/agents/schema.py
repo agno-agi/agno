@@ -121,6 +121,7 @@ class AgentResponse(BaseModel):
             "update_memory_on_run": False,
             # Default tools defaults
             "read_chat_history": False,
+            "search_chat_history": False,
             "search_knowledge": True,
             "update_knowledge": False,
             "read_tool_call_history": False,
@@ -247,6 +248,7 @@ class AgentResponse(BaseModel):
 
         default_tools_info = {
             "read_chat_history": agent.read_chat_history,
+            "search_chat_history": agent.search_chat_history,
             "search_knowledge": agent.search_knowledge,
             "update_knowledge": agent.update_knowledge,
             "read_tool_call_history": agent.read_tool_call_history,

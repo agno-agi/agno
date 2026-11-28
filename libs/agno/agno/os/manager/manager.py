@@ -498,6 +498,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
+        search_chat_history=True,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,

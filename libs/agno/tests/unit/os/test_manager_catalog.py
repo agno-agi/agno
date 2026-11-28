@@ -301,7 +301,7 @@ def test_context_settings(tmp_path):
     os, _ = build(tmp_path)
     manager = os.manager
     assert manager.add_history_to_context and manager.num_history_runs == 5
-    assert manager.read_chat_history and manager.search_past_sessions
+    assert manager.read_chat_history and manager.search_chat_history and manager.search_past_sessions
     assert manager.tool_call_limit == 96
     assert not manager.compress_tool_results and not manager.enable_session_summaries
     assert OSManager().num_history_runs == 5 and OSManager().tool_call_limit == 96

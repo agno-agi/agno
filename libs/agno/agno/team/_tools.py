@@ -193,6 +193,7 @@ def _determine_tools_for_model(
 
     if team.read_chat_history:
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
+    if team.search_chat_history:
         _tools.append(_search_chat_history_function(team, session=session, async_mode=async_mode))
 
     if team.memory_manager is not None and team.enable_agentic_memory:

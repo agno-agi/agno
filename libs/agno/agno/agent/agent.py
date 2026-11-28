@@ -224,6 +224,8 @@ class Agent:
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
     read_chat_history: bool = False
+    # Add a tool that allows the Model to search the chat history for literal text.
+    search_chat_history: bool = False
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
@@ -469,6 +471,7 @@ class Agent:
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
         read_chat_history: bool = False,
+        search_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
         update_knowledge: bool = False,
@@ -650,6 +653,7 @@ class Agent:
         self.reasoning_agent = reasoning_agent
 
         self.read_chat_history = read_chat_history
+        self.search_chat_history = search_chat_history
         self.search_knowledge = search_knowledge
         self.add_search_knowledge_instructions = add_search_knowledge_instructions
         self.update_knowledge = update_knowledge

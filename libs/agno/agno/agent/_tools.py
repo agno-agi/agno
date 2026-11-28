@@ -267,10 +267,10 @@ def get_tools(
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
-        # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
-        # tool results included. Before that, num_history_runs can still drop turns it never archives.
-        if not searches_compacted:
-            agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
+    # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
+    # tool results included. Before that, num_history_runs can still drop turns it never archives.
+    if agent.search_chat_history and not searches_compacted:
+        agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_past_sessions:
@@ -425,10 +425,10 @@ async def aget_tools(
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
-        # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
-        # tool results included. Before that, num_history_runs can still drop turns it never archives.
-        if not searches_compacted:
-            agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
+    # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
+    # tool results included. Before that, num_history_runs can still drop turns it never archives.
+    if agent.search_chat_history and not searches_compacted:
+        agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_past_sessions:

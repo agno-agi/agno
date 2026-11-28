@@ -119,12 +119,12 @@
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** An agent with `num_history_runs=2` and OpenAI chaining off is told a fact in turn 1 and asked for it in turn 5. It called `search_chat_history` with `staging|database|db`, got back `[turn 1 user] Our staging database is called lumen-stage-7.` and answered with it. The result said 4 turns are stored, so the run in progress is not searched.
+**Description:** An agent with `search_chat_history=True` (no `get_chat_history`), `num_history_runs=2` and OpenAI chaining off is told a fact in turn 1 and asked for it in turn 5. It called `search_chat_history` with `staging|database|db`, got back `[turn 1 user] Our staging database is called lumen-stage-7.` and answered with it. The result said 4 turns are stored, so the run in progress is not searched.
 **Result:** Completed successfully (gpt-5.6-luna, SqliteDb).
 
 ### search_chat_history_corrections.py
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** The budget is stated in turn 1 (4,200) and corrected in turn 3 (6,000); with `num_history_runs=2` both are out of the window when the agent is asked for it in turn 6. In 3 of 3 runs it called `search_chat_history` with `load-test|load test|budget`, saw both turns labelled in order, and answered $6,000.
+**Description:** With `search_chat_history=True` only, the budget is stated in turn 1 (4,200) and corrected in turn 3 (6,000); with `num_history_runs=2` both are out of the window when the agent is asked for it in turn 6. In 4 of 4 runs it called `search_chat_history` with `load-test|load test|budget`, saw both turns labelled in order, and answered $6,000.
 **Result:** Completed successfully (gpt-5.6-luna, SqliteDb).

@@ -25,7 +25,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/agents.db"),
     add_history_to_context=True,
     num_history_runs=2,
-    read_chat_history=True,
+    search_chat_history=True,
     instructions=(
         "Earlier turns: only the last 2 turns of this conversation are in front of you. Older turns are "
         "stored. Before you say you do not know something the person told you, or ask for it again, find "

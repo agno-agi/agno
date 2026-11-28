@@ -1039,6 +1039,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Default tools settings ---
     if agent.read_chat_history:
         config["read_chat_history"] = agent.read_chat_history
+    if agent.search_chat_history:
+        config["search_chat_history"] = agent.search_chat_history
     if agent.update_knowledge:
         config["update_knowledge"] = agent.update_knowledge
     if agent.read_tool_call_history:
@@ -1491,6 +1493,7 @@ def from_dict(
         followup_model=config.get("followup_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
+        search_chat_history=config.get("search_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
         add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
         update_knowledge=config.get("update_knowledge", False),
