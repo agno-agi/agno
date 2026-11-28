@@ -150,11 +150,12 @@ def _now(timezone_identifier: Optional[str] = None, datetime_format: Optional[st
 
 
 class TurnContext:
-    """What Super Agent is told right before each message: the time, who the person is, a message of
-    theirs that a restart cut before it was answered, then the work this conversation started. One
-    unstored user message holds all of it.
+    """What Super Agent is told right before each message: the time, who the person is, which company
+    wiki pages exist, a message of theirs that a restart cut before it was answered, then the work this
+    conversation started. One unstored user message holds all of it.
 
     clock returns the Team's timezone identifier and datetime format, or is None to leave the time out.
+    pages reads the line on the company wiki's pages, or is None without Company.
     interrupted has read(run_context, session) and aread(...): it stores a cut turn as failed and
     returns the note about it, or None.
     """
@@ -165,6 +166,7 @@ class TurnContext:
         work: Any,
         delivers: Optional[Callable[[], bool]] = None,
         clock: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]] = None,
+        pages: Optional[Any] = None,
         interrupted: Any = None,
     ):
         self.person = person
@@ -172,11 +174,14 @@ class TurnContext:
         # Whether Super Agent's model is sent the message at all.
         self.delivers = delivers
         self.clock = clock
+        self.pages = pages
         self.interrupted = interrupted
 
-    def _join(self, note: str, cut: Optional[str], work: Optional[str]) -> str:
+    def _join(self, note: str, work: Optional[str], pages: Optional[str] = None, cut: Optional[str] = None) -> str:
         # The time is read when the message is built, so each turn and each report carries its own.
         head = f"{_now(*self.clock())}\n{note}" if self.clock is not None else note
+        if pages:
+            head = f"{head}\n{pages}"
         return "\n\n".join(part for part in (head, cut, work) if part)
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
@@ -186,11 +191,13 @@ class TurnContext:
         if self.delivers is not None and not self.delivers():
             return None
         work = self.work.read(run_context, session) if self.work is not None else None
-        return self._join(self.person.read(run_context), cut, work)
+        pages = self.pages.read(run_context) if self.pages is not None else None
+        return self._join(self.person.read(run_context), work, pages, cut)
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         cut = await self.interrupted.aread(run_context, session) if self.interrupted is not None else None
         if self.delivers is not None and not self.delivers():
             return None
         work = await self.work.aread(run_context, session) if self.work is not None else None
-        return self._join(await self.person.aread(run_context), cut, work)
+        pages = await self.pages.aread(run_context) if self.pages is not None else None
+        return self._join(await self.person.aread(run_context), work, pages, cut)

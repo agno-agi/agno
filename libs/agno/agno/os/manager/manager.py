@@ -18,12 +18,14 @@ from agno.os.manager.prompts import (
     COMPANY_INSTRUCTIONS,
     DOCS_INSTRUCTIONS,
     FOCUSED_EXECUTION_INSTRUCTIONS,
+    GITHUB_INSTRUCTIONS,
     LINKED_WORK_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
-    PERSON_INSTRUCTIONS,
     NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
+    RULES_PAGES_INSTRUCTIONS,
     SANDBOX_CHANGES_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
@@ -72,7 +74,12 @@ _CATALOG_LIMIT = 20
 
 # Sentences that describe the linked-work block, and the ones said in their place to a model that is
 # not sent it.
-_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, PERSON_INSTRUCTIONS)
+_SAID_WITH_THE_BLOCK = (
+    LINKED_WORK_INSTRUCTIONS,
+    BACKGROUND_RUNS_SHOWN_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
+    RULES_PAGES_INSTRUCTIONS,
+)
 _SAID_WITHOUT_THE_BLOCK = (BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS,)
 
 
@@ -263,6 +270,20 @@ def _raise_if_source_tool_names_taken(tools: Sequence[Any]) -> None:
             f"OSManager.tools defines {', '.join(clash)}, which OSManager.root also adds to Super Agent. "
             "Rename the tool or remove root."
         )
+
+
+def _reads_github(tools: List[Any]) -> bool:
+    """Whether Super Agent was given a GithubTools that can read a pull request or a file."""
+    import sys
+
+    # A GithubTools among the tools means its module is loaded. Not imported here: it needs PyGithub.
+    module = sys.modules.get("agno.tools.github")
+    if module is None:
+        return False
+    return any(
+        isinstance(tool, module.GithubTools) and {"get_pull_request", "get_file_content"} & set(tool.functions)
+        for tool in tools
+    )
 
 
 def _holds_files(db: Any) -> bool:
@@ -465,10 +486,15 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
         tools.append(CompanyFileTools(company_db, notes_db=notes_db, user_isolation=_user_isolation(agent_os)))
         instructions.append(COMPANY_FILES_INSTRUCTIONS if company_db is not None else NOTES_INSTRUCTIONS)
+        if company_db is not None:
+            # Said only to a model that is sent the note that names the pages.
+            instructions.append(RULES_PAGES_INSTRUCTIONS)
         if notes_db is not None:
             instructions.append(
                 PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
             )
+    if _reads_github(config.tools):
+        instructions.append(GITHUB_INSTRUCTIONS)
     if config.instructions:
         instructions.append(config.instructions)
 
@@ -503,9 +529,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
     from agno.os.manager.interrupted_turn import InterruptedTurns
     from agno.os.manager.person import Person, TurnContext
+    from agno.os.manager.rules_pages import RulesPages
 
-    # Who the person is, then that work, in one message right before theirs. The role store is the
-    # Authorization object when it manages roles; agent_os.authorization itself is only a switch.
+    # Who the person is, which wiki pages exist, a message of theirs that a restart cut, then that
+    # work, in one message right before theirs. The role store is the Authorization object when it
+    # manages roles; agent_os.authorization itself is only a switch.
     team._message_context = TurnContext(
         Person(
             lambda: getattr(agent_os, "user_directory", None),
@@ -515,6 +543,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
         interrupted=InterruptedTurns(lambda: team),
+        pages=RulesPages(company_db) if company_db is not None else None,
     )
     # A turn is stored as running when it starts and after each batch of tool results, so a server
     # killed in the middle of one leaves what was asked and the work the turn had recorded.
