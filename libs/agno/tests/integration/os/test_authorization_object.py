@@ -54,15 +54,22 @@ def _agents():
 # --------------------------------------------------------------------------- object unit behavior
 
 
-def test_verify_only_object_builds_no_stores(tmp_path):
-    """The documented verify-only one-liner (no roles) builds NO role store: provider falls back to
-    scope RBAC. This is what an isolation / scope-based deployment writes, and it must not silently
-    stand up a role store."""
+def test_verify_only_object_has_an_empty_role_store_beside_token_scopes(tmp_path):
+    """The documented verify-only one-liner (no roles) gets the role store on a database that can
+    hold roles, so an admin can create and assign roles at runtime. It starts empty, and token
+    scopes decide beside it, so an isolation / scope-based deployment behaves as before."""
+    from agno.os.authz._composite import CompositeAuthorizationProvider
+
     db = SqliteDb(db_file=str(tmp_path / "vo.db"))
     authz = Authorization(verification_keys=[SECRET], audience=OS_ID)  # the exact documented shape
     authz._bind(db)
-    assert authz.uses_roles is False
-    assert authz.provider is None  # AgentOS defaults to ScopeAuthorizationProvider
+    assert authz.uses_roles is True and authz.list_roles() == []
+    provider = authz.provider
+    assert isinstance(provider, CompositeAuthorizationProvider) and provider.enforces_token_scopes is True
+    # A database that cannot hold roles gets no store: AgentOS defaults to ScopeAuthorizationProvider
+    scope_only = Authorization(verification_keys=[SECRET], audience=OS_ID)
+    scope_only._bind(InMemoryDb())
+    assert scope_only.uses_roles is False and scope_only.provider is None
     cfg = authz.authorization_config()
     assert cfg.verification_keys == [SECRET] and cfg.audience == OS_ID
 
@@ -232,22 +239,23 @@ def test_seed_admin_warning_survives_define_after_seed_order(tmp_path):
 
 
 def test_object_setup_rejects_async_db(tmp_path):
-    """define_role/seed write synchronously; against an async db they raise a clear object-level error
-    instead of a confusing 'use the async variant' failure deep in the engine."""
+    """seed writes synchronously; against an async db it raises a clear object-level error instead of
+    a confusing 'use the async variant' failure deep in the engine. define_role waits for startup."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
     authz = Authorization(db=AsyncSqliteDb(db_file=str(tmp_path / "a.db")))
+    authz.define_role("admin", ["agent_os:admin"])
     with pytest.raises(ValueError, match="synchronous database"):
-        authz.define_role("viewer", ["agents:*:read"])
+        authz.seed(admin="alice")
 
 
 def test_object_async_os_db_setup_raises_at_agentos(tmp_path):
-    """Borrowing an async OS db: the buffered define_role surfaces the same clear error when AgentOS
-    binds, not a deep engine error."""
+    """Borrowing an async OS db: a buffered seed surfaces the same clear error when AgentOS binds, not
+    a deep engine error."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
     authz = Authorization()  # borrow the OS db
-    authz.define_role("viewer", ["agents:*:read"])  # buffered until bind
+    authz.define_role("admin", ["agent_os:admin"]).seed(admin="alice")  # buffered until bind
     with pytest.raises(ValueError, match="synchronous database"):
         AgentOS(id=OS_ID, db=AsyncSqliteDb(db_file=str(tmp_path / "os.db")), agents=_agents(), authorization=authz)
 
@@ -568,16 +576,17 @@ def test_provider_override_takes_no_store(tmp_path):
         Authorization(db=db, authorization_provider=AllowAll(), engine=NativePolicyEngine(db=db))
 
 
-def test_served_verify_only_mounts_no_admin_api(tmp_path):
-    """A served verify-only object (no roles) mounts neither /authz nor /users -- the directory stays
-    off, so an isolation / scope-based deployment gets a clean surface with no role machinery. Asked
-    over HTTP with an admin-scoped token: 404 means not mounted (a mounted router answers 200/403)."""
+def test_served_verify_only_mounts_the_roles_api_and_no_directory(tmp_path):
+    """A served verify-only object (no roles) mounts /authz, empty, for an admin to fill at runtime.
+    The directory stays off: authorization does not turn it on. Asked over HTTP with an admin-scoped
+    token: 404 means not mounted (a mounted router answers 200/403)."""
     db = SqliteDb(db_file=str(tmp_path / "vo_served.db"))
     authz = Authorization(verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
     client = TestClient(AgentOS(id=OS_ID, db=db, agents=_agents(), authorization=authz).get_app())
     admin = _auth("op", scopes=["agent_os:admin"])
     assert client.get("/agents", headers=admin).status_code == 200  # the OS itself serves
-    assert client.get("/authz/roles", headers=admin).status_code == 404  # no roles -> no /authz
+    assert client.get("/authz/roles", headers=admin).json()["data"] == []  # mounted, no roles yet
+    assert client.get("/authz/roles", headers=_auth("op", scopes=["agents:read"])).status_code == 403
     assert client.get("/users", headers=admin).status_code == 404  # no directory -> no /users
 
 
@@ -792,16 +801,25 @@ def test_assign_is_bootstrap_safe_and_buffers(tmp_path):
     assert a2.roles_of("bob") == ["runner"]  # create-if-absent: the promotion is NOT clobbered
 
 
-# ------------------------------------------------------------------ roles in play is declared, never inferred
+# ------------------------------------------------------------------ an object with no role store
 # Whether managed roles are enforced (and /authz mounted) is decided when AgentOS wires the object.
-# So "roles in play" has to come from what was declared: define_role / seed / assign / engine= /
-# roles_claim=, or a runtime WRITE before wiring. A read must never flip it (before wiring it just
-# answers from the db), and any use after wiring on an object that had no roles must fail loudly
-# instead of landing in, or answering from, a store nothing reads.
+# An object gets no store when the database cannot hold roles, under authorization_provider=, and
+# with trust_token_scopes=False and no role declared (the shape used here: a store deciding alone
+# would start empty and refuse everyone). For such an object "roles in play" has to come from what
+# was declared: define_role / seed / assign / engine= / roles_claim=, or a runtime WRITE before
+# wiring. A read must never flip it (before wiring it just answers from the db), and any use after
+# wiring must fail loudly instead of landing in, or answering from, a store nothing reads.
 
 
 def _verify_only(db):
-    return Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    return Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
 
 
 def test_a_read_on_a_verify_only_object_does_not_put_roles_in_play(tmp_path):
@@ -817,7 +835,7 @@ def test_a_read_on_a_verify_only_object_does_not_put_roles_in_play(tmp_path):
     assert client.get("/agents", headers=_auth("op", ["agents:read"])).status_code == 200
     assert client.get("/authz/roles", headers=_auth("op", ["agent_os:admin"])).status_code == 404
     # after wiring, the object's role API is not live, so a read is refused rather than answered
-    with pytest.raises(ValueError, match="wired into AgentOS without managed roles"):
+    with pytest.raises(ValueError, match="wired into AgentOS without a role store"):
         authz.list_roles()
     assert authz.uses_roles is False
 
@@ -892,7 +910,14 @@ def test_draft_preview_ignores_a_raw_token_admin_scope_under_managed_roles(tmp_p
     gate read it raw, so a viewer whose token carried that scope could read another owner's draft
     component configs (isolation off, where components stay visible but drafts are owner-only)."""
     db = SqliteDb(db_file=str(tmp_path / "drafts.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
     authz.define_role("viewer", ["components:read", "agents:*:read"])
     authz.assign("alice", "builder")
@@ -970,7 +995,14 @@ def test_draft_preview_recognises_a_managed_role_admin(tmp_path):
     but an admin ROLE is not. An admin-role holder previews any owner's drafts; a viewer does not,
     whatever their token says."""
     db = SqliteDb(db_file=str(tmp_path / "drafts-admin.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("builder", ["components:write", "components:read", "agents:*:read"])
     authz.define_role("viewer", ["components:read", "agents:*:read"])

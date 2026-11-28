@@ -287,12 +287,16 @@ class TestCreateComponent:
         assert response.status_code == 201
         assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
 
-    def test_create_team_rejects_external_registry_member(self, mock_db, settings):
+    def test_create_team_accepts_external_registry_member(self, mock_db, settings):
         from agno.registry import Registry
         from agno.sandbox.docker import DockerSandbox
         from agno.sandbox.fixture import FixtureAgent
 
         mock_db.get_component.return_value = None
+        mock_db.create_component_with_config.return_value = (
+            {"component_id": "team", "name": "Team", "component_type": "team", "created_at": 1},
+            {"version": 1},
+        )
         registry = Registry(
             agents=[
                 FixtureAgent(id="engineer", sandbox=DockerSandbox("unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}))
@@ -309,9 +313,9 @@ class TestCreateComponent:
                 "config": {"members": [{"type": "agent", "agent_id": "engineer"}]},
             },
         )
-        assert response.status_code == 400
-        assert "External agents cannot be team members" in response.text
-        mock_db.create_component_with_config.assert_not_called()
+        assert response.status_code == 201, response.text
+        # A code-defined external agent is resolved from the registry when the team loads, so it gets no link row.
+        assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
 
     def test_create_team_with_unresolved_member_returns_400(self, mock_db, settings):
         """Test create_component surfaces members that resolve to neither db nor registry."""

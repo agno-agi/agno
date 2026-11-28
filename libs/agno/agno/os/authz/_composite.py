@@ -10,8 +10,8 @@ Real deployments often have two populations hitting the same OS:
   carries identity; the store decides.
 
 A single provider can't be both "trust the token's scopes" and "ignore the token,
-ask the store." The public way to run several planes is ``Authorization(trust_token_scopes=True)``
-with managed roles, or a **list** of providers on ``Authorization(authorization_provider=[...])``
+ask the store." Managed roles run both planes unless ``Authorization(trust_token_scopes=False)``
+is set. The other way to run several planes is a **list** of providers on ``Authorization(authorization_provider=[...])``
 for a bring-your-own setup — a request is allowed if any of them allows it::
 
     Authorization(verification_keys=KEYS, audience=OS_ID, authorization_provider=[
@@ -21,7 +21,7 @@ for a bring-your-own setup — a request is allowed if any of them allows it::
 
 AgentOS composes that list with the internal class below. It's an OR, so order
 only affects which provider is consulted first, not the outcome;
-``accessible_resource_ids`` returns the union (``{"*"}`` wins). This class is an
+``accessible_resource_ids`` returns the union. This class is an
 implementation detail — prefer the list form above.
 """
 
@@ -98,8 +98,7 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
-            if "*" in got:
-                return {"*"}
+            # No early return on "*": another plane may name a built-in component, which "*" leaves out
             ids |= got
         return ids
 
@@ -115,6 +114,9 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
+            if len(kept) == len(resources):
+                # This plane shows everything, so the others have nothing to add and are not asked
+                return resources
             for resource in kept:
                 keep.add(getattr(resource, "id", None))
         return [r for r in resources if getattr(r, "id", None) in keep]
@@ -148,8 +150,7 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
-            if "*" in got:
-                return {"*"}
+            # No early return on "*": another plane may name a built-in component, which "*" leaves out
             ids |= got
         return ids
 
@@ -161,6 +162,8 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
+            if len(kept) == len(resources):
+                return resources
             for resource in kept:
                 keep.add(getattr(resource, "id", None))
         return [r for r in resources if getattr(r, "id", None) in keep]

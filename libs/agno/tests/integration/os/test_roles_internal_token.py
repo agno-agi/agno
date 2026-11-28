@@ -115,7 +115,7 @@ def test_service_account_pat_passes_the_resource_gate_under_managed_roles(tmp_pa
     agent = Agent(id="research-agent", name="Research Agent", db=db)
     agent.deep_copy = lambda **kwargs: agent
 
-    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}", trust_token_scopes=False)
     store.set_role_scopes("viewer", ["agents:*:read"])  # no role mentions the PAT principal
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.set_role("human-admin", "os-admin")  # the human who mints the PAT is a directory user
@@ -165,7 +165,7 @@ def test_service_account_pat_sees_collections_under_managed_roles(tmp_path):
     agent = Agent(id="research-agent", name="Research Agent", db=db)
     agent.deep_copy = lambda **kwargs: agent
 
-    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}", trust_token_scopes=False)
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.set_role("human-admin", "os-admin")
 
@@ -205,7 +205,7 @@ def test_pat_mint_subset_rule_uses_the_provider_not_token_scopes(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "pat_subset.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}", trust_token_scopes=False)
     store.set_role_scopes("minter", ["service_accounts:write"])  # may create accounts, nothing else
     store.set_role("eve", "minter")
 
@@ -253,7 +253,7 @@ def test_schedule_endpoint_gate_uses_the_provider_not_token_scopes(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "sched.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}", trust_token_scopes=False)
     store.set_role_scopes("scheduler", ["schedules:read", "schedules:write"])  # no agents:run
     store.set_role("dave", "scheduler")
 
@@ -292,7 +292,7 @@ def test_admin_pat_can_mint_a_child_under_managed_roles(tmp_path):
 
     db = SqliteDb(db_file=str(tmp_path / "pat_child.db"))
     agent = Agent(id="research-agent", name="Research Agent", db=db)
-    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store = Authorization(db_url=f"sqlite:///{tmp_path / 'roles.db'}", trust_token_scopes=False)
     store.set_role_scopes("os-admin", ["agent_os:admin"])
     store.set_role("human-admin", "os-admin")
 

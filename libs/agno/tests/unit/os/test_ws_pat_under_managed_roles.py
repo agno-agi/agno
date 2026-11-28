@@ -29,7 +29,9 @@ HANDSHAKE_EVENTS = ("connected", "authenticated", "ping")
 
 def _managed_roles_app(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "managed.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, algorithm="HS256")
+    authz = Authorization(
+        db=db, verification_keys=[SECRET], audience=OS_ID, algorithm="HS256", trust_token_scopes=False
+    )
     authz.define_role("viewer", ["agents:read"])  # any role: managed roles decide from the store
     return AgentOS(id=OS_ID, db=db, authorization=authz, telemetry=False).get_app()
 

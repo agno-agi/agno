@@ -31,7 +31,10 @@ INTERNAL_TOKEN = "internal-service-token-for-the-owner-recheck-test-xxxxxxxxxx"
 @pytest.fixture
 def harness(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "sched.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], audience=OS_ID, algorithm="HS256")
+    # The role store decides alone here, so the owner's stored role is what is asked again
+    authz = Authorization(
+        db=db, verification_keys=[SECRET], audience=OS_ID, algorithm="HS256", trust_token_scopes=False
+    )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("runner", ["agents:*:read", "agents:*:run"])
     authz.define_role("viewer", ["agents:*:read"])

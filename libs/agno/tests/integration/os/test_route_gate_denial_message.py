@@ -61,7 +61,14 @@ def _warnings():
 
 def _client(tmp_path, *, roles: bool):
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     if roles:
         authz.define_role("admin", ["agent_os:admin"])
         authz.define_role("viewer", ["agents:*:read"])
@@ -111,7 +118,13 @@ def test_denial_under_roles_claim_names_the_token_carried_role(tmp_path):
     so the line must name that role rather than claim the subject holds none."""
     db = SqliteDb(db_file=str(tmp_path / "idp.db"))
     authz = Authorization(
-        db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, roles_claim="role"
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        roles_claim="role",
+        trust_token_scopes=False,
     )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"])
@@ -138,7 +151,14 @@ def test_denial_by_an_explicit_deny_names_the_deny_not_a_missing_grant(tmp_path)
     """Wildcard allow plus a resource-specific deny: the role DOES grant agents:read, so 'does not
     grant' would send an operator to add a grant that exists. The line must name the deny."""
     db = SqliteDb(db_file=str(tmp_path / "deny.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("reader", ["agents:*:read", ("agents:secret:read", "deny")])
     authz.assign("rae", "reader")
     agents = [Agent(id="pub", name="P", db=InMemoryDb()), Agent(id="secret", name="S", db=InMemoryDb())]
@@ -163,7 +183,14 @@ async def test_ambiguous_route_action_does_not_report_an_unrelated_deny(tmp_path
     from agno.os.middleware.jwt import JWTMiddleware
 
     db = SqliteDb(db_file=str(tmp_path / "ambig.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("reader", ["agents:*:read", ("agents:secret:write", "deny")])
     authz.assign("rae", "reader")
     agents = [Agent(id="secret", name="S", db=InMemoryDb())]
@@ -199,7 +226,14 @@ def test_denial_of_a_directory_user_with_no_assignment_names_the_default_role(tm
     from agno.os.authz import UserDirectory
 
     db = SqliteDb(db_file=str(tmp_path / "default.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     users = UserDirectory(db=db, auto_provision=False)
@@ -300,7 +334,12 @@ def test_denial_on_a_split_db_does_not_claim_a_default_role_that_never_applied(t
     roles_db = SqliteDb(db_file=str(tmp_path / "roles.db"))
     users_db = SqliteDb(db_file=str(tmp_path / "users.db"))
     authz = Authorization(
-        db=roles_db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID
+        db=roles_db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
     )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
@@ -324,7 +363,14 @@ def test_denial_of_a_directory_user_named_like_a_role_does_not_claim_the_default
     from agno.os.authz import UserDirectory
 
     db = SqliteDb(db_file=str(tmp_path / "collide.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID)
+    authz = Authorization(
+        db=db,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        trust_token_scopes=False,
+    )
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("viewer", ["agents:*:read"], default=True)
     users = UserDirectory(db=db, auto_provision=False)

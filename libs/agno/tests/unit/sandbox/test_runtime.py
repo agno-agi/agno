@@ -278,6 +278,33 @@ async def test_old_runtime_is_refused_before_starting_a_confirming_harness():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result, said",
+    [
+        (ExecResult(-9, "", ""), "the runtime request ended with exit code -9 and left no message"),
+        (ExecResult(1, "", ""), "the runtime request ended with exit code 1 and left no message"),
+        (ExecResult(0, "", "", timed_out=True), "the runtime request timed out"),
+        (ExecResult(0, "", "", output_limited=True), "the runtime's reply was larger than the limit"),
+        (
+            ExecResult(-9, "", "the runtime request was killed (signal 9); why"),
+            "the runtime request was killed [(]signal 9[)]; why",
+        ),
+    ],
+    ids=["killed", "exited", "timed out", "reply too large", "the provider said why"],
+)
+async def test_a_runtime_request_that_fails_without_a_message_says_what_is_known(result, said):
+    """Never the bare "no reply": a person reading the failed run is told how the request ended."""
+
+    class Silent(Provider):
+        async def arpc(self, computer, operation, payload):
+            return result
+
+    with pytest.raises(SandboxError, match="^Runtime RPC failed: " + said) as error:
+        await SandboxRuntimeClient(Silent()).apoll(RuntimeExecution(HANDLE, "e", "r"))
+    assert "no reply" not in str(error.value)
+
+
+@pytest.mark.asyncio
 async def test_client_start_uses_rpc_transport_and_explicit_cancel():
     provider = Provider()
     client = SandboxRuntimeClient(provider)
