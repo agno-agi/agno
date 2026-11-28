@@ -142,6 +142,11 @@ class ScheduleControlTools(Toolkit):
         """Whether this is a person's schedule and that person is not the one asking."""
         return _kind(schedule) == "person" and bool(schedule.user_id) and schedule.user_id != user_id
 
+    @staticmethod
+    def _own_or_companys(schedule: Schedule, user_id: Any) -> bool:
+        """Whether the person asking owns this schedule, or Company manages it. A schedule with no owner is neither."""
+        return _kind(schedule) != "person" or (bool(schedule.user_id) and schedule.user_id == user_id)
+
     @classmethod
     def _label(cls, schedule: Schedule, goals: Dict[str, Dict[str, Any]], user_id: Any = None) -> str:
         """What the schedule is called in an answer. Another user's schedule is named with its owner."""
@@ -188,8 +193,8 @@ class ScheduleControlTools(Toolkit):
             if self._visible(schedule, scoped)
             and folded in {schedule.name.casefold(), _routine_name(schedule).casefold()}
         ]
-        # A name means the person's own schedule, or Company's, before another user's of the same name.
-        named = [schedule for schedule in named if not self._another_users(schedule, user_id)] or named
+        # A name means the person's own schedule, or Company's, before any other schedule of the same name.
+        named = [schedule for schedule in named if self._own_or_companys(schedule, user_id)] or named
         if len(named) == 1:
             return named[0], None, True
         if not named:
@@ -210,19 +215,15 @@ class ScheduleControlTools(Toolkit):
         try:
             agent_os, app, authority, user_id = self._person(run_context, f"{action} a schedule")
             request = _person_request(app, authority, user_id, "POST", "/schedules")
-            scoped = get_scoped_user_id(request)
+            rights = await self._rights(agent_os, app, authority, request)
+            # User isolation filters a person to their own schedules. An administrator sees every one, as in the API.
+            scoped = None if rights["admin"] else get_scoped_user_id(request)
             schedule, problem, by_name = await self._find(agent_os, given, scoped, user_id)
             if schedule is None:
                 return str(problem)
             goals = await self._goal_names(agent_os, [schedule])
             label, kind = self._label(schedule, goals, user_id), _kind(schedule)
             what = f"{label} ({schedule.id})"
-            if action == "delete" and by_name and self._another_users(schedule, user_id):
-                # The person confirmed a name, and the name alone does not say whose schedule it is.
-                return (
-                    f"Not done: the only schedule named '{schedule.name}' is {what}, not the person's own. "
-                    "Tell the person whose it is. If they still want it deleted, call again with its ID."
-                )
             if confirmed_name is not None and not (
                 _same_name(confirmed_name, schedule.name) or _same_name(confirmed_name, _routine_name(schedule))
             ):
@@ -235,7 +236,6 @@ class ScheduleControlTools(Toolkit):
                 )
             if kind == "company" and action == "resume":
                 return f"Not done: {what} names no Goal, so it cannot run. It can be paused or deleted."
-            rights = await self._rights(agent_os, app, authority, request)
             visible = self._visible(schedule, scoped)
             if action not in self._allowed(schedule, rights, visible):
                 if kind == "person" and not visible:
@@ -255,6 +255,12 @@ class ScheduleControlTools(Toolkit):
                 can_pause = "pause" in self._allowed(schedule, rights, visible)
                 pause = " You can pause it with pause_schedule." if can_pause and action == "delete" else ""
                 return f"Not done: {what} is managed by Company. {_ADMIN_ONLY.format(action=action)}{pause}"
+            if action == "delete" and by_name and self._another_users(schedule, user_id):
+                # The person confirmed a name, and the name alone does not say whose schedule it is.
+                return (
+                    f"Not done: the only schedule named '{schedule.name}' is {what}, not the person's own. "
+                    "Tell the person whose it is. If they still want it deleted, call again with its ID."
+                )
             routine_api = kind == "routine" and getattr(agent_os, "_routine_api_pause", None) is not None
             route = {"pause": "disable", "resume": "enable", "delete": "delete"}[action]
             handler = getattr(agent_os, f"_routine_api_{action}" if routine_api else f"_schedule_api_{route}")

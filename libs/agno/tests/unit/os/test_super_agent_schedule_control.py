@@ -75,6 +75,19 @@ class System:
         self.db.create_schedule(row.to_dict())
         return "orphan"
 
+    def unowned(self, name="nightly"):
+        # A schedule the application created in code: a person's kind of schedule, with no owner.
+        row = Schedule(
+            id="unowned-" + name,
+            name=name,
+            cron_expr="0 2 * * *",
+            endpoint="/agents/reader/runs",
+            payload={"message": "Run"},
+            next_run_at=1,
+        )
+        self.db.create_schedule(row.to_dict())
+        return row.id
+
     def enabled(self, schedule_id):
         row = self.db.get_schedule(schedule_id)
         return None if row is None else row["enabled"]
@@ -249,6 +262,34 @@ def test_a_name_means_the_persons_own_schedule_and_another_users_is_said_to_be_t
     assert f"{lees} is user lee's schedule 'nightly'" in asked and f"{kims} is user kim's schedule 'nightly'" in asked
 
 
+def test_a_schedule_with_no_owner_is_not_chosen_over_another_users_of_the_same_name(system):
+    sams, unowned = system.persons_schedule(user="sam", name="nightly"), system.unowned("nightly")
+
+    # ada owns neither, so the name does not say which one is meant.
+    asked = system.call("delete_schedule", member("ada"), schedule_id="nightly", name="nightly")
+    assert asked.startswith("Not done: 2 schedules are named 'nightly'"), asked
+    assert f"{sams} is user sam's schedule 'nightly'" in asked and f"{unowned} is schedule 'nightly'" in asked
+    assert system.db.get_schedule(sams) is not None and system.db.get_schedule(unowned) is not None
+    # sam owns one of them, so for sam the name is sam's own.
+    assert system.call("pause_schedule", member("sam"), schedule="nightly").startswith("Paused schedule 'nightly' (")
+    assert system.enabled(sams) is False and system.enabled(unowned) is True
+
+    # Alone under its name, a schedule with no owner is found by it.
+    alone = system.unowned("weekly")
+    assert system.call("pause_schedule", member("ada"), schedule="weekly").startswith("Paused schedule 'weekly' (")
+    assert system.enabled(alone) is False
+
+
+def test_a_person_who_may_not_delete_is_told_so_before_being_asked_for_an_id(system):
+    lees = system.persons_schedule(user="lee", name="daily-report")
+    reader = context(["schedules:read"], user="sam")
+
+    refused = system.call("delete_schedule", reader, schedule_id="daily-report", name="daily-report")
+
+    assert refused.startswith("Not done") and "schedules:delete" in refused, refused
+    assert "call again with its ID" not in refused and system.db.get_schedule(lees) is not None
+
+
 def test_an_administrator_by_a_stored_role_stops_what_a_member_cannot(tmp_path):
     from agno.os.auth import resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
@@ -280,6 +321,36 @@ def test_an_administrator_by_a_stored_role_stops_what_a_member_cannot(tmp_path):
             "Deleted Routine 'review'"
         )
         assert built.db.get_schedule(routine_id) is None
+    finally:
+        built.db.close()
+
+
+def test_an_administrator_by_a_stored_role_finds_every_schedule_under_user_isolation(tmp_path):
+    from agno.os.auth import resolve_authorization_provider
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.run import RunContext
+    from agno.run.authorization import RunAuthorization
+
+    built = System(tmp_path, isolation=True, stored_admin="ada")
+    try:
+        sams = built.persons_schedule(user="sam", name="nightly")
+        provider = resolve_authorization_provider(built.os._manager_app)
+        person = AuthorizationContext(principal_id="ada", scopes=[], claims={"sub": "ada"})
+        ada = RunContext(
+            run_id="chat-run",
+            session_id="chat-session",
+            user_id="ada",
+            authorization=RunAuthorization(provider, person),
+        )
+
+        # The Scheduler API shows this administrator every schedule, so a name and an ID both find sam's.
+        paused = built.call("pause_schedule", ada, schedule="nightly")
+        assert paused.startswith(f"Paused user sam's schedule 'nightly' ({sams})"), paused
+        assert built.call("resume_schedule", ada, schedule=sams).startswith("Resumed user sam's schedule 'nightly'")
+        assert built.call("pause_schedule", ada, schedule=COMPANY_AUTOMATION_SCHEDULE_ID).startswith("Paused Company")
+        assert built.enabled(COMPANY_AUTOMATION_SCHEDULE_ID) is False
+        # Another member still sees only their own.
+        assert "no schedule has the ID or the name" in built.call("pause_schedule", member("lee"), schedule="nightly")
     finally:
         built.db.close()
 
