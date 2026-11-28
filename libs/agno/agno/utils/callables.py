@@ -71,7 +71,7 @@ def invoke_callable_factory(
 
     Raises RuntimeError if the factory is async (use ainvoke_callable_factory instead).
     """
-    if asyncio.iscoroutinefunction(factory):
+    if inspect.iscoroutinefunction(factory):
         raise RuntimeError(
             f"Async callable factory {factory!r} cannot be used in sync mode. Use arun() or aprint_response() instead."
         )
@@ -142,7 +142,7 @@ def _compute_cache_key(
     Raises RuntimeError if custom_key_fn is async.
     """
     if custom_key_fn is not None:
-        if asyncio.iscoroutinefunction(custom_key_fn):
+        if inspect.iscoroutinefunction(custom_key_fn):
             raise RuntimeError(
                 f"Async cache key function {custom_key_fn!r} cannot be used in sync mode. "
                 "Use arun() or aprint_response() instead."

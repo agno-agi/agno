@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import gc
 import tracemalloc
 from dataclasses import dataclass, field
@@ -645,7 +646,7 @@ class PerformanceEval:
         7. Log results to the Agno platform if requested
         """
         # Validate the function to evaluate is async.
-        if not asyncio.iscoroutinefunction(self.func):
+        if not inspect.iscoroutinefunction(self.func):
             raise ValueError(
                 f"The provided function ({self.func.__name__}) is not async. Use the run() method for sync functions."
             )

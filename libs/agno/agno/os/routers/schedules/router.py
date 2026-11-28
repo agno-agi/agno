@@ -1,6 +1,7 @@
 """Schedule API router -- CRUD + trigger for cron schedules."""
 
 import asyncio
+import inspect
 import time
 from typing import Any, Dict, Literal, Optional, Sequence
 from uuid import uuid4
@@ -94,7 +95,7 @@ def get_schedule_router(
         if fn is None:
             raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
         try:
-            if asyncio.iscoroutinefunction(fn):
+            if inspect.iscoroutinefunction(fn):
                 return await fn(*args, **kwargs)
             return fn(*args, **kwargs)
         except NotImplementedError:
