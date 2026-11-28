@@ -243,6 +243,173 @@ def test_frame_and_journal_limits(dispatch, monkeypatch):
         runtime._append(directory, {"content": "too large"})
 
 
+def test_turn_with_an_oversize_event_finishes_and_the_event_is_shortened(dispatch):
+    root, _, request = dispatch
+    text = "start " + "x" * 300_000 + " end"
+    request["input"] = text
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    page = runtime._poll(root, "e", 0)
+    assert page["result"]["type"] == "execution_finished"
+    assert page["result"]["run"]["content"] == text
+    (frame,) = page["frames"]
+    content = frame["event"]["content"]
+    assert len(runtime._frame(frame["event"])) <= runtime._MAX_FRAME
+    assert content.startswith("start xxx") and content.endswith("xxx end")
+    kept = runtime._MAX_FRAME // 4
+    assert f"[... {len(text) - kept} of {len(text)} characters cut here: this event was larger" in content
+    assert frame["event"]["run_id"] == "r" and frame["event"]["session_id"] == "s"
+
+
+def test_command_output_over_the_frame_limit_does_not_end_the_turn(dispatch, monkeypatch):
+    from dataclasses import dataclass
+
+    from agno.agents.base import BaseExternalAgent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+
+    # Over the frame limit once encoded, where a newline takes two bytes, and small enough that the
+    # finished run, which holds the output three times, is within the result limit.
+    output = "diff --git a/requirements.txt b/requirements.txt\n" + "+line\n" * 40_000 + "[exit code 1]"
+
+    @dataclass
+    class ExternalAgent(BaseExternalAgent):
+        async def _arun_adapter_stream(self, input, **kwargs):
+            call = dict(tool_call_id="c1", tool_name="shell", tool_args={"command": "git diff"})
+            yield ToolCallStartedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call))
+            yield ToolCallCompletedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call, result=output))
+            yield RunContentEvent(content="done", run_id=kwargs["run_id"])
+
+    def make_agent(request, native):
+        # The settings the runtime gives its own Claude Code and Codex agents.
+        database = SqliteDb(db_file=str(native / "history.db"))
+        return ExternalAgent(id="a", db=database, retries=0, strict_persistence=True, store_events=True)
+
+    monkeypatch.setenv("HOME", os.environ.get("HOME", ""))
+    monkeypatch.setenv("CODEX_HOME", "unused")
+    # The runtime logs a Codex agent in when a key is set; this turn must not depend on the environment.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(runtime, "_agent", make_agent)
+    root, _, request = dispatch
+    runtime._start(root, {**request, "sdk": "claude", "input": "upgrade", "execution_timeout": 60})
+    # The worker is what holds the finished run to the result limit.
+    runtime._worker(runtime._job(root, "e"))
+    events, cursor, result = [], 0, None
+    for _ in range(10):
+        page = runtime._poll(root, "e", cursor)
+        events += [frame["event"] for frame in page["frames"]]
+        cursor, result = page["cursor"], page["result"]
+        if result is not None:
+            break
+    assert result is not None and result["type"] == "execution_finished", result
+    assert result["run"]["content"] == "done"
+    # The run the host stores keeps the whole output; only the journaled event is shortened.
+    assert result["run"]["tools"][0]["result"] == output
+    assert all(len(runtime._frame(event)) <= runtime._MAX_FRAME for event in events)
+    assert [event["event"] for event in events][-3:] == ["ToolCallStarted", "ToolCallCompleted", "RunContent"]
+    shown = events[-2]["tool"]["result"]
+    assert shown.startswith("diff --git a/requirements.txt") and shown.endswith("[exit code 1]")
+    assert f"of {len(output)} characters cut here" in shown
+    assert events[-2]["tool"]["tool_args"] == {"command": "git diff"}
+
+
+@pytest.mark.asyncio
+async def test_permission_request_in_an_oversize_paused_event_is_left_whole(tmp_path, monkeypatch):
+    from dataclasses import dataclass
+
+    from agno.agents._hitl import action_digest, current_bridge
+    from agno.agents.base import BaseExternalAgent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+
+    written = {"file_path": "/workspace/notes.md", "content": "y" * 45_000}
+
+    @dataclass
+    class ExternalAgent(BaseExternalAgent):
+        @property
+        def _uses_native_hitl(self):
+            return True
+
+        async def _arun_adapter_stream(self, input, **kwargs):
+            # A paused event carries every earlier tool call, so this output puts it over the frame limit.
+            for number in range(3):
+                call = dict(tool_call_id=f"c{number}", tool_name="shell", tool_args={"command": "pytest"})
+                yield ToolCallStartedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call))
+                yield ToolCallCompletedEvent(run_id=kwargs["run_id"], tool=ToolExecution(**call, result="x" * 45_000))
+            await current_bridge().request("Write", written, {"sdk": "fixture"})
+            yield RunContentEvent(content="written", run_id=kwargs["run_id"])
+
+    def make_agent(request, native):
+        database = SqliteDb(db_file=str(native / "history.db"))
+        return ExternalAgent(id="a", db=database, retries=0, strict_persistence=True, store_events=True)
+
+    monkeypatch.setenv("HOME", os.environ.get("HOME", ""))
+    monkeypatch.setenv("CODEX_HOME", "unused")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(runtime, "_agent", make_agent)
+    directory = tmp_path / "jobs/e"
+    directory.mkdir(parents=True)
+    request = {"sdk": "claude", "run_id": "r", "session_id": "s", "input": "work", "config": {"_native_hitl": True}}
+    turn = asyncio.create_task(runtime._execute(directory, request, set()))
+    paused = None
+    try:
+        for _ in range(1000):
+            if (directory / "events.jsonl").exists():
+                events = [json.loads(line)["event"] for line in (directory / "events.jsonl").read_bytes().splitlines()]
+                paused = next((event for event in events if event["event"] == "RunPaused"), None)
+            if paused is not None or turn.done():
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        turn.cancel()
+        outcome = (await asyncio.gather(turn, return_exceptions=True))[0]
+    assert paused is not None, f"The turn ended without a journaled pause: {outcome!r}"
+    assert len(runtime._frame(paused)) <= runtime._MAX_FRAME
+    assert all("characters cut here" in earlier["result"] for earlier in paused["tools"][:3])
+    # The action a person confirms is whole in each place the event holds it.
+    asked = paused["external_agent_request"]
+    action = asked["requirement"]["tool_execution"]
+    assert action["tool_args"] == written
+    assert paused["requirements"][0]["tool_execution"]["tool_args"] == written
+    assert paused["tools"][3]["tool_call_id"] == asked["tool_call_id"] and paused["tools"][3]["tool_args"] == written
+    # The host's check of a confirmation: the reviewed action must match the digest taken in the sandbox.
+    assert asked["digest"] == action_digest(
+        {"tool_name": action["tool_name"], "tool_args": action["tool_args"], "native": asked["native"]}
+    )
+
+
+def test_oversize_event_is_cut_until_its_encoded_frame_fits():
+    # Each of these characters takes six bytes once encoded, so the first cut is not enough.
+    text = "é" * 100_000
+    frame = runtime._fit({"event": "RunContent", "run_id": "r", "content": text, "reasoning_content": text})
+    assert len(frame) <= runtime._MAX_FRAME
+    event = json.loads(frame)["event"]
+    for key in ("content", "reasoning_content"):
+        assert event[key].startswith("é") and event[key].endswith("é")
+        assert f"of {len(text)} characters cut here" in event[key]
+    assert event["run_id"] == "r"
+
+
+def test_event_within_the_frame_limit_is_journaled_unchanged(dispatch):
+    root, _, request = dispatch
+    runtime._start(root, request)
+    event = {"event": "RunContent", "run_id": "r", "content": "x" * 200_000}
+    runtime._append(runtime._job(root, "e"), event)
+    assert runtime._poll(root, "e", 0)["frames"] == [{"type": "event", "event": event}]
+
+
+def test_event_that_cannot_be_shortened_to_fit_is_still_refused(dispatch):
+    root, _, request = dispatch
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    # No single string is long: there is nothing to cut that leaves a readable event.
+    with pytest.raises(SandboxError, match="frame limit"):
+        runtime._append(directory, {"event": "RunContent", "run_id": "r", "items": ["x" * 600] * 1000})
+    assert not (directory / "events.jsonl").exists()
+
+
 HANDLE = SandboxHandle("id", "name", "a", "s", 1, "running", "digest")
 
 
