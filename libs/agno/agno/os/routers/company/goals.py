@@ -20,8 +20,13 @@ from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
 
 
-def get_goals_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
-    """Build Goal routes using native async storage or off-thread sync calls."""
+def get_goals_router(
+    db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, schedule_db: Any = None
+) -> APIRouter:
+    """Build Goal routes using native async storage or off-thread sync calls.
+
+    schedule_db holds the Routines' schedules, which deleting a Goal pauses. Left out, it is db.
+    """
     router = APIRouter(
         prefix="/company",
         responses=MIGRATION_REQUIRED_RESPONSE,
@@ -29,7 +34,13 @@ def get_goals_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPI
         dependencies=[Depends(get_scoped_user_id)],
     )
     auth_dependency = get_authentication_dependency(settings)
-    manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db is not None else None
+    manager = (
+        AsyncCompanyManager(db, schedule_db=schedule_db)
+        if isinstance(db, AsyncBaseDb)
+        else CompanyManager(db, schedule_db=schedule_db)
+        if db is not None
+        else None
+    )
 
     async def _call(
         method: Literal["create", "get", "list", "update", "delete", "restore"], *args: Any, **kwargs: Any

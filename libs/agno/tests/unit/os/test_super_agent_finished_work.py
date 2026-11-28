@@ -100,6 +100,7 @@ class Chat(ScriptedModel):
                 {
                     "sent": [str(m.content) for m in fresh if m.role == "user"],
                     "offered": {tool["function"]["name"] for tool in tools or []},
+                    "system": "\n".join(str(m.content) for m in messages if m.role == "system"),
                     "authority": current_authorization(),
                 }
             )
@@ -1694,6 +1695,30 @@ def test_an_application_tool_named_like_a_read_is_not_offered_in_a_finished_work
     assert called == ["a"]
     assert "read_file" not in offered and "check_background_run" in offered
     assert "The requested tool does not exist or is not available." in reply
+
+
+def test_a_finished_work_report_is_told_what_to_do_about_a_github_claim_it_cannot_read(tmp_path):
+    pytest.importorskip("github")
+    from unittest.mock import patch
+
+    from agno.tools.github import GithubTools
+
+    with patch("agno.tools.github.Github"):
+        system = System(tmp_path, tools=[GithubTools(access_token="token", read_only=True)])
+
+    async def steps():
+        await system.start()
+        await system.finish()
+        return system.chat.runs
+
+    turn, report = scenario(steps)
+    system.close()
+    # The person's turn is offered the GitHub reads. The report is offered none of them, as with every
+    # tool an application adds, so the line that asks it to read first also says what to do without one.
+    assert "get_pull_request" in turn["offered"]
+    assert not report["offered"] & set(GithubTools.tool_access)
+    assert "before you repeat it as true" in report["system"]
+    assert 'as in a "Finished work report from AgentOS", say whose claim it is' in report["system"]
 
 
 def test_a_confirmation_the_person_talked_past_does_not_silence_the_conversation(tmp_path):
