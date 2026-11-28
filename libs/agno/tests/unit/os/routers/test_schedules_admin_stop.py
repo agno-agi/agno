@@ -286,3 +286,48 @@ def test_a_company_schedule_with_no_goal_is_deleted_with_a_live_run(db):
         assert client.post("/company/routines/orphan/cancel", headers=ADMIN).status_code == 409
         assert client.delete("/schedules/orphan", headers=ADMIN).status_code == 204
         assert db.get_schedule("orphan") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trust_token_scopes", [None, False])
+async def test_an_administrator_by_a_stored_role_finds_and_stops_schedules_under_user_isolation(db, trust_token_scopes):
+    from agno.os.authz import Authorization
+
+    authorization = Authorization(verification_keys=[SECRET], algorithm="HS256", trust_token_scopes=trust_token_scopes)
+    authorization.define_role("admin", ["agent_os:admin"])
+    authorization.define_role("member", ["schedules:read", "schedules:write", "schedules:delete", "agents:run"])
+    authorization.seed(admin="ada").assign("grace", "admin").assign("sam", "member").assign("lee", "member")
+    agent_os = AgentOS(
+        id="admin-stop",
+        db=db,
+        agents=[Agent(id="reader", db=db, telemetry=False)],
+        company=CompanyConfig(),
+        telemetry=False,
+        authorization=authorization,
+        user_isolation=True,
+    )
+    await _automation(db)
+    admin, other_admin, member, stranger = (_headers(user, []) for user in ("ada", "grace", "sam", "lee"))
+    with TestClient(agent_os.get_app()) as client:
+        _, routine_id = _routine(client, headers=other_admin)
+        body = dict(name="nightly", cron_expr="0 2 * * *", endpoint="/agents/reader/runs", payload={"message": "Run"})
+        nightly = client.post("/schedules", json=body, headers=member).json()["id"]
+
+        def listed(headers):
+            return {row["id"] for row in client.get("/schedules", headers=headers).json()["data"]}
+
+        # A member still sees and stops only their own schedules.
+        assert listed(member) == {nightly} and listed(stranger) == set()
+        assert client.get(AUTOMATION, headers=member).status_code == 404
+        assert client.post(AUTOMATION + "/disable", headers=member).status_code == 404
+        assert client.post(f"/schedules/{nightly}/disable", headers=stranger).status_code == 404
+        assert client.delete("/schedules/" + nightly, headers=stranger).status_code == 404
+
+        assert listed(admin) == {COMPANY_AUTOMATION_SCHEDULE_ID, routine_id, nightly}
+        assert client.get(AUTOMATION, headers=admin).status_code == 200
+        assert client.post(AUTOMATION + "/disable", headers=admin).json()["enabled"] is False
+        assert client.post(AUTOMATION + "/enable", headers=admin).json()["enabled"] is True
+        for path in ("/schedules/" + routine_id, "/schedules/" + nightly):
+            assert client.post(path + "/disable", headers=admin).json()["enabled"] is False
+            assert client.post(path + "/enable", headers=admin).json()["enabled"] is True
+            assert client.delete(path, headers=admin).status_code == 204
