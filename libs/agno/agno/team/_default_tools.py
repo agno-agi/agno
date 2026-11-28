@@ -461,6 +461,7 @@ def _get_delegate_task_function(
     add_session_state_to_context: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
 ) -> Function:
+    from agno.team import _compaction
     from agno.team._init import _initialize_member
     from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
@@ -704,6 +705,8 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
+        # Fold the member's history first when it has grown past the member's own threshold
+        _compaction.compact_member_history(team, session, member_agent, run_response)
         member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
         # Make sure for the member agent, we are using the agent logger
@@ -888,6 +891,8 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
+        # Fold the member's history first when it has grown past the member's own threshold
+        await _compaction.acompact_member_history(team, session, member_agent, run_response)
         member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
         # Make sure for the member agent, we are using the agent logger
@@ -1060,6 +1065,8 @@ def _get_delegate_task_function(
 
         # Run all the members sequentially
         for _, member_agent in enumerate(resolved_members):
+            # Fold the member's history first when it has grown past the member's own threshold
+            _compaction.compact_member_history(team, session, member_agent, run_response)
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
@@ -1236,6 +1243,8 @@ def _get_delegate_task_function(
             queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
             async def stream_member(agent: Union[Agent, "Team"]) -> None:
+                # Fold the member's history first when it has grown past the member's own threshold
+                await _compaction.acompact_member_history(team, session, agent, run_response)
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                 member_session_state_copy = copy(run_context.session_state)
 
@@ -1361,6 +1370,8 @@ def _get_delegate_task_function(
             tasks = []
             for member_agent_index, member_agent in enumerate(resolved_members):
                 current_agent = member_agent
+                # Fold the member's history first when it has grown past the member's own threshold
+                await _compaction.acompact_member_history(team, session, current_agent, run_response)
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=current_agent, task=task)
 
                 async def run_member_agent(

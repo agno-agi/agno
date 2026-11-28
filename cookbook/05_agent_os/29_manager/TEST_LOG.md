@@ -1,5 +1,20 @@
 # Test log
 
+## Compaction, 2026-11-28
+
+### manager_compaction.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_compaction.py` with `.venv/bin/python`,
+`gpt-5.6-luna` and a new SQLite database. Super Agent has `Compaction(compact_at_tokens=20_000, uncompacted_runs=1)`.
+It is told three facts, sent five pasted notes, then asked for the facts.
+
+**Result:** One compaction: 12 messages folded, 18387 -> 5173 tokens. The answer named the contact, the
+account number, the ship date and the depot correctly.
+
+---
+
 ## Finished-work reports, 2026-11-26
 
 ### manager_finished_work.py

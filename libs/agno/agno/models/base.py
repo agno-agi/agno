@@ -715,16 +715,22 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            self._process_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-                run_response=run_response,
-                compress_tool_results=_compress_tool_results,
-            )
+            try:
+                self._process_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+            except ModelProviderError as e:
+                # What the tool loop gathered before this call failed. A caller that shrinks the
+                # request and calls again starts a new response, and needs it carried over.
+                e.partial_response = model_response
+                raise
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -939,16 +945,22 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            await self._aprocess_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-                run_response=run_response,
-                compress_tool_results=_compress_tool_results,
-            )
+            try:
+                await self._aprocess_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+            except ModelProviderError as e:
+                # What the tool loop gathered before this call failed. A caller that shrinks the
+                # request and calls again starts a new response, and needs it carried over.
+                e.partial_response = model_response
+                raise
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:

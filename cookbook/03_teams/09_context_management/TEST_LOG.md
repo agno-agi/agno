@@ -111,3 +111,46 @@ DEBUG You coordinate a team of specialized AI agents to fulfill the user's
 
 ---
 
+## Team compaction, 2026-11-28
+
+Ran with `.venv/bin/python`, `gpt-5.6-luna` and PostgreSQL from `./cookbook/scripts/run_pgvector.sh`.
+
+### compaction/team_compaction.py
+
+**Status:** PASS
+
+**Description:** A team of two members answers six questions, then `team.compact()` folds the leader's conversation and a seventh question asks for a fact from the first.
+
+**Result:** Compacted 10 messages (1867 -> 1265 tokens, archived). The team answered that the budget was 4,000 dollars. 26 messages were still stored in the session.
+
+---
+
+### compaction/team_compaction_events.py
+
+**Status:** PASS
+
+**Description:** Five long questions on the async streamed path with a low threshold, printing the run and compaction events.
+
+**Result:** Run with `compact_at_tokens=3_000`: each fold printed `TeamRunStarted`, `TeamCompactionStarted`, `TeamCompactionCompleted` in that order, for example 26210 -> 13486 tokens. One turn of this demo is about 13,000 tokens, so that threshold folded on every run and warned. The file now sets 20,000; it was not run again at that value.
+
+---
+
+### compaction/team_compaction_searchable_archive.py
+
+**Status:** PASS
+
+**Description:** A 30-row parts list is folded under a 150-token summary budget, then one row is asked for.
+
+**Result:** Compacted 4 messages (793 -> 193 tokens). The leader called `search_compacted_history` with `PART-1017|1017` and answered bin F17, 88 in stock, which matches the list.
+
+---
+
+### compaction/team_compaction_members.py
+
+**Status:** PASS
+
+**Description:** A member with `add_history_to_context=True` and its own `Compaction(compact_at_tokens=2_000)` is delegated five questions.
+
+**Result:** The member's history was folded twice (6807 -> 1234 and 2102 -> 1338 tokens). Both records carry `owner_id=researcher`. The leader's threshold of 100,000 was not reached, so it has no record.
+
+---

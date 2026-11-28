@@ -32,6 +32,11 @@ The Company tables change as one unit. MigrationManager calls ``up`` once for ea
 the unit runs for the first Company table type it is called with and finds nothing to do for the
 others. It acts on the tables and columns the database holds, not on a table's version stamp.
 
+In the database that holds the compaction records (SQLite or PostgreSQL):
+- The compactions table gets the column ``owner_id``: the agent or team whose conversation a record
+  is of. The table is new in 3.3.0, so this runs only for a table created by a 3.3.0 development
+  build. Its existing records keep no owner, and are still read by the message they are anchored on.
+
 No table is dropped. The versions table records, for each of the two tables, that its rename is done
 or that it was created under its current name. An agno 3.2 process that starts after that creates its products
 and details tables again: those are left as they are and not used. Where a table stands beside its
@@ -499,6 +504,41 @@ def _add_task_context(sql: _Sql, table_name: str) -> bool:
     return True
 
 
+def _compaction_owner_pending(sql: _Sql, table_name: str) -> bool:
+    """Whether an existing compactions table has no owner column yet."""
+    return sql.table_exists(table_name) and "owner_id" not in sql.columns(table_name)
+
+
+def _add_compaction_owner(sql: _Sql, table_name: str) -> bool:
+    """Give the compactions table its owner column. Existing records keep no owner."""
+    if not _compaction_owner_pending(sql, table_name):
+        return False
+    sql.sess.execute(text(f"ALTER TABLE {sql.ref(table_name)} ADD COLUMN {sql.quote('owner_id')} VARCHAR"))
+    return True
+
+
+def compaction_owner_pending(db: Any) -> bool:
+    """Whether this database holds a compactions table without its owner column."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    schema = getattr(db, "db_schema", None)
+    with db.Session() as sess:
+        return _compaction_owner_pending(_Sql(sess, type(db).__name__, schema), db.compactions_table_name)
+
+
+async def acompaction_owner_pending(db: Any) -> bool:
+    """Async version of compaction_owner_pending."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    schema = getattr(db, "db_schema", None)
+    async with db.async_session_factory() as sess:
+        return await sess.run_sync(
+            lambda sync_sess: _compaction_owner_pending(
+                _Sql(sync_sess, type(db).__name__, schema), db.compactions_table_name
+            )
+        )
+
+
 def _rename_pending(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
     """Whether a Company table still has its 3.2.0 name or columns, still requires a Goal, or lacks a column."""
     sql = _Sql(sess, db_type, tables.schema)
@@ -726,6 +766,8 @@ def _sql_step(db: Any, table_type: str) -> Optional[Callable[[Any], bool]]:
         return lambda sess: _rename_routines(sess, db_type, schema, db.schedules_table_name)
     if table_type == "schedule_runs":
         return lambda sess: _rename_failures(sess, db_type, schema, db.schedule_runs_table_name)
+    if table_type == "compactions":
+        return lambda sess: _add_compaction_owner(_Sql(sess, db_type, schema), db.compactions_table_name)
     return None
 
 

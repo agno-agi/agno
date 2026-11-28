@@ -51,6 +51,31 @@ def compaction_of(owner: "CompactionOwner") -> Optional["Compaction"]:
     return owner.compaction if isinstance(owner.compaction, Compaction) else None
 
 
+def records_db(owner: "CompactionOwner") -> Any:
+    """The database that holds the compaction records of this conversation.
+
+    A team member's conversation is stored in its team's session, so its records are stored with
+    it, in the team's database. Everyone else uses their own.
+    """
+    team = getattr(owner, "_team", None)
+    if getattr(owner, "team_id", None) is not None and team is not None and team.db is not None:
+        from agno.compaction.archive import stores_compaction_records
+
+        if stores_compaction_records(team.db):
+            return team.db
+    return owner.db
+
+
+def reader_id(owner: "CompactionOwner") -> Optional[str]:
+    """The owner id this conversation reads its records by, or None to read every record.
+
+    A Team and its members run in one session, so each reads the records that carry its own id. A
+    standalone agent's session holds one conversation, and it reads all of its records.
+    """
+    is_team = hasattr(owner, "members")
+    return owner.id if is_team or getattr(owner, "team_id", None) is not None else None
+
+
 def message_ids_of(read: Callable[[], List[Message]], messages: Optional[List[Message]] = None) -> Set[str]:
     """The ids of the stored messages ``read`` returns, and of ``messages``.
 
@@ -94,7 +119,13 @@ def _stored_compaction(
     compaction = compaction_of(owner)
     if compaction is None:
         return None
-    archive = compaction.archive_for(session.session_id, owner.db, message_ids=own_message_ids(messages))
+    archive = compaction.archive_for(
+        session.session_id,
+        records_db(owner),
+        # Read only for a record that names no owner
+        message_ids=lambda: own_message_ids(messages),
+        owner_id=reader_id(owner),
+    )
     if archive is None:
         return None
     earlier_run_ids, started_at = _runs_before(session, up_to_run_id)
@@ -434,8 +465,9 @@ def compact_history(
     new_record = compaction.compact(
         history,
         session_id=session.session_id,
-        db=owner.db,
+        db=records_db(owner),
         user_id=session.user_id,
+        owner_id=owner.id,
         previous=record,
         run_metrics=run_metrics,
         sent_messages=_last_sent(owner, session, compaction, fetch, own_message_ids),
@@ -478,8 +510,9 @@ async def acompact_history(
     new_record = await compaction.acompact(
         history,
         session_id=session.session_id,
-        db=owner.db,
+        db=records_db(owner),
         user_id=session.user_id,
+        owner_id=owner.id,
         previous=record,
         run_metrics=run_metrics,
         sent_messages=_last_sent(owner, session, compaction, fetch, own_message_ids),
@@ -628,8 +661,9 @@ def _overflow_fold_kwargs(
 ) -> Dict[str, Any]:
     return dict(
         session_id=session.session_id,
-        db=owner.db,
+        db=records_db(owner),
         user_id=session.user_id,
+        owner_id=owner.id,
         previous=_stored_compaction(owner, session, messages=messages, own_message_ids=own_message_ids),
         run_id=run_response.run_id if run_response is not None else None,
         run_metrics=run_response.metrics if run_response is not None else None,
@@ -715,12 +749,17 @@ def apply_compaction(
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
     replay_ids: Optional[Counter[str]] = None,
+    paying_run: Optional["CompactionRun"] = None,
 ) -> List[Message]:
     """Replace the head of ``history`` with a summary once it grows too long.
 
     Returns the list to send to the model. ``history`` itself is not mutated,
     and what the session persists is never touched: compaction shortens the
     request, not the record.
+
+    ``paying_run`` is for a conversation folded before its own run exists: a team member's history
+    is folded by the team, before the member's run starts. That run carries the summary's usage
+    and is named on the record. It is not marked as compacted and raises no events.
     """
     compaction = compaction_of(owner)
     if compaction is None or not history:
@@ -751,6 +790,7 @@ def apply_compaction(
     log_info("Auto-compacting conversation history")
     if events is not None:
         events.extend(_compaction_events(run_response, None, started=True))
+    payer = run_response if run_response is not None else paying_run
 
     # Compact against the FULL history, so the boundary the record stores is an
     # absolute index into it. A boundary measured on the already-compacted list
@@ -759,12 +799,13 @@ def apply_compaction(
     new_record = compaction.compact(
         history,
         session_id=session.session_id,
-        db=owner.db,
+        db=records_db(owner),
         user_id=session.user_id,
+        owner_id=owner.id,
         previous=record,
-        run_metrics=run_response.metrics if run_response is not None else None,
+        run_metrics=payer.metrics if payer is not None else None,
         tokens_before=inputs["context_tokens"],
-        run_id=run_response.run_id if run_response is not None else None,
+        run_id=payer.run_id if payer is not None else None,
         context_prefix=prefix,
         overhead_tokens=overhead,
         # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
@@ -795,6 +836,7 @@ async def aapply_compaction(
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
     replay_ids: Optional[Counter[str]] = None,
+    paying_run: Optional["CompactionRun"] = None,
 ) -> List[Message]:
     """Async variant of :func:`apply_compaction`."""
     compaction = compaction_of(owner)
@@ -823,18 +865,20 @@ async def aapply_compaction(
     log_info("Auto-compacting conversation history")
     if events is not None:
         events.extend(_compaction_events(run_response, None, started=True))
+    payer = run_response if run_response is not None else paying_run
 
     # Compact against the FULL history so the stored boundary is absolute -
     # see the sync path for why a relative boundary never shrinks the context.
     new_record = await compaction.acompact(
         history,
         session_id=session.session_id,
-        db=owner.db,
+        db=records_db(owner),
         user_id=session.user_id,
+        owner_id=owner.id,
         previous=record,
-        run_metrics=run_response.metrics if run_response is not None else None,
+        run_metrics=payer.metrics if payer is not None else None,
         tokens_before=inputs["context_tokens"],
-        run_id=run_response.run_id if run_response is not None else None,
+        run_id=payer.run_id if payer is not None else None,
         context_prefix=prefix,
         overhead_tokens=overhead,
         # Once a fold exists the model is sent the summary and the anchor onward, not every turn the
