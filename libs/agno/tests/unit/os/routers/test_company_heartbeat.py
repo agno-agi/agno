@@ -1,6 +1,7 @@
 """Heartbeat routes consume scheduler behavior and preserve bounded authority."""
 
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -300,21 +301,41 @@ def test_routine_routes_hide_automation_and_report_missing_goal(system):
                 ).to_dict()
             )
         path = "/company/routines/" + identifier
-        responses = [
+        if identifier == COMPANY_AUTOMATION_SCHEDULE_ID:
+            responses = [
+                client.patch(path, json={"instructions": "Updated"}),
+                client.get(path),
+                client.post(path + "/trigger"),
+                client.post(path + "/pause"),
+                client.post(path + "/resume"),
+                client.post(path + "/cancel"),
+                client.post(path + "/archive"),
+                client.get(path + "/runs"),
+                client.delete(path),
+            ]
+            assert [response.status_code for response in responses] == [404] * 9
+            continue
+        # A Routine that names no Goal cannot run or be changed. It can be read, paused, archived and deleted.
+        for response in (
             client.patch(path, json={"instructions": "Updated"}),
-            client.get(path),
             client.post(path + "/trigger"),
-            client.post(path + "/pause"),
             client.post(path + "/resume"),
-            client.post(path + "/cancel"),
-            client.post(path + "/archive"),
-            client.get(path + "/runs"),
-        ]
-        expected = 404 if identifier == COMPANY_AUTOMATION_SCHEDULE_ID else 409
-        for response in responses:
-            assert response.status_code == expected, response.text
-            if expected == 409:
-                assert response.json()["detail"] == "Routine is missing its Goal metadata"
+        ):
+            assert response.status_code == 409, response.text
+            assert response.json()["detail"] == "Routine is missing its Goal metadata. It can be paused or deleted."
+        read = client.get(path)
+        assert read.status_code == 200, read.text
+        assert read.json()["goal_status"] == "missing" and read.json()["goal_id"] is None
+        assert read.json()["routine_name"] == "missing-goal"
+        assert [row["id"] for row in client.get("/company/routines").json()["data"]] == ["missing-goal"]
+        assert client.get(path + "/runs").status_code == 200
+        paused = client.post(path + "/pause")
+        assert paused.status_code == 200 and paused.json()["enabled"] is False
+        assert client.post(path + "/cancel").json()["detail"] == "Routine has no running run"
+        archived = client.post(path + "/archive")
+        assert archived.status_code == 200 and archived.json()["deleted_at"] is not None
+        assert client.delete(path).status_code == 204
+        assert db.get_schedule(identifier) is None
     assert client.get("/company/routines").json()["data"] == []
 
 
@@ -1698,3 +1719,81 @@ def test_yaml_goals_with_runtime_config_are_not_silently_discarded(tmp_path):
     with pytest.raises(ValueError, match="not both"):
         AgentOS(db=db, config=str(config), company=CompanyConfig(goals=[Goal(name="Code goal")]), telemetry=False)
     db.close()
+
+
+def test_deleting_a_goal_pauses_its_routines_and_restoring_leaves_them_paused(system, monkeypatch):
+    client, _, db = system
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    other = client.post("/company/goals", json={"name": "Site"}).json()
+    routine = dict(executor_type="agent", executor_id="reader", instructions="Review")
+    daily = client.post(
+        "/company/routines", json=dict(goal_id=goal["id"], name="daily", cron_expr="0 9 * * *", **routine)
+    )
+    on_demand = client.post("/company/routines", json=dict(goal_id=goal["id"], name="on-demand", **routine))
+    kept = client.post(
+        "/company/routines", json=dict(goal_id=other["id"], name="daily", cron_expr="0 9 * * *", **routine)
+    )
+    assert daily.json()["enabled"] is True and daily.json()["goal_status"] == "active"
+    assert daily.json()["routine_name"] == "daily" and daily.json()["goal_name"] == "Docs"
+
+    edited = db.get_schedule(daily.json()["id"])["updated_at"]
+    later = int(time.time()) + 1000
+    monkeypatch.setattr(time, "time", lambda: later)
+    assert client.delete("/company/goals/" + goal["id"]).status_code == 204
+
+    stored = db.get_schedule(daily.json()["id"])
+    assert stored["enabled"] is False and stored["disabled_reason"] == "company_goal_archived"
+    # The pause is not an edit: the Routine keeps its place in a list sorted by last edit.
+    assert stored["updated_at"] == edited
+    # An on-demand Routine has no schedule to pause, and another Goal's Routine is not touched.
+    assert db.get_schedule(on_demand.json()["id"])["enabled"] is True
+    assert db.get_schedule(kept.json()["id"])["enabled"] is True
+
+    path = "/company/routines/" + daily.json()["id"]
+    listed = {row["id"]: row for row in client.get("/company/routines").json()["data"]}
+    assert listed[daily.json()["id"]]["goal_status"] == "archived" and listed[daily.json()["id"]]["goal_name"] == "Docs"
+    assert listed[kept.json()["id"]]["goal_status"] == "active"
+    refused = client.post(path + "/resume")
+    assert refused.status_code == 404 and "Goal is archived" in refused.json()["detail"]
+    assert client.post("/company/routines/" + on_demand.json()["id"] + "/trigger").status_code == 404
+
+    assert client.post("/company/goals/" + goal["id"] + "/restore").status_code == 200
+    assert db.get_schedule(daily.json()["id"])["enabled"] is False
+    resumed = client.post(path + "/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["enabled"] is True and resumed.json()["disabled_reason"] is None
+
+
+def test_a_routine_of_an_archived_goal_is_paused_archived_and_deleted(system):
+    client, _, db = system
+    goal = client.post("/company/goals", json={"name": "Docs"}).json()
+    body = dict(executor_type="agent", executor_id="reader", instructions="Review", cron_expr="0 9 * * *")
+    first = client.post("/company/routines", json=dict(goal_id=goal["id"], name="first", **body)).json()["id"]
+    second = client.post("/company/routines", json=dict(goal_id=goal["id"], name="second", **body)).json()["id"]
+    assert client.delete("/company/goals/" + goal["id"]).status_code == 204
+    assert client.post(f"/company/routines/{first}/pause").status_code == 200
+    assert client.post(f"/company/routines/{first}/archive").status_code == 200
+    assert client.delete(f"/company/routines/{first}").status_code == 204
+    assert client.delete(f"/company/routines/{second}").status_code == 204
+    assert db.get_schedule(first) is None and db.get_schedule(second) is None
+
+
+@pytest.mark.asyncio
+async def test_async_manager_pauses_the_routines_of_a_deleted_goal(tmp_path):
+    from agno.company.manager import AsyncCompanyManager
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.scheduler import ScheduleManager
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "async-goal-delete.db"))
+    manager = AsyncCompanyManager(db)
+    goal = await manager.create(name="SDK")
+    schedule = await ScheduleManager(db).acreate(
+        name="check",
+        cron="0 * * * *",
+        endpoint="/agents/reader/runs",
+        payload={"message": "check", "metadata": {"goal_id": goal["id"]}},
+        provenance={"managed_by": "company", "target_type": "agent", "target_id": "reader"},
+    )
+    assert await manager.delete(goal["id"]) is True
+    stored = await db.get_schedule(schedule.id)
+    assert stored["enabled"] is False and stored["disabled_reason"] == "company_goal_archived"

@@ -3,7 +3,7 @@ import time
 from datetime import datetime, timezone
 from functools import wraps
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from agno.tools import Toolkit
@@ -17,62 +17,131 @@ except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
 
+# What a read-only GithubTools tells the model about its tools.
+_READ_ONLY_INSTRUCTIONS = "GitHub: you can read GitHub yourself with {tools}. You cannot write to it."
+_READ_ONLY_PULL_REQUEST_INSTRUCTIONS = """\
+- Asked about a pull request, read it before you answer: get_pull_request for its state and head
+  commit, get_pull_request_changes for the diff, get_pull_request_checks for CI. Answer from what
+  you read and say which commit it was.
+- For a large pull request, list the files first (get_pull_request_changes with
+  include_patches=false), then read the files that matter one at a time with path. Say which files
+  you did not read.
+- "Safe to merge" is your judgment from the diff and the checks. Say what you checked and what
+  you could not: reading GitHub does not run the code.
+"""
+
+
 class GithubTools(Toolkit):
+    # Every tool, in the order it is registered, marked by what it does on GitHub: "read" only reads,
+    # "write" creates, changes or deletes something. A method is a tool only when it is listed here,
+    # and read_only=True registers the ones marked "read".
+    tool_access: Dict[str, str] = {
+        "search_repositories": "read",
+        "list_repositories": "read",
+        "get_repository": "read",
+        "get_pull_request": "read",
+        "get_pull_request_changes": "read",
+        "get_pull_request_checks": "read",
+        "create_issue": "write",
+        "create_repository": "write",
+        "delete_repository": "write",
+        "list_branches": "read",
+        "get_repository_languages": "read",
+        "get_pull_request_count": "read",
+        "get_repository_stars": "read",
+        "get_pull_requests": "read",
+        "get_pull_request_comments": "read",
+        "create_pull_request_comment": "write",
+        "edit_pull_request_comment": "write",
+        "get_pull_request_with_details": "read",
+        "get_repository_with_stats": "read",
+        "list_issues": "read",
+        "get_issue": "read",
+        "comment_on_issue": "write",
+        "close_issue": "write",
+        "reopen_issue": "write",
+        "assign_issue": "write",
+        "label_issue": "write",
+        "list_issue_comments": "read",
+        "edit_issue": "write",
+        "create_pull_request": "write",
+        "create_file": "write",
+        "get_file_content": "read",
+        "update_file": "write",
+        "delete_file": "write",
+        "get_directory_content": "read",
+        "get_branch_content": "read",
+        "create_branch": "write",
+        "set_default_branch": "write",
+        "search_code": "read",
+        "search_issues_and_prs": "read",
+        "create_review_request": "write",
+    }
+
     def __init__(
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
+        read_only: bool = False,
         **kwargs,
     ):
+        """
+        Args:
+            access_token: The GitHub token. Read from GITHUB_ACCESS_TOKEN when omitted.
+            base_url: The API address of a GitHub Enterprise server.
+            read_only: Register only the tools that read, and tell the model how to read a pull
+                request well. No tool that creates, changes or deletes anything on GitHub is
+                registered, whatever the token allows. include_tools and exclude_tools narrow
+                the reading tools further. Naming a writing tool in include_tools is refused;
+                naming one in exclude_tools changes nothing, since it is already left out.
+        """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
+        self.read_only = read_only
 
         self.g = self.authenticate()
 
-        tools: List[Any] = [
-            self.search_repositories,
-            self.list_repositories,
-            self.get_repository,
-            self.get_pull_request,
-            self.get_pull_request_changes,
-            self.get_pull_request_checks,
-            self.create_issue,
-            self.create_repository,
-            self.delete_repository,
-            self.list_branches,
-            self.get_repository_languages,
-            self.get_pull_request_count,
-            self.get_repository_stars,
-            self.get_pull_requests,
-            self.get_pull_request_comments,
-            self.create_pull_request_comment,
-            self.edit_pull_request_comment,
-            self.get_pull_request_with_details,
-            self.get_repository_with_stats,
-            self.list_issues,
-            self.get_issue,
-            self.comment_on_issue,
-            self.close_issue,
-            self.reopen_issue,
-            self.assign_issue,
-            self.label_issue,
-            self.list_issue_comments,
-            self.edit_issue,
-            self.create_pull_request,
-            self.create_file,
-            self.get_file_content,
-            self.update_file,
-            self.delete_file,
-            self.get_directory_content,
-            self.get_branch_content,
-            self.create_branch,
-            self.set_default_branch,
-            self.search_code,
-            self.search_issues_and_prs,
-            self.create_review_request,
-        ]
+        names = [name for name, access in self.tool_access.items() if access == "read" or not read_only]
+        if read_only:
+            writing = [name for name in kwargs.get("include_tools") or [] if self.tool_access.get(name) == "write"]
+            if writing:
+                raise ValueError(
+                    f"GithubTools(read_only=True) cannot include {', '.join(writing)}: "
+                    f"{'it writes' if len(writing) == 1 else 'they write'} to GitHub. "
+                    "Remove the name from include_tools, or pass read_only=False."
+                )
+            # A writing tool is already left out, so a list that excluded one before read_only was
+            # added still works. A name that is no tool at all is still refused by the Toolkit.
+            if kwargs.get("exclude_tools"):
+                kwargs["exclude_tools"] = [
+                    name for name in kwargs["exclude_tools"] if self.tool_access.get(name) != "write"
+                ]
+            kwargs.setdefault("add_instructions", True)
 
+        tools: List[Any] = [getattr(self, name) for name in names]
         super().__init__(name="github", tools=[self._without_waiting(tool) for tool in tools], **kwargs)
+
+        if read_only and self.instructions is None:
+            self.instructions = self._read_only_instructions()
+
+    def _read_only_instructions(self) -> str:
+        """How to read GitHub well, naming only tools this toolkit registered."""
+        named = (
+            "get_pull_request",
+            "get_pull_request_changes",
+            "get_pull_request_checks",
+            "get_file_content",
+            "search_code",
+        )
+        held = [name for name in named if name in self.functions]
+        if len(held) > 1:
+            tools = f"the {', '.join(held[:-1])} and {held[-1]} tools"
+        else:
+            tools = f"the {held[0]} tool" if held else "your GitHub tools"
+        instructions = _READ_ONLY_INSTRUCTIONS.format(tools=tools) + "\n"
+        if set(named[:3]) <= set(held):
+            instructions += _READ_ONLY_PULL_REQUEST_INSTRUCTIONS
+        return instructions
 
     def _without_waiting(self, tool: Any) -> Any:
         """The tool, answering a used-up rate limit at once with when it resets.
