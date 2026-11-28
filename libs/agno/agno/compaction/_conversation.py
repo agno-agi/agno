@@ -145,9 +145,14 @@ def _without_rebuilt_runs_chaining(
     for run in getattr(session, "runs", None) or []:
         if _compaction_as_of(run) is not None:
             rebuilt.update(m.id for m in run.messages or [] if m.role == "assistant" and m.id is not None)
-    if not rebuilt:
-        return history
-    return [without_chaining(m) if m.id in rebuilt else m for m in history]
+    if rebuilt:
+        for index in range(len(history) - 1, -1, -1):
+            if history[index].id in rebuilt:
+                # An older response ID would also skip the rebuilt run's tool calls on replay,
+                # leaving their results unpaired. Only replies after this one can resume the chain.
+                end = index + 1
+                return [without_chaining(m) for m in history[:end]] + history[end:]
+    return history
 
 
 def _estimated_context_tokens(

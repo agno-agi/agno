@@ -547,3 +547,52 @@ def test_a_turn_after_any_regenerated_answer_is_sent_in_full_once(kind, clock, t
     assert _has_summary(model.requests[-1])
 
     _assert_the_next_turn_is_sent_in_full_and_then_continued_from(model, owner, clock)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("rebuild", ["regenerate", "fork"])
+def test_replay_includes_the_rebuilt_tool_call_and_its_result(kind, rebuild, clock, tmp_path):
+    model, owner, _, _ = _compacted(kind, clock, tmp_path)
+    # Leave an ordinary post-fold reply that the provider could otherwise fall back to.
+    latest = _ask(owner, clock, 2, start=10)
+
+    def lookup() -> str:
+        return "found"
+
+    owner.tools = [lookup]
+    invoke = model.invoke
+
+    def request_lookup_once(*args, **kwargs):
+        model.invoke = invoke
+        reply = invoke(*args, **kwargs)
+        reply.content = None
+        reply.tool_calls = [
+            {
+                "id": "fc_lookup",
+                "call_id": "call_lookup",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }
+        ]
+        return reply
+
+    model.invoke = request_lookup_once
+    clock.advance()
+    if rebuild == "regenerate":
+        owner.continue_run(run_id=latest, session_id="s", regenerate=True)
+    else:
+        owner.continue_run(run_id=latest, session_id="s", fork=True, input="look it up")
+
+    _ask(owner, clock, 1, start=12)
+    params, sent = _openai_request(model.requests[-1])
+    assert "previous_response_id" not in params
+    assert [(item["type"], item["call_id"]) for item in sent if "call_id" in item] == [
+        ("function_call", "call_lookup"),
+        ("function_call_output", "call_lookup"),
+    ]
+
+    replayed_reply = f"resp_{len(model.requests)}"
+    _ask(owner, clock, 1, start=13)
+    params, sent = _openai_request(model.requests[-1])
+    assert params["previous_response_id"] == replayed_reply
+    assert [item["role"] for item in sent] == ["user"]
