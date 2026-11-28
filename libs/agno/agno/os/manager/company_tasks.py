@@ -490,9 +490,10 @@ class CompanyTaskTools(Toolkit):
                 record = await _manager_call(starter.manager, method, record_id)
                 return (record or {}).get("name") or record_id
 
-            if wanted is not None and wanted == value["goal_id"] and (target is None or is_default_project(target)):
+            if wanted is not None and wanted == value["goal_id"] and target is None:
                 # Filing names no Project. For a Task that has this Goal it would only take the Task
-                # out of its Project, which the person did not ask for.
+                # out of its Project, which the person did not ask for. A call that names the Default
+                # Project is a move there, whatever Goal is passed beside it.
                 under = await name_of("get", wanted)
                 held = await name_of("get_project", value["project_id"])
                 reply = f"'{title}' (Task {task_id}) is already under Goal '{under}', in Project '{held}'."

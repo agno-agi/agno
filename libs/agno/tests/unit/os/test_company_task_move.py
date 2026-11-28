@@ -759,6 +759,21 @@ def test_super_agent_leaves_a_task_in_its_project_when_it_already_has_the_goal(s
     assert db.get_task(task["id"])["project_id"] == DEFAULT_PROJECT_ID
 
 
+def test_super_agent_moves_a_task_to_the_default_project_named_beside_its_goal(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, task = records(client)
+    # "Move it to Default and keep it under SDK": the Default Project is named, so this is a move.
+    named = dict(task_id=task["id"], project_id=DEFAULT_PROJECT_ID, goal_id=project["goal_id"])
+    reply = call(agent_os, "move_company_task", context(), **named)
+    assert reply == f"Moved 'Draft' (Task {task['id']}) into Project 'Default'. Nothing else about it changed."
+    moved = db.get_task(task["id"])
+    assert (moved["goal_id"], moved["project_id"]) == (project["goal_id"], DEFAULT_PROJECT_ID)
+    assert "goal" not in moved["transitions"][-1]
+    # Named again where it already is, nothing is written.
+    assert "already in that Project" in call(agent_os, "move_company_task", context(), **named)
+    assert db.get_task(task["id"]) == moved
+
+
 def test_super_agent_is_told_to_file_work_under_the_goal_it_serves():
     from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 
