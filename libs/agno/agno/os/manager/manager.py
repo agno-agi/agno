@@ -501,6 +501,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     # The work a conversation started: its Tasks when Company is on, and its background runs.
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
+    from agno.os.manager.interrupted_turn import InterruptedTurns
     from agno.os.manager.person import Person, TurnContext
 
     # Who the person is, then that work, in one message right before theirs. The role store is the
@@ -513,7 +514,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         work,
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
+        interrupted=InterruptedTurns(lambda: team),
     )
+    # A turn is stored as running when it starts and after each batch of tool results, so a server
+    # killed in the middle of one leaves what was asked and the work the turn had recorded.
+    team._store_run_in_flight = True
     # That message is where Super Agent reads the time, so the time is left out of its system message:
     # a timestamp there differs on every request, which stops the provider caching the prompt, and it
     # goes stale in a conversation the provider continues without being sent the system message again.

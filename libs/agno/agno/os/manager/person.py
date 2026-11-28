@@ -150,10 +150,13 @@ def _now(timezone_identifier: Optional[str] = None, datetime_format: Optional[st
 
 
 class TurnContext:
-    """What Super Agent is told right before each message: the time, who the person is, then the
-    work this conversation started. One unstored user message holds all of it.
+    """What Super Agent is told right before each message: the time, who the person is, a message of
+    theirs that a restart cut before it was answered, then the work this conversation started. One
+    unstored user message holds all of it.
 
     clock returns the Team's timezone identifier and datetime format, or is None to leave the time out.
+    interrupted has read(run_context, session) and aread(...): it stores a cut turn as failed and
+    returns the note about it, or None.
     """
 
     def __init__(
@@ -162,26 +165,32 @@ class TurnContext:
         work: Any,
         delivers: Optional[Callable[[], bool]] = None,
         clock: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]] = None,
+        interrupted: Any = None,
     ):
         self.person = person
         self.work = work
         # Whether Super Agent's model is sent the message at all.
         self.delivers = delivers
         self.clock = clock
+        self.interrupted = interrupted
 
-    def _join(self, note: str, work: Optional[str]) -> str:
+    def _join(self, note: str, cut: Optional[str], work: Optional[str]) -> str:
         # The time is read when the message is built, so each turn and each report carries its own.
         head = f"{_now(*self.clock())}\n{note}" if self.clock is not None else note
-        return f"{head}\n\n{work}" if work else head
+        return "\n\n".join(part for part in (head, cut, work) if part)
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
+        # A cut turn is stored as failed whether or not the model is sent the note. It is read before
+        # the work, whose read moves the marks that say which turn started what.
+        cut = self.interrupted.read(run_context, session) if self.interrupted is not None else None
         if self.delivers is not None and not self.delivers():
             return None
         work = self.work.read(run_context, session) if self.work is not None else None
-        return self._join(self.person.read(run_context), work)
+        return self._join(self.person.read(run_context), cut, work)
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
+        cut = await self.interrupted.aread(run_context, session) if self.interrupted is not None else None
         if self.delivers is not None and not self.delivers():
             return None
         work = await self.work.aread(run_context, session) if self.work is not None else None
-        return self._join(await self.person.aread(run_context), work)
+        return self._join(await self.person.aread(run_context), cut, work)

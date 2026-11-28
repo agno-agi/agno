@@ -1180,6 +1180,8 @@ def _run(
                     # Consume the generator without yielding
                     deque(pre_hook_iterator, maxlen=0)
 
+                store_team_run_in_flight(team, run_response, session, run_context)
+
                 # 2. Determine tools for model
                 # Initialize team run context
                 team_run_context: Dict[str, Any] = {}
@@ -1542,6 +1544,8 @@ def _run_stream(
                     )
                     for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
+
+                store_team_run_in_flight(team, run_response, session, run_context)
 
                 # 2. Determine tools for model
                 # Initialize team run context
@@ -3159,6 +3163,8 @@ async def _arun(
                     async for _ in pre_hook_iterator:
                         pass
 
+                await astore_team_run_in_flight(team, run_response, team_session, run_context)
+
                 # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
                 team.model = cast(Model, team.model)
@@ -3733,6 +3739,8 @@ async def _arun_stream(
                     )
                     async for pre_hook_event in pre_hook_iterator:
                         yield pre_hook_event
+
+                await astore_team_run_in_flight(team, run_response, team_session, run_context)
 
                 # 2. Resolve callable factories and determine tools for model
                 team_run_context: Dict[str, Any] = {}
@@ -5012,6 +5020,73 @@ async def _apersist_team_run_in_session(
     )
 
 
+def _stores_run_in_flight(team: "Team", run_response: TeamRunOutput) -> bool:
+    from agno.run.concurrency import is_worker_managed
+
+    # A run a queue worker owns is left alone: the queue stored its row when it accepted the run,
+    # and ends it when its worker is lost.
+    return team._store_run_in_flight and not (run_response.run_id and is_worker_managed(run_response.run_id))
+
+
+def _before_in_flight_write(session: TeamSession, run_response: TeamRunOutput) -> Tuple[List[Optional[str]], Any]:
+    return [run.run_id for run in session.runs or []], run_response.session_state
+
+
+def _after_in_flight_write(session: TeamSession, run_response: TeamRunOutput, before: Tuple[Any, Any]) -> None:
+    """Leave the run and the session held in memory as they were before the write.
+
+    History is read from that session by a count of runs, so a run that has not ended must not take
+    a place in it. The write also copies the session state onto the run, which the write at the end
+    of a run does not always do. Undoing both keeps what a run that ends is sent and stores.
+    """
+    held, state = before
+    run_response.session_state = state
+    if run_response.run_id not in held and session.runs:
+        session.runs = [run for run in session.runs if run.run_id != run_response.run_id]
+
+
+def store_team_run_in_flight(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Store a run that has not ended yet, for a Team that sets ``_store_run_in_flight``.
+
+    The run is written as it stands, with its input and the session state, when it starts and after
+    each batch of tool results. If the process is then killed, the database still holds what was
+    asked and what the session state recorded. The write at the end of the run replaces the same
+    row, so a run that ends is stored as it is without this. A failure here never stops the run.
+    """
+    if not _stores_run_in_flight(team, run_response):
+        return
+    before = _before_in_flight_write(session, run_response)
+    try:
+        _persist_team_run_in_session(team, run_response, session, run_context)
+    except Exception as e:
+        log_warning(f"Could not store run {run_response.run_id} while it runs: {e}")
+    finally:
+        _after_in_flight_write(session, run_response, before)
+
+
+async def astore_team_run_in_flight(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Async variant of :func:`store_team_run_in_flight`."""
+    if not _stores_run_in_flight(team, run_response):
+        return
+    before = _before_in_flight_write(session, run_response)
+    try:
+        await _apersist_team_run_in_session(team, run_response, session, run_context)
+    except Exception as e:
+        log_warning(f"Could not store run {run_response.run_id} while it runs: {e}")
+    finally:
+        _after_in_flight_write(session, run_response, before)
+
+
 def _sync_team_run_response_with_model_response(
     run_response: TeamRunOutput,
     run_messages: "RunMessages",  # noqa: F821
@@ -5095,6 +5170,9 @@ def build_team_after_tool_results_callback(
     model_response and writes a checkpoint to the session.
     """
     if team.checkpoint != "tool-batch":
+        if team._store_run_in_flight:
+            # The run as it stands and the session state the tools just changed. No checkpoint is marked.
+            return lambda model_response: store_team_run_in_flight(team, run_response, session, run_context)
         return None
 
     def _callback(model_response):
@@ -5113,6 +5191,12 @@ def abuild_team_after_tool_results_callback(
 ) -> Optional[Any]:
     """Async variant of :func:`build_team_after_tool_results_callback`."""
     if team.checkpoint != "tool-batch":
+        if team._store_run_in_flight:
+
+            async def _store(model_response):
+                await astore_team_run_in_flight(team, run_response, session, run_context)
+
+            return _store
         return None
 
     async def _callback(model_response):

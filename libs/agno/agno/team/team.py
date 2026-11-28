@@ -469,6 +469,11 @@ class Team:
     # fresh run, or None. The Team sends it as an unstored user message right before the run's input.
     _message_context: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
 
+    # Internal: store each fresh run as running, with its input and the session state, when it starts
+    # and after each batch of tool results, so a run cut by a killed process leaves what was asked.
+    # The write at the end of the run replaces the same row.
+    _store_run_in_flight: bool = field(default=False, init=False, repr=False, compare=False)
+
     def __init__(
         self,
         members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
