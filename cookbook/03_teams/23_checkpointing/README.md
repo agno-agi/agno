@@ -2,7 +2,7 @@
 
 Direct parity with the agent surface — same verbs, same flags, same
 auto-fork-on-COMPLETED semantics. `Team(checkpoint="tool-batch")` writes the
-team run after each team-level tool batch (a delegation to a member **is** a tool
+fresh foreground run before its first model call and after each team-level tool batch (a delegation to a member **is** a tool
 batch), giving mid-run durability and crash recovery.
 
 Members are out of scope of the team's checkpoint: from the team's perspective a
@@ -27,7 +27,7 @@ The three `/continue` capabilities live in sibling folders:
 ## Checkpoint policies (`Team(checkpoint=...)`)
 
 - `"runs"` (default) — write only at terminal states. Same as agent default.
-- `"tool-batch"` — write after each team-level tool batch. Enables crash recovery.
+- `"tool-batch"` — write at the start and after each team-level tool batch. Enables crash recovery.
 - `"tools"` — reserved for 3.0 (raises `NotImplementedError`).
 
 ## Running

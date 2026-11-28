@@ -857,6 +857,9 @@ class TeamRunOutput:
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
+    # An opaque process identity on foreground Super Agent checkpoints.
+    checkpoint_owner: Optional[str] = None
+
     @property
     def active_requirements(self) -> list[RunRequirement]:
         if not self.requirements:

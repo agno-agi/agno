@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from copy import copy
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Optional, Tuple, TypeVar, Union
 
 if TYPE_CHECKING:
+    from agno.run import RunContext
     from agno.run.agent import RunOutput
+    from agno.run.messages import RunMessages
     from agno.run.team import TeamRunOutput
     from agno.run.workflow import WorkflowRunOutput
     from agno.session.agent import AgentSession
     from agno.session.team import TeamSession
     from agno.session.workflow import WorkflowSession
 
+CheckpointRunT = TypeVar("CheckpointRunT", "RunOutput", "TeamRunOutput")
 HistorySessionT = TypeVar("HistorySessionT", "AgentSession", "TeamSession")
 
 
@@ -61,3 +64,41 @@ def continue_history_session(
     history_session = copy(session)
     history_session.runs = [r for r in session.runs or [] if r.run_id != run.run_id]
     return history_session
+
+
+def checkpoint_snapshot(
+    run: CheckpointRunT,
+    session: HistorySessionT,
+    run_context: Optional["RunContext"],
+    initial_messages: Optional["RunMessages"],
+) -> Tuple[CheckpointRunT, HistorySessionT, Optional["RunContext"]]:
+    """Build a storage view without changing the live history, tool state, or model input."""
+    from time import time
+
+    from agno.run.base import RunStatus
+
+    # Tool-result boundaries are also shown on the completed run's timeline.
+    if initial_messages is None:
+        run.status = RunStatus.running
+        run.last_checkpoint_at_message_index = len(run.messages or [])
+        if run.messages:
+            run.messages[-1].checkpoint_status = RunStatus.running.value
+            run.messages[-1].checkpoint_created_at = int(time())
+    run = copy(run)
+    if initial_messages is not None:
+        run.status = RunStatus.running
+        run.messages = [m for m in initial_messages.messages if m.add_to_agent_memory]
+        run.last_checkpoint_at_message_index = len(run.messages)
+
+    # Session persistence adds the run to history, updates metrics, and removes the
+    # current IDs from session state. Confine those changes to the checkpoint.
+    snapshot = copy(session)
+    snapshot.runs = list(session.runs or [])
+    snapshot.session_data = dict(session.session_data or {})
+    state = snapshot.session_data.get("session_state")
+    if isinstance(state, dict):
+        snapshot.session_data["session_state"] = state.copy()
+    if run_context is not None and run_context.session_state is not None:
+        run_context = copy(run_context)
+        run_context.session_state = dict(run_context.session_state or {})
+    return run, snapshot, run_context
