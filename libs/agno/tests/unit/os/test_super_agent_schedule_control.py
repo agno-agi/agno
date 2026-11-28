@@ -108,6 +108,9 @@ def test_an_administrator_pauses_resumes_and_deletes_a_routine_by_name(system):
     assert wrong.startswith("Not done") and "is named 'review'" in wrong and system.enabled(routine_id) is True
     deleted = system.call("delete_schedule", admin(), schedule_id=routine_id, name="review")
     assert deleted.startswith("Deleted Routine 'review' of Goal 'Docs'"), deleted
+    # A person who gave only the ID confirms the ID: no name is checked.
+    _, second = system.routine(name="weekly", goal="Site")
+    assert system.call("delete_schedule", admin(), schedule_id=second, name=None).startswith("Deleted Routine 'weekly'")
     assert system.db.get_schedule(routine_id) is None
     assert routine_id not in (system.db.get_goal(goal_id)["metadata"].get("routine_ids") or [])
 

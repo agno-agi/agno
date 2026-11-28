@@ -65,7 +65,7 @@ Schedules:
   person says delete or remove: delete_schedule pauses for their confirmation, so call it and say so.
 - When one of these tools answers "Not done", nothing changed: give its reason in full and who it says
   can do it. Never tell the person to do it in a settings page, the Scheduler page or the Company pages.
-- After pausing Company automation, say what the tool says stops while it is paused.
+- After pausing Company automation, tell the person each thing the tool says stops while it is paused.
 """
 
 DOCS_INSTRUCTIONS = """\

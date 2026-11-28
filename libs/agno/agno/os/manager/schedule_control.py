@@ -11,11 +11,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, Schedule
+from agno.tools.company import _OptionalString
 from agno.tools.toolkit import Toolkit
 
 # What a person is told when Company automation is paused. The Scheduler page says the same.
 AUTOMATION_PAUSED_EFFECT = (
-    "While it is paused, nothing happens on its own in Company: Ready Tasks that nobody started are not "
+    "While Company automation is paused, nothing happens on its own in Company: Ready Tasks that nobody started are not "
     "started, Tasks a Routine proposed are not accepted by auto-accept, and Projects are not completed by "
     "auto-accept. Routines still run on their own schedules and propose work, and people can still accept "
     "and start Tasks."
@@ -247,8 +248,11 @@ class ScheduleControlTools(Toolkit):
         if action == "delete":
             return f"Deleted {what}, with its run history. It cannot be brought back."
         if action == "pause":
-            effect = f" {AUTOMATION_PAUSED_EFFECT}" if kind == "automation" else ""
-            return f"Paused {what}. It does not run until it is resumed with resume_schedule.{effect}"
+            if kind == "automation":
+                return (
+                    f"Paused {what}, until it is resumed. Tell the person what this stops: {AUTOMATION_PAUSED_EFFECT}"
+                )
+            return f"Paused {what}. It does not run until it is resumed with resume_schedule."
         next_run = _epoch_to_iso((result or {}).get("next_run_at")) if isinstance(result, dict) else None
         return f"Resumed {what}." + (f" Its next run is at {next_run}." if next_run else "")
 
@@ -288,22 +292,27 @@ class ScheduleControlTools(Toolkit):
         """
         return await self._change("resume", schedule, _agno_run_context)
 
-    def delete_schedule(self, schedule_id: str, name: str, _agno_run_context: Optional[Any] = None) -> str:
+    def delete_schedule(
+        self, schedule_id: str, name: _OptionalString = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
         """Delete a schedule and its run history.
 
         Args:
             schedule_id: The schedule's ID.
-            name: The schedule's name, as listed.
+            name: The schedule's name; null when it is not known.
         """
         return _ASYNC_ONLY
 
-    async def adelete_schedule(self, schedule_id: str, name: str, _agno_run_context: Optional[Any] = None) -> str:
+    async def adelete_schedule(
+        self, schedule_id: str, name: _OptionalString = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
         """Delete a schedule and its run history, for good. The run pauses for the person to confirm
-        the schedule by ID and name. Use it only when the person asked to delete or remove it; to
-        stop it running, pause it. Company automation cannot be deleted.
+        it. Use it only when the person asked to delete or remove it; to stop it running, pause it.
+        Company automation cannot be deleted.
 
         Args:
             schedule_id: The schedule's ID.
-            name: The schedule's name, as stored. The person confirms this name.
+            name: The schedule's name, as stored, for the person to confirm. Null when the person
+                gave only the ID and the name is not known: never put the ID here.
         """
         return await self._change("delete", schedule_id, _agno_run_context, confirmed_name=name)
