@@ -5417,7 +5417,7 @@ def _build_continue_run_messages(
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
             # Replay the stored fold, as a fresh run does. No new fold is planned here.
-            history_copy = _compaction.replayed_history(team, history_copy, stored_record, replay_ids)
+            history_copy = _compaction.replayed_history(team, history_copy, stored_record, replay_ids, input)
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
 
