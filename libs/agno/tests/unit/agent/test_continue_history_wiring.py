@@ -51,13 +51,15 @@ def _patch_sync(monkeypatch: pytest.MonkeyPatch, agent: Agent, runs) -> None:
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
     monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
 
 
 def _patch_async(monkeypatch: pytest.MonkeyPatch, agent: Agent, runs) -> None:
-    async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+    async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
         return AgentSession(session_id=session_id, user_id=user_id, runs=runs)
 
     monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
@@ -65,7 +67,9 @@ def _patch_async(monkeypatch: pytest.MonkeyPatch, agent: Agent, runs) -> None:
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
     monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
     monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)

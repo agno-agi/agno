@@ -703,6 +703,9 @@ class ConfigResponse(BaseModel):
         description="Usage telemetry is sent to Agno: the AgentOS launch ping, or run telemetry "
         "from a local agent, team or workflow",
     )
+    temporary_runs: Optional[FeatureStatus] = Field(
+        None, description="The run routes accept store_run=false, a run that is answered but not saved"
+    )
     user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
     audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
     public: Optional[PublicStatus] = Field(

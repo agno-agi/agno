@@ -112,3 +112,12 @@
 **Result:** Completed successfully in 23s.
 
 ---
+
+### temporary_run.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Runs the agent with store_run=False between two normal runs. The temporary run answered from the session history (recalled the color) and the stored run count stayed at 1; the following normal run was stored again (count 2).
+**Result:** Completed successfully in 8s.
+
+---

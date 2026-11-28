@@ -95,7 +95,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import continue_history_session, resolve_run_index
+from agno.session._utils import continue_history_session, is_transient, resolve_run_index
 from agno.team._members import member_storage
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -208,9 +208,13 @@ async def _asetup_session(
     )
 
     if _has_async_db(team):
-        team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+        team_session = await _aread_or_create_session(
+            team, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+        )
     else:
-        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        team_session = _read_or_create_session(
+            team, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+        )
 
     # Update metadata
     _update_metadata(team, session=team_session)
@@ -1924,6 +1928,7 @@ def run_dispatch(
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team and return the response."""
@@ -1990,7 +1995,13 @@ def run_dispatch(
         # Read existing session from database
         from copy import deepcopy
 
-        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        # Resolved early: the session load already depends on it (a temporary run gets a private copy).
+        effective_store_run = (
+            store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+        )
+        team_session = _read_or_create_session(
+            team, session_id=session_id, user_id=user_id, store_run=effective_store_run
+        )
         # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
         # so the session layer keeps the session's own values (team < session < call-site).
         session_metadata = deepcopy(team_session.metadata)
@@ -2010,6 +2021,7 @@ def run_dispatch(
             metadata=metadata,
             session_metadata=session_metadata,
             output_schema=output_schema,
+            store_run=store_run,
         )
 
         # Initialize session state
@@ -2040,6 +2052,7 @@ def run_dispatch(
             knowledge_filters=opts.knowledge_filters,
             metadata=opts.metadata,
             output_schema=opts.output_schema,
+            store_run=opts.store_run,
         )
         # Apply options with precedence: explicit args > existing run_context > resolved defaults.
         opts.apply_to_context(
@@ -2047,6 +2060,7 @@ def run_dispatch(
             dependencies_provided=dependencies_provided,
             knowledge_filters_provided=knowledge_filters_provided,
             metadata_provided=metadata_provided,
+            store_run_provided=store_run is not None,
             user_id=user_id,
         )
 
@@ -4155,6 +4169,7 @@ def arun_dispatch(  # type: ignore
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     background: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
@@ -4165,6 +4180,14 @@ def arun_dispatch(  # type: ignore
     from agno.team._run_options import resolve_run_options
 
     run_id = run_id or str(uuid4())
+
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    if background and not effective_store_run:
+        raise ValueError(
+            "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+        )
 
     # Initialize Team
     team.initialize_team(debug_mode=debug_mode)
@@ -4184,6 +4207,7 @@ def arun_dispatch(  # type: ignore
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         output_schema=output_schema,
+        store_run=store_run,
     )
 
     if (opts.add_history_to_context) and not team.db and not team.parent_team_id:
@@ -4240,6 +4264,7 @@ def arun_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        store_run=opts.store_run,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
@@ -4247,6 +4272,7 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies_provided,
         knowledge_filters_provided=knowledge_filters_provided,
         metadata_provided=metadata_provided,
+        store_run_provided=store_run is not None,
         user_id=user_id,
     )
 
@@ -4555,13 +4581,17 @@ def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any)
     The live object is returned unchanged when offloading is off, so callers
     reading ``RunOutput.member_responses`` always see the whole answer. A
     sub-team offloads too: its member runs are written by the parent through
-    the session copy. A workflow step's member runs are never written, so no
-    storage copy is made for them.
+    the session copy. A workflow step's member runs and a temporary run's (transient
+    session) are never written, so no storage copy is made for them.
     """
     store = getattr(team, "_result_store", None)
     if store is None or not store.member_responses:
         return member_run
-    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
+    if (
+        getattr(team, "workflow_id", None) is not None
+        or is_transient(session)
+        or _member_opted_out_of_the_store(team, member_run)
+    ):
         return member_run
     from agno.offload.runs import offload_run_for_storage
 
@@ -4573,7 +4603,11 @@ async def _amember_run_for_storage(team: "Team", session: TeamSession, member_ru
     store = getattr(team, "_result_store", None)
     if store is None or not store.member_responses:
         return member_run
-    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
+    if (
+        getattr(team, "workflow_id", None) is not None
+        or is_transient(session)
+        or _member_opted_out_of_the_store(team, member_run)
+    ):
         return member_run
     from agno.offload.runs import aoffload_run_for_storage
 
@@ -4661,7 +4695,10 @@ def _cleanup_and_store(
 
     # Scrub a copy for storage so the caller always sees full media. The offload helper returns
     # None when there is nothing to offload, and a shallow copy is enough for that case.
-    storage_copy = build_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(run_response)
+    # A temporary run never offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else build_offloaded_storage_copy(team, run_response, session.session_id)
+    ) or copy.copy(run_response)
 
     if run_response.run_id:
         cleanup_member_runs(run_response.run_id)
@@ -4700,6 +4737,10 @@ def _cleanup_and_store(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     # Persist the session row and this single run (both O(1))
     from agno.team._session import save_run
@@ -4742,9 +4783,10 @@ async def _acleanup_and_store(
 
     # Scrub a copy for storage so the caller always sees full media. The offload helper returns
     # None when there is nothing to offload, and a shallow copy is enough for that case.
-    storage_copy = await abuild_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(
-        run_response
-    )
+    # A temporary run never offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else await abuild_offloaded_storage_copy(team, run_response, session.session_id)
+    ) or copy.copy(run_response)
 
     if run_response.run_id:
         await acleanup_member_runs(run_response.run_id)
@@ -4783,6 +4825,10 @@ async def _acleanup_and_store(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     # Persist the session row and this single run (both O(1))
     from agno.team._session import asave_run
@@ -4907,7 +4953,10 @@ def _persist_team_run_in_session(
     from agno.utils.agent import isolate_media_scrub_targets
 
     # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
-    storage_copy = build_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(run_response)
+    # A temporary run never offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else build_offloaded_storage_copy(team, run_response, session.session_id)
+    ) or copy.copy(run_response)
     # Scrubbing mutates shared objects in place and a shallow copy aliases the live run, so
     # isolate what the scrubs touch.
     if not team.store_media:
@@ -4935,6 +4984,10 @@ def _persist_team_run_in_session(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     # Persist the session row and this single run (both O(1))
     from agno.team._session import save_run
@@ -4965,9 +5018,10 @@ async def _apersist_team_run_in_session(
     from agno.utils.agent import isolate_media_scrub_targets
 
     # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
-    storage_copy = await abuild_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(
-        run_response
-    )
+    # A temporary run never offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else await abuild_offloaded_storage_copy(team, run_response, session.session_id)
+    ) or copy.copy(run_response)
     # Scrubbing mutates shared objects in place and a shallow copy aliases the live run, so
     # isolate what the scrubs touch.
     if not team.store_media:
@@ -4995,6 +5049,10 @@ async def _apersist_team_run_in_session(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     # Persist the session row and this single run (both O(1))
     from agno.team._session import asave_run
@@ -6211,6 +6269,9 @@ def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) 
         kwargs["metadata"] = run_context.metadata
     if run_context.knowledge_filters is not None:
         kwargs["knowledge_filters"] = run_context.knowledge_filters
+    # A temporary team run continues its members temporarily too; the default stays theirs.
+    if getattr(run_context, "store_run", True) is False:
+        kwargs["store_run"] = False
     return kwargs
 
 
@@ -7345,6 +7406,9 @@ def _mark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             save_run(
                 team,
                 run=r,
@@ -7366,6 +7430,9 @@ async def _amark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             await asave_run(
                 team,
                 run=r,
@@ -7498,6 +7565,7 @@ def continue_run_dispatch(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (sync).
@@ -7546,7 +7614,10 @@ def continue_run_dispatch(
     # Read existing session from storage
     from copy import deepcopy
 
-    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id, store_run=effective_store_run)
     # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
     # so the session layer keeps the session's own values (team < session < call-site).
     session_metadata = deepcopy(team_session.metadata)
@@ -7584,6 +7655,7 @@ def continue_run_dispatch(
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=session_metadata,
+        store_run=store_run,
     )
 
     # Initialize run context
@@ -7595,6 +7667,7 @@ def continue_run_dispatch(
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
@@ -7610,6 +7683,8 @@ def continue_run_dispatch(
         run_context.metadata = opts.metadata
     elif run_context.metadata is None:
         run_context.metadata = opts.metadata
+    if store_run is not None:
+        run_context.store_run = store_run
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -9259,6 +9334,7 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
@@ -9304,13 +9380,18 @@ def acontinue_run_dispatch(  # type: ignore
     # resolved, so session metadata does not reach this run's resolved options.
     from agno.team._init import _has_async_db
 
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
     session_metadata: Optional[Dict[str, Any]] = None
     if team.db is not None and not _has_async_db(team):
         from copy import deepcopy
 
         from agno.team._storage import _read_or_create_session, _update_metadata
 
-        _pre_session = _read_or_create_session(team, session_id=session_id_resolved, user_id=user_id)
+        _pre_session = _read_or_create_session(
+            team, session_id=session_id_resolved, user_id=user_id, store_run=effective_store_run
+        )
         # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
         # so the session layer keeps the session's own values (team < session < call-site).
         session_metadata = deepcopy(_pre_session.metadata)
@@ -9326,6 +9407,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=session_metadata,
+        store_run=store_run,
     )
 
     # Initialize run context
@@ -9337,6 +9419,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
@@ -9352,10 +9435,16 @@ def acontinue_run_dispatch(  # type: ignore
         run_context.metadata = opts.metadata
     elif run_context.metadata is None:
         run_context.metadata = opts.metadata
+    if store_run is not None:
+        run_context.store_run = store_run
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
     if background:
+        if not effective_store_run:
+            raise ValueError(
+                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+            )
         if not team.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the team for run persistence."

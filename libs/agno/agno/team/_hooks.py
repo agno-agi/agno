@@ -26,6 +26,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.session._utils import is_transient
 from agno.utils.events import (
     create_team_post_hook_completed_event,
     create_team_post_hook_started_event,
@@ -106,7 +107,8 @@ def handle_team_run_paused(
 
     # Only create a team-level approval if this is NOT a member-propagated pause.
     # Member agents already create their own approval record when they pause.
-    if not _member_approval_already_exists(run_response):
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session) and not _member_approval_already_exists(run_response):
         create_approval_from_pause(
             db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
         )
@@ -141,7 +143,8 @@ def handle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    if not _member_approval_already_exists(run_response):
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session) and not _member_approval_already_exists(run_response):
         create_approval_from_pause(
             db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
         )
@@ -178,7 +181,8 @@ async def ahandle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    if not _member_approval_already_exists(run_response):
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session) and not _member_approval_already_exists(run_response):
         await acreate_approval_from_pause(
             db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
         )
@@ -213,7 +217,8 @@ async def ahandle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    if not _member_approval_already_exists(run_response):
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session) and not _member_approval_already_exists(run_response):
         await acreate_approval_from_pause(
             db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
         )

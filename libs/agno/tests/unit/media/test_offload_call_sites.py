@@ -460,7 +460,7 @@ def test_background_pending_row_is_offloaded(monkeypatch):
         live_img, run = _inline_run()
         saved: list = []
 
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id, user_id=user_id)
 
         async def fake_asave_session(agent, session):
@@ -524,7 +524,7 @@ def test_team_background_pending_row_is_offloaded(monkeypatch):
         run = TeamRunOutput(run_id="r1", team_id="t", input=RunInput(input_content="hi", images=[img]))
         saved: list = []
 
-        async def fake_aread_or_create_session(team, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(team, session_id=None, user_id=None, store_run=True):
             return TeamSession(session_id=session_id, user_id=user_id, team_id="t")
 
         async def fake_asave_session(team, session):

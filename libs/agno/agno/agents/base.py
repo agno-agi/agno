@@ -1139,6 +1139,21 @@ class BaseExternalAgent:
             if self.strict_persistence:
                 raise
 
+    def _pop_store_run(self, kwargs: Dict[str, Any]) -> None:
+        """Take the run-level ``store_run`` option out of the adapter kwargs and refuse a temporary run.
+
+        A harness agent keeps its conversation in the harness's own native session, which a run
+        resumes and extends; there is no way to answer from that conversation without recording
+        the exchange in it, so a temporary run is refused instead of being stored quietly.
+        """
+        run_context = kwargs.get("run_context")
+        if kwargs.pop("store_run", None) is False or (
+            run_context is not None and getattr(run_context, "store_run", True) is False
+        ):
+            raise ValueError(
+                f"store_run=False is not supported for {self.framework} agents: the harness keeps its own conversation"
+            )
+
     def read_or_create_session(
         self,
         session_id: str,
@@ -1690,6 +1705,7 @@ class BaseExternalAgent:
         yield_run_output: bool,
         **kwargs: Any,
     ) -> Any:
+        self._pop_store_run(kwargs)
         if self.sandbox is not None:
             return await _sandbox_harness().astart_background(
                 self,
@@ -1766,6 +1782,7 @@ class BaseExternalAgent:
         return transport if transport is not None else run
 
     async def _arun_background_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        self._pop_store_run(kwargs)
         if self.sandbox is not None:
             events = _sandbox_harness().astream_background(self, input, **kwargs)
             try:
@@ -2269,6 +2286,7 @@ class BaseExternalAgent:
             finally:
                 await events.aclose()  # type: ignore[attr-defined]
             raise RuntimeError("Paused native run produced no result")
+        self._pop_store_run(kwargs)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2435,6 +2453,7 @@ class BaseExternalAgent:
 
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         native_non_stream = kwargs.pop("_native_non_stream", False)
+        self._pop_store_run(kwargs)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:

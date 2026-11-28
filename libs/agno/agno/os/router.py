@@ -401,6 +401,8 @@ def _feature_blocks(os: "AgentOS", request: Request, is_admin: bool) -> Dict[str
             backend=getattr(os.media_storage, "backend_name", None),
         ),
         telemetry=FeatureStatus(enabled=_telemetry_is_on(os)),
+        # The run routes accept store_run=false (a run that is answered but not saved).
+        temporary_runs=FeatureStatus(enabled=os.allow_temporary_runs),
     )
     if not is_admin:
         return blocks

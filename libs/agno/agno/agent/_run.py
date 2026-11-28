@@ -82,7 +82,7 @@ from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
 from agno.session import AgentSession
-from agno.session._utils import resolve_run_index
+from agno.session._utils import is_transient, resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -246,9 +246,11 @@ def handle_agent_run_paused(
         run_response.content = get_paused_content(run_response)
 
     # Stamp approval_id on tools before storing so the DB has the complete data.
-    create_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
-    )
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session):
+        create_approval_from_pause(
+            db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+        )
 
     cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
 
@@ -271,9 +273,11 @@ def handle_agent_run_paused_stream(
         run_response.content = get_paused_content(run_response)
 
     # Stamp approval_id on tools before storing so the DB has the complete data.
-    create_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
-    )
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session):
+        create_approval_from_pause(
+            db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+        )
 
     # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
@@ -310,9 +314,11 @@ async def ahandle_agent_run_paused(
         run_response.content = get_paused_content(run_response)
 
     # Stamp approval_id on tools before storing so the DB has the complete data.
-    await acreate_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
-    )
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session):
+        await acreate_approval_from_pause(
+            db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+        )
     await acleanup_and_store(
         agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
     )
@@ -336,9 +342,11 @@ async def ahandle_agent_run_paused_stream(
         run_response.content = get_paused_content(run_response)
 
     # Stamp approval_id on tools before storing so the DB has the complete data.
-    await acreate_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
-    )
+    # A temporary run is never stored, so an approval row could not be continued: do not create one.
+    if not is_transient(session):
+        await acreate_approval_from_pause(
+            db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+        )
 
     # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
@@ -437,7 +445,9 @@ def _run(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = read_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -845,7 +855,9 @@ def _run_stream(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = read_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -1343,6 +1355,7 @@ def run_dispatch(
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
@@ -1407,7 +1420,11 @@ def run_dispatch(
 
     from agno.agent._storage import read_or_create_session, update_metadata
 
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Resolved early: the session load already depends on it (a temporary run gets a private copy).
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, store_run=effective_store_run)
     # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
     # so the session layer keeps the session's own values (agent < session < call-site).
     session_metadata = deepcopy(agent_session.metadata)
@@ -1427,6 +1444,7 @@ def run_dispatch(
         metadata=metadata,
         session_metadata=session_metadata,
         output_schema=output_schema,
+        store_run=store_run,
     )
 
     agent.model = cast(Model, agent.model)
@@ -1441,6 +1459,7 @@ def run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        store_run=opts.store_run,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
@@ -1448,6 +1467,7 @@ def run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        store_run_provided=store_run is not None,
         user_id=user_id,
     )
 
@@ -1584,7 +1604,9 @@ async def _arun(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = await aread_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -2191,7 +2213,9 @@ async def _arun_stream(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = await aread_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                    )
 
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
@@ -2734,6 +2758,7 @@ def arun_dispatch(  # type: ignore
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
@@ -2742,6 +2767,15 @@ def arun_dispatch(  # type: ignore
     from agno.agent._response import get_response_format
 
     run_id = run_id or str(uuid4())
+
+    # Resolved early: the session load already depends on it (a temporary run gets a private copy).
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    if background and not effective_store_run:
+        raise ValueError(
+            "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+        )
 
     if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
         log_warning(
@@ -2799,7 +2833,9 @@ def arun_dispatch(  # type: ignore
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        _pre_session = read_or_create_session(
+            agent, session_id=session_id, user_id=user_id, store_run=effective_store_run
+        )
         # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
         # so the session layer keeps the session's own values (agent < session < call-site).
         _session_metadata = deepcopy(_pre_session.metadata)
@@ -2819,6 +2855,7 @@ def arun_dispatch(  # type: ignore
         metadata=metadata,
         session_metadata=_session_metadata,
         output_schema=output_schema,
+        store_run=store_run,
     )
 
     agent.model = cast(Model, agent.model)
@@ -2833,6 +2870,7 @@ def arun_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        store_run=opts.store_run,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
@@ -2840,6 +2878,7 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        store_run_provided=store_run is not None,
         user_id=user_id,
     )
 
@@ -3326,6 +3365,7 @@ def continue_run_dispatch(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
@@ -3392,7 +3432,10 @@ def continue_run_dispatch(
     # Read existing session from storage
     from copy import deepcopy
 
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, store_run=effective_store_run)
     # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
     # so the session layer keeps the session's own values (agent < session < call-site).
     session_metadata = deepcopy(agent_session.metadata)
@@ -3430,6 +3473,7 @@ def continue_run_dispatch(
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=session_metadata,
+        store_run=store_run,
     )
 
     # Initialize run context
@@ -3441,6 +3485,7 @@ def continue_run_dispatch(
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
@@ -3448,6 +3493,7 @@ def continue_run_dispatch(
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        store_run_provided=store_run is not None,
         user_id=user_id,
     )
 
@@ -4241,6 +4287,7 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs,
 ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
@@ -4302,6 +4349,9 @@ def acontinue_run_dispatch(  # type: ignore
     from agno.agent._init import has_async_db
 
     _session_state: Dict[str, Any] = {}
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
     _pre_session: Optional[AgentSession] = None
     _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
@@ -4309,7 +4359,9 @@ def acontinue_run_dispatch(  # type: ignore
 
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        _pre_session = read_or_create_session(
+            agent, session_id=session_id, user_id=user_id, store_run=effective_store_run
+        )
         # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
         # so the session layer keeps the session's own values (agent < session < call-site).
         _session_metadata = deepcopy(_pre_session.metadata)
@@ -4331,6 +4383,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=_session_metadata,
+        store_run=store_run,
     )
 
     # Prepare arguments for the model
@@ -4345,6 +4398,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
@@ -4352,12 +4406,17 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies_provided=dependencies is not None,
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
+        store_run_provided=store_run is not None,
         user_id=user_id,
     )
 
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     if background:
+        if not effective_store_run:
+            raise ValueError(
+                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+            )
         if not agent.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the agent for run persistence."
@@ -4764,7 +4823,9 @@ async def _acontinue_run(
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(
+                    agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
                 # the same scope.
@@ -5286,7 +5347,9 @@ async def _acontinue_run_stream(
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                agent_session = await aread_or_create_session(
+                    agent, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
+                )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
                 # the same scope.
@@ -6072,7 +6135,10 @@ def persist_run_in_session(
 
     if storage_copy is None:
         # Mid-run checkpoint: offload its media like the terminal write, so the row carries references.
-        offloaded = build_offloaded_storage_copy(agent, run_response, session.session_id)
+        # A temporary run never offloads: no row would reference the uploads.
+        offloaded = (
+            None if is_transient(session) else build_offloaded_storage_copy(agent, run_response, session.session_id)
+        )
         storage_copy = _scrub_and_propagate_session_state(
             agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
         )
@@ -6090,6 +6156,10 @@ def persist_run_in_session(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     # Persist the session row and this single run (both O(1))
     _session.save_session(agent, session=session)
@@ -6113,7 +6183,11 @@ async def apersist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        offloaded = await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+        offloaded = (
+            None
+            if is_transient(session)
+            else await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+        )
         storage_copy = _scrub_and_propagate_session_state(
             agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
         )
@@ -6127,6 +6201,10 @@ async def apersist_run_in_session(
             session.session_data["session_state"] = run_context.session_state
         else:
             session.session_data = {"session_state": run_context.session_state}
+
+    # A temporary run (store_run=False) keeps its private session copy in memory only.
+    if is_transient(session):
+        return
 
     await _session.asave_session(agent, session=session)
     await _session.asave_run(
@@ -6151,8 +6229,11 @@ def cleanup_and_store(
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # None means nothing was offloaded and the run is scrubbed as it stands.
-    storage_copy = build_offloaded_storage_copy(agent, run_response, session.session_id)
+    # None means nothing was offloaded and the run is scrubbed as it stands. A temporary run never
+    # offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else build_offloaded_storage_copy(agent, run_response, session.session_id)
+    )
 
     storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
 
@@ -6235,8 +6316,11 @@ async def acleanup_and_store(
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # None means nothing was offloaded and the run is scrubbed as it stands.
-    storage_copy = await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+    # None means nothing was offloaded and the run is scrubbed as it stands. A temporary run never
+    # offloads: no row would reference the uploads.
+    storage_copy = (
+        None if is_transient(session) else await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+    )
 
     storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
 
@@ -6363,6 +6447,9 @@ def _mark_run_regenerated(
             flipped = shallow_copy(r)
             flipped.status = RunStatus.regenerated
             session.runs[i] = flipped  # type: ignore[index]
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             save_run(
                 agent,
                 run=cast(RunOutput, flipped),
@@ -6391,6 +6478,9 @@ async def _amark_run_regenerated(
             flipped = shallow_copy(r)
             flipped.status = RunStatus.regenerated
             session.runs[i] = flipped  # type: ignore[index]
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             await asave_run(
                 agent,
                 run=cast(RunOutput, flipped),

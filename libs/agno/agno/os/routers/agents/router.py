@@ -93,6 +93,7 @@ from agno.os.utils import (
     get_agent_by_id,
     get_request_kwargs,
     is_form_field_omitted,
+    is_temporary_run,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -722,6 +723,13 @@ def get_agent_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        # A string, not ``bool = Form(True)``: recent FastAPI resolves an absent bool form field to
+        # False whatever its default, which would turn every run into a temporary one.
+        store_run: Optional[str] = Form(
+            None,
+            description="Set to false for a temporary run: the response is returned but neither the run nor "
+            "its session is saved to the database. Defaults to true. Cannot be combined with background=true",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic agent construction",
@@ -730,6 +738,16 @@ def get_agent_router(
         kwargs = await get_request_kwargs(request, create_agent_run)
         if await is_form_field_omitted(request, "stream"):
             stream = True
+        if is_temporary_run(store_run):
+            if not os.allow_temporary_runs:
+                raise HTTPException(status_code=400, detail="Temporary runs (store_run=false) are disabled on this OS")
+            if background:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A temporary run (store_run=false) cannot run in the background: "
+                    "background runs are polled from the stored run row",
+                )
+            kwargs["store_run"] = False
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -873,6 +891,13 @@ def get_agent_router(
         auth_token = get_auth_token_from_request(request)
 
         from agno.agents.base import BaseExternalAgent
+
+        if isinstance(agent, BaseExternalAgent) and is_temporary_run(store_run):
+            # The harness keeps its own native conversation, which a run always extends.
+            raise HTTPException(
+                status_code=400,
+                detail="A temporary run (store_run=false) is not supported for Claude Code, Codex and other harness agents",
+            )
 
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
             from agno.os.routers.agents.sandbox import sandbox_run_response

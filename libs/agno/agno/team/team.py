@@ -887,6 +887,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -915,6 +916,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -942,6 +944,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         return _run.run_dispatch(
@@ -967,6 +970,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
+            store_run=store_run,
             **kwargs,
         )
 
@@ -994,6 +998,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Coroutine[Any, Any, TeamRunOutput]: ...
@@ -1023,6 +1028,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -1050,6 +1056,7 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        store_run: Optional[bool] = None,
         background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1076,6 +1083,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
+            store_run=store_run,
             background=background,
             **kwargs,
         )
@@ -1099,6 +1107,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> TeamRunOutput: ...
 
@@ -1117,6 +1126,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]: ...
 
@@ -1142,6 +1152,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
         **kwargs,
     ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
@@ -1165,6 +1176,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
+            store_run=store_run,
             yield_run_output=yield_run_output,
             **kwargs,
         )
@@ -1184,6 +1196,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
@@ -1202,6 +1215,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]: ...
 
@@ -1227,6 +1241,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
         background: bool = False,
         **kwargs: Any,
@@ -1251,6 +1266,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
+            store_run=store_run,
             yield_run_output=yield_run_output,
             background=background,
             **kwargs,

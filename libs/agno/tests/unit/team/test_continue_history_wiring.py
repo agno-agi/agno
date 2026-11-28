@@ -146,7 +146,7 @@ def _patch_sync_dispatch(monkeypatch: pytest.MonkeyPatch, team_session: TeamSess
     monkeypatch.setattr(
         _storage,
         "_read_or_create_session",
-        lambda team, session_id=None, user_id=None: team_session,
+        lambda team, session_id=None, user_id=None, **kwargs: team_session,
     )
     monkeypatch.setattr(_storage, "_update_metadata", lambda team, session=None: None)
     monkeypatch.setattr(
