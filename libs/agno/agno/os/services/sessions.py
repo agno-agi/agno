@@ -342,8 +342,12 @@ async def get_session_compactions(
     session_id: str,
     session_type: Optional[SessionType] = None,
     user_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
 ) -> List[CompactionSchema]:
     """Every compaction of a session, automatic and manual, newest first.
+
+    ``owner_id`` keeps only the compactions of that agent or team: a team session holds the leader's and
+    its members'.
 
     Read from the compaction records rather than from runs: a manual compaction is made by no run, so the
     records are the only place that has all of them. A database that does not store compaction records has
@@ -357,6 +361,8 @@ async def get_session_compactions(
     if isinstance(db, AsyncBaseDb) or not stores_compaction_records(db):
         return []
     records = await run_in_threadpool(lambda: db.get_compactions_for_session(session_id))
+    if owner_id is not None:
+        records = [record for record in records if record.get("owner_id") == owner_id]
     return [CompactionSchema.from_dict(record) for record in records]
 
 

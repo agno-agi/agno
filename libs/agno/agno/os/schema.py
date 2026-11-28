@@ -958,7 +958,18 @@ class CompactionSchema(BaseModel):
 
     id: Optional[str] = Field(None, description="Unique identifier for the compaction record")
     run_id: Optional[str] = Field(
-        None, description="Run that compacted its own context. Not set for a manual compaction, which no run made"
+        None,
+        description=(
+            "Run the compaction was made in. For a team member's history it is the team run that delegated "
+            "to the member. Not set for a manual compaction, which no run made"
+        ),
+    )
+    owner_id: Optional[str] = Field(
+        None,
+        description=(
+            "ID of the agent or team whose conversation was compacted. A team and its members share one "
+            "session, so a team session can hold the leader's compactions and its members'"
+        ),
     )
     messages_compacted: int = Field(0, description="Number of history messages the compaction replaced")
     tokens_before: Optional[int] = Field(None, description="Context size before the compaction, in tokens")
@@ -971,6 +982,7 @@ class CompactionSchema(BaseModel):
         return cls(
             id=record.get("compaction_id"),
             run_id=record.get("run_id"),
+            owner_id=record.get("owner_id"),
             messages_compacted=record.get("messages_compacted") or 0,
             tokens_before=record.get("tokens_before"),
             tokens_after=record.get("tokens_after"),
