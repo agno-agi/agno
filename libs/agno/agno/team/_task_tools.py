@@ -62,6 +62,7 @@ from agno.team._default_tools import (
     _member_run_kwargs,
 )
 from agno.team._members import member_knowledge_filters, member_storage
+from agno.team._tools import _filter_team_history
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -335,6 +336,7 @@ def _get_task_management_tools(
             team_history_str = session.get_team_history_context(
                 team_id=member_team_id, num_runs=team.num_team_history_runs
             )
+            team_history_str = _filter_team_history(team, team_history_str)
 
         member_agent_task: Any = task_description
         if team_history_str or team_member_interactions_str:

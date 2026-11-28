@@ -145,6 +145,10 @@ class Team:
     add_team_history_to_members: bool = False
     # Number of historical runs to include in the messages sent to the members
     num_team_history_runs: int = 3
+    # Synchronous callback for rendered history when add_team_history_to_members=True.
+    # Return a redacted string, or None/"" to omit history. Stored history is unchanged.
+    # Does not filter current input, shared member interactions, or members' own history.
+    team_history_filter: Optional[Callable[[str], Optional[str]]] = None
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
 
@@ -494,6 +498,7 @@ class Team:
         cache_session: bool = False,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
+        team_history_filter: Optional[Callable[[str], Optional[str]]] = None,
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
@@ -613,6 +618,7 @@ class Team:
             cache_session=cache_session,
             add_team_history_to_members=add_team_history_to_members,
             num_team_history_runs=num_team_history_runs,
+            team_history_filter=team_history_filter,
             search_past_sessions=search_past_sessions,
             num_past_sessions_to_search=num_past_sessions_to_search,
             num_past_session_runs_in_search=num_past_session_runs_in_search,
