@@ -692,7 +692,71 @@ def test_super_agent_files_a_task_under_a_goal_that_has_no_project_for_it(system
     filed = db.get_task(task["id"])
     assert (filed["goal_id"], filed["project_id"], filed["status"]) == (goal["id"], DEFAULT_PROJECT_ID, "ready")
     assert (filed["accepted_by"], filed["executor_id"]) == ("alice", task["executor_id"])
-    assert "already in that Project" in call(agent_os, "move_company_task", context(), **file)
+    again = call(agent_os, "move_company_task", context(), **file)
+    assert (
+        again == f"'Check upgrades' (Task {task['id']}) is already under Goal '{goal['name']}', in Project 'Default'."
+    )
+    assert db.get_task(task["id"]) == filed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_the_goal_a_task_takes_in_the_default_project_is_on_its_history(tmp_path, use_async):
+    db, manager, goal, _ = await company(tmp_path, use_async)
+    loose = await do(manager.create_project(name="Odd jobs"))
+    task = await do(manager.create_task(title="Check upgrades", brief="Check", project_id=loose["id"]))
+    assert (task["goal_id"], task["project_id"]) == (None, loose["id"])
+    # A Project with no Goal cannot hold a Goal's Task, so filing it takes it to the Default Project.
+    filed = await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=goal["id"]))
+    assert (filed["goal_id"], filed["project_id"]) == (goal["id"], DEFAULT_PROJECT_ID)
+    entry = filed["transitions"][-1]
+    assert (entry["action"], entry["reason"], entry["user_id"]) == ("move", "Moved to another Project", "alice")
+    assert entry["project"] == {"from": loose["id"], "to": DEFAULT_PROJECT_ID}
+    # The Default Project says nothing about the Goal, so the entry does.
+    assert entry["goal"] == {"from": None, "to": goal["id"]}
+
+
+def test_super_agent_names_the_goal_a_task_takes_when_it_also_leaves_its_project(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, _ = records(client)
+    loose = client.post("/company/projects", json={"name": "Odd jobs"}, headers=headers())
+    assert loose.status_code == 201, loose.text
+    created = client.post(
+        "/company/tasks",
+        json={"project_id": loose.json()["id"], "title": "Check upgrades", "brief": "Check"},
+        headers=headers(),
+    )
+    assert created.status_code == 201, created.text
+    task = created.json()
+    assert (task["goal_id"], task["project_id"]) == (None, loose.json()["id"])
+    filing = dict(task_id=task["id"], project_id=None, goal_id=project["goal_id"])
+    reply = call(agent_os, "move_company_task", context(), **filing)
+    assert reply == (
+        f"Moved 'Check upgrades' (Task {task['id']}) into Project 'Default' and filed it under Goal 'SDK'. "
+        "Nothing else about it changed."
+    )
+    filed = db.get_task(task["id"])
+    assert (filed["goal_id"], filed["project_id"]) == (project["goal_id"], DEFAULT_PROJECT_ID)
+    assert filed["transitions"][-1]["goal"] == {"from": None, "to": project["goal_id"]}
+
+
+def test_super_agent_leaves_a_task_in_its_project_when_it_already_has_the_goal(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, task = records(client)
+    before = db.get_task(task["id"])
+    assert (before["goal_id"], before["project_id"]) == (project["goal_id"], project["id"])
+    # The filing call names no Project: for a Task of that Goal it would only take it out of its Project.
+    filing = dict(task_id=task["id"], project_id=None, goal_id=project["goal_id"])
+    reply = call(agent_os, "move_company_task", context(), **filing)
+    assert reply == (
+        f"'Draft' (Task {task['id']}) is already under Goal 'SDK', in Project 'Release'. "
+        "It was not moved: to move it to the Default Project, pass a null goal_id."
+    )
+    assert db.get_task(task["id"]) == before
+    # With no Goal named, the same call is the move to the Default Project it always was.
+    reply = move(agent_os, context(), task["id"], None)
+    assert reply == f"Moved 'Draft' (Task {task['id']}) into Project 'Default'. Nothing else about it changed."
+    assert db.get_task(task["id"])["project_id"] == DEFAULT_PROJECT_ID
 
 
 def test_super_agent_is_told_to_file_work_under_the_goal_it_serves():
@@ -706,3 +770,9 @@ def test_super_agent_is_told_to_file_work_under_the_goal_it_serves():
     assert "file that Task under the Goal with move_company_task" in said
     doc = " ".join(CompanyTaskTools.aadd_company_task.__doc__.split())
     assert "goal_id: The Goal this Task serves: check list_company_goals." in doc
+    # Work Super Agent suggests itself is recorded with the proposal tool, which says the same.
+    from agno.tools.company import CompanyTools
+
+    for tool in (CompanyTools.propose_company_task, CompanyTools.apropose_company_task):
+        doc = " ".join(tool.__doc__.split())
+        assert "goal_id: The Goal this Task serves: check list_company_goals. Its executor reads" in doc

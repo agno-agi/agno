@@ -473,6 +473,7 @@ class CompanyTaskTools(Toolkit):
         from dataclasses import replace
 
         from agno.company.routines import _manager_call
+        from agno.db.schemas.projects import is_default_project
         from agno.os.routers.company.runs import _TaskStarter
         from agno.run.authorization import authorization_scope
 
@@ -483,6 +484,21 @@ class CompanyTaskTools(Toolkit):
             starter = _TaskStarter(agent_os)
             value = await starter.task(task_id)
             title = value.get("title") or task_id
+            target, wanted = _named(project_id), _named(goal_id)
+
+            async def name_of(method: str, record_id: str) -> str:
+                record = await _manager_call(starter.manager, method, record_id)
+                return (record or {}).get("name") or record_id
+
+            if wanted is not None and wanted == value["goal_id"] and (target is None or is_default_project(target)):
+                # Filing names no Project. For a Task that has this Goal it would only take the Task
+                # out of its Project, which the person did not ask for.
+                under = await name_of("get", wanted)
+                held = await name_of("get_project", value["project_id"])
+                reply = f"'{title}' (Task {task_id}) is already under Goal '{under}', in Project '{held}'."
+                if is_default_project(value["project_id"]):
+                    return reply
+                return f"{reply} It was not moved: to move it to the Default Project, pass a null goal_id."
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             with authorization_scope(lambda: saved):
                 moved = await _manager_call(
@@ -491,19 +507,23 @@ class CompanyTaskTools(Toolkit):
                     task_id,
                     user_id=None,
                     moved_by=user_id,
-                    goal_id=_named(goal_id),
-                    project_id=_named(project_id),
+                    goal_id=wanted,
+                    project_id=target,
                 )
             if moved is None:
                 return f"Not done: '{title}' changed while it was being moved. Read it again."
-            project = await _manager_call(starter.manager, "get_project", moved["project_id"])
-            name = (project or {}).get("name") or moved["project_id"]
+            name = await name_of("get_project", moved["project_id"])
+            took_goal = moved["goal_id"] != value["goal_id"]
             if moved["project_id"] != value["project_id"]:
-                return f"Moved '{title}' (Task {task_id}) into Project '{name}'. Nothing else about it changed."
-            if moved["goal_id"] == value["goal_id"]:
+                # A Project names its own Goal. The Default Project holds Tasks of any Goal, so the
+                # Goal a Task took on its way there is said.
+                filed = ""
+                if took_goal and is_default_project(moved["project_id"]):
+                    filed = f" and filed it under Goal '{await name_of('get', moved['goal_id'])}'"
+                return f"Moved '{title}' (Task {task_id}) into Project '{name}'{filed}. Nothing else about it changed."
+            if not took_goal:
                 return f"'{title}' (Task {task_id}) is already in that Project."
-            goal = await _manager_call(starter.manager, "get", moved["goal_id"])
-            under = (goal or {}).get("name") or moved["goal_id"]
+            under = await name_of("get", moved["goal_id"])
             return (
                 f"Filed '{title}' (Task {task_id}) under Goal '{under}', in Project '{name}'. "
                 "Nothing else about it changed."

@@ -155,7 +155,8 @@ def require_move(
     Default Project. A Backlog draft may sit in a proposed Project; an accepted Task moves only
     into an active one, and not while a policy's acceptance holds it Ready, because the policy
     accepted it for the Project it was in. A move that changes the Project, or files the Task under
-    a Goal where it is, is added to the Task's history with who made it.
+    a Goal where it is, is added to the Task's history with who made it, and with the Goal when the
+    Task took one in the Default Project.
     """
     task_goal_id, status = task["goal_id"], task["status"]
     changed: Dict[str, Any] = {}
@@ -174,6 +175,9 @@ def require_move(
     filed = project_id == task["project_id"] and "goal_id" in changed
     if project_id == task["project_id"] and not filed:
         return changed
+    # A Project names its own Goal. The Default Project holds Tasks of any Goal, so the Goal a Task
+    # takes there is written on the entry, whether or not the Task also changed Project.
+    took_goal = "goal_id" in changed and (filed or is_default_project(project_id))
     history = task["transitions"] or []
     if status != "backlog":
         target = sess.execute(select(projects.c.status).where(projects.c.id == project_id)).scalar()
@@ -188,7 +192,7 @@ def require_move(
             "action": "move",
             "reason": "Filed under a Goal" if filed else "Moved to another Project",
             "project": {"from": task["project_id"], "to": project_id},
-            **({"goal": {"from": None, "to": changed["goal_id"]}} if filed else {}),
+            **({"goal": {"from": None, "to": changed["goal_id"]}} if took_goal else {}),
             "created_at": int(time.time()),
             "user_id": moved_by,
         },
