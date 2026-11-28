@@ -29,6 +29,22 @@ from agno.run.team import TeamRunOutput
 from agno.team import Team
 from agno.tools import tool
 
+
+@pytest.fixture(autouse=True)
+def _disable_delegation_confirmation_for_member_persistence(monkeypatch):
+    """Keep these tests focused on member pause persistence after delegation."""
+    from agno.team import _default_tools
+
+    original = _default_tools._get_delegate_task_function
+
+    def without_confirmation(*args, **kwargs):
+        delegate_function = original(*args, **kwargs)
+        delegate_function.requires_confirmation = False
+        return delegate_function
+
+    monkeypatch.setattr(_default_tools, "_get_delegate_task_function", without_confirmation)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
