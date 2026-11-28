@@ -2468,9 +2468,14 @@ def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_appr
     assert "or answer whether something may be done, is ready or is allowed, read them" in rule
     # The usual page is named, and a company that keeps its rules elsewhere is still read.
     assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
-    # A step that needs someone's approval is held, and a yes from anyone else does not release it.
-    assert "say so and hold that step, recording a proposal at most" in rule
-    assert "a yes in chat is approval only from the person the rule names" in rule
+    # A rule is not stretched, and one about who does the work does not overrule the executor the person named.
+    assert "A rule covers only what it says: never stretch it to other work or another case." in rule
+    assert "a rule about who does, approves or reviews work never holds or refuses a step" in rule
+    assert "applies when the person names none: the executor the person names does the work" in rule
+    assert "say so once and ask, then do what the person says, and never reroute or split the work yourself" in rule
+    # A rule that names an approver or reviewer is said, and does not hold the step.
+    assert "do what the person here asked and say once that the rule asks for that person's approval or review" in rule
+    assert "hold that step" not in rule and "only from the person the rule names" not in rule
     # Work that leaves no record does not pay for the read.
     assert "An answer, draft or summary that leaves no record needs no read." in rule
 
