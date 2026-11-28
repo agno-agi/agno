@@ -2887,3 +2887,43 @@ def test_application_tool_named_like_a_source_tool_is_refused_with_root(db, work
     # Either one alone is a working configuration.
     AgentOS(db=db, manager=OSManager(model=OfflineModel(), tools=[tool, notes.tools()]), telemetry=False)
     AgentOS(db=db, manager=OSManager(model=OfflineModel(), root=workspace), telemetry=False)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_with_github_tools_is_told_to_read_before_it_repeats_a_claim(db, use_async):
+    pytest.importorskip("github")
+    from unittest.mock import patch
+
+    from agno.os.manager.prompts import GITHUB_INSTRUCTIONS
+    from agno.tools.github import GithubTools
+
+    class RecordingModel(OfflineModel):
+        def invoke(self, *args, **kwargs):
+            if "messages" in kwargs:
+                self.system = next(m.content for m in kwargs["messages"] if m.role == "system")
+            return super().invoke()
+
+        async def ainvoke(self, *args, **kwargs):
+            return self.invoke(*args, **kwargs)
+
+    def system_message(tools):
+        model = RecordingModel()
+        os = AgentOS(db=db, manager=OSManager(model=model, tools=tools, access_docs=False), telemetry=False)
+        asyncio.run(os.manager.arun("Hello")) if use_async else os.manager.run("Hello")
+        return model.system
+
+    with patch("agno.tools.github.Github"):
+        read_only = GithubTools(access_token="token", read_only=True)
+        files_only = GithubTools(access_token="token", read_only=True, include_tools=["get_file_content"])
+        no_reads = GithubTools(access_token="token", include_tools=["list_branches"])
+
+    # Super Agent's own line, and the toolkit's guidance, are both in what the model is sent.
+    sent = system_message([read_only])
+    assert GITHUB_INSTRUCTIONS.strip() in sent
+    assert "Asked about a pull request, read it before you answer" in sent
+    assert "You cannot write to it." in sent
+
+    assert GITHUB_INSTRUCTIONS.strip() in system_message([files_only])
+    # With no tool that reads a pull request or a file, and with no GitHub tools, the line is left out.
+    assert "before you repeat it as true" not in system_message([no_reads])
+    assert "before you repeat it as true" not in system_message([])

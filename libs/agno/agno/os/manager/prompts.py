@@ -66,6 +66,11 @@ relative to its root. Environment and credential files are excluded and cannot b
 anywhere else, say you read only that directory.
 """
 
+GITHUB_INSTRUCTIONS = """\
+GitHub: when an agent, a Task or a workflow tells you something about a pull request or a file, read the
+pull request or the file before you repeat it as true. If what you read disagrees, say so.
+"""
+
 SANDBOX_CHANGES_INSTRUCTIONS = """\
 Sandboxed agents: an agent that works in a sandbox changes its own checkout, which read_file does not
 read. To check or quote what one changed, call read_sandbox_changes, never read_file, and say so when

@@ -2101,3 +2101,109 @@ def test_wrapping_keeps_each_functions_name_and_arguments(mock_github):
     function.process_entrypoint()
     assert set(function.parameters["properties"]) == {"repo_name", "pr_number", "path", "include_patches"}
     assert "files modified" in (function.description or "")
+
+
+def _tool_methods():
+    """The public methods GithubTools itself defines, apart from the one that builds the client."""
+    import inspect
+
+    return [
+        name
+        for name, value in vars(GithubTools).items()
+        if inspect.isfunction(value) and not name.startswith("_") and name != "authenticate"
+    ]
+
+
+def test_every_tool_is_marked_as_reading_or_writing():
+    # A function added to GithubTools without a mark in tool_access fails here.
+    assert sorted(_tool_methods()) == sorted(GithubTools.tool_access)
+    assert set(GithubTools.tool_access.values()) == {"read", "write"}
+
+
+def test_no_tool_marked_as_reading_calls_github_to_change_anything():
+    import inspect
+    import re
+
+    # The client's calls that create, change or delete something.
+    changing = re.compile(r"\.(create_|edit\(|delete|update_|add_to_|remove_from_|set_labels|merge\()")
+    for name, access in GithubTools.tool_access.items():
+        found = changing.search(inspect.getsource(getattr(GithubTools, name)))
+        assert (found is None) == (access == "read"), f"{name} is marked {access}"
+
+
+def test_the_default_registers_every_tool_in_the_same_order_and_adds_no_instructions(mock_github):
+    github_tools = GithubTools()
+
+    assert list(github_tools.functions) == list(GithubTools.tool_access)
+    assert len(github_tools.functions) == 40
+    assert github_tools.read_only is False
+    assert github_tools.instructions is None and github_tools.add_instructions is False
+
+
+def test_read_only_registers_no_tool_that_writes(mock_github):
+    github_tools = GithubTools(read_only=True)
+
+    reading = [name for name, access in GithubTools.tool_access.items() if access == "read"]
+    writing = set(GithubTools.tool_access) - set(reading)
+    assert list(github_tools.functions) == reading
+    assert not writing & set(github_tools.functions)
+    assert not writing & set(github_tools.async_functions)
+    assert not writing & {github_tools._get_tool_name(tool) for tool in github_tools.tools}
+    for name in ("create_pull_request", "update_file", "delete_repository", "comment_on_issue", "create_branch"):
+        assert name in writing
+
+
+def test_read_only_narrows_with_include_and_exclude_and_refuses_a_tool_that_writes(mock_github):
+    included = GithubTools(read_only=True, include_tools=["get_pull_request", "search_code"])
+    assert list(included.functions) == ["get_pull_request", "search_code"]
+
+    excluded = GithubTools(read_only=True, exclude_tools=["search_code", "list_repositories"])
+    assert "search_code" not in excluded.functions and "get_pull_request" in excluded.functions
+    assert all(GithubTools.tool_access[name] == "read" for name in excluded.functions)
+
+    with pytest.raises(ValueError) as refused:
+        GithubTools(read_only=True, include_tools=["get_pull_request", "create_issue", "delete_file"])
+    assert str(refused.value) == (
+        "GithubTools(read_only=True) cannot include create_issue, delete_file: they write to GitHub. "
+        "Remove the name from include_tools, or pass read_only=False."
+    )
+    # Without read_only the same list is accepted, as before.
+    assert list(GithubTools(include_tools=["get_pull_request", "create_issue"]).functions) == [
+        "get_pull_request",
+        "create_issue",
+    ]
+
+
+def test_read_only_tells_the_model_how_to_read_and_names_only_the_tools_it_holds(mock_github):
+    github_tools = GithubTools(read_only=True)
+
+    assert github_tools.add_instructions is True
+    assert github_tools.instructions is not None
+    assert github_tools.instructions.startswith(
+        "GitHub: you can read GitHub yourself with the get_pull_request, get_pull_request_changes, "
+        "get_pull_request_checks, get_file_content and search_code tools. You cannot write to it.\n"
+        "- Asked about a pull request, read it before you answer:"
+    )
+    assert "say which commit it was" in github_tools.instructions
+    assert "include_patches=false" in github_tools.instructions
+    assert '"Safe to merge" is your judgment' in github_tools.instructions
+
+    # Without the pull request tools, nothing is said about reading a pull request.
+    files_only = GithubTools(read_only=True, include_tools=["get_file_content", "search_code"])
+    assert files_only.instructions == (
+        "GitHub: you can read GitHub yourself with the get_file_content and search_code tools. "
+        "You cannot write to it.\n"
+    )
+    assert GithubTools(read_only=True, include_tools=["list_issues"]).instructions == (
+        "GitHub: you can read GitHub yourself with your GitHub tools. You cannot write to it.\n"
+    )
+
+    # The caller's own instructions, and the caller's choice not to add any, are kept.
+    own = GithubTools(read_only=True, instructions="Read agno-agi/agno only.")
+    assert own.instructions == "Read agno-agi/agno only." and own.add_instructions is True
+    assert GithubTools(read_only=True, add_instructions=False).add_instructions is False
+
+
+def test_read_only_still_needs_a_token():
+    with patch.dict("os.environ", {}, clear=True), pytest.raises(ValueError, match="access token is required"):
+        GithubTools(read_only=True)
