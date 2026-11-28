@@ -18,11 +18,12 @@ from agno.os.manager.prompts import (
     COMPANY_INSTRUCTIONS,
     DOCS_INSTRUCTIONS,
     FOCUSED_EXECUTION_INSTRUCTIONS,
+    GITHUB_INSTRUCTIONS,
     LINKED_WORK_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
-    PERSON_INSTRUCTIONS,
     NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
     SANDBOX_CHANGES_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
@@ -265,6 +266,20 @@ def _raise_if_source_tool_names_taken(tools: Sequence[Any]) -> None:
         )
 
 
+def _reads_github(tools: List[Any]) -> bool:
+    """Whether Super Agent was given a GithubTools that can read a pull request or a file."""
+    import sys
+
+    # A GithubTools among the tools means its module is loaded. Not imported here: it needs PyGithub.
+    module = sys.modules.get("agno.tools.github")
+    if module is None:
+        return False
+    return any(
+        isinstance(tool, module.GithubTools) and {"get_pull_request", "get_file_content"} & set(tool.functions)
+        for tool in tools
+    )
+
+
 def _holds_files(db: Any) -> bool:
     """Whether the database can hold the Company file system: SQLite and PostgreSQL can."""
     from agno.company.filesystem import company_filesystem
@@ -469,6 +484,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
             instructions.append(
                 PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
             )
+    if _reads_github(config.tools):
+        instructions.append(GITHUB_INSTRUCTIONS)
     if config.instructions:
         instructions.append(config.instructions)
 
