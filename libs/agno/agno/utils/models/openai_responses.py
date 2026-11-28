@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -100,6 +101,45 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     return image_messages
 
 
+# Values under these keywords are data, not schemas
+_DATA_KEYWORDS = frozenset({"default", "examples", "example", "const", "enum"})
+# Values under these keywords map names to schemas
+_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"})
+
+
+def _ref_siblings(schema: dict) -> List[str]:
+    """Keywords beside a $ref; $defs and definitions hold the referenced schemas and may stay."""
+    if not isinstance(schema.get("$ref"), str):
+        return []
+    return [key for key in schema if not key.startswith("$") and key != "definitions"]
+
+
+def _local_definition(root: dict, ref: str) -> Optional[dict]:
+    for container in ("$defs", "definitions"):
+        prefix = f"#/{container}/"
+        if ref.startswith(prefix):
+            definitions = root.get(container)
+            target = definitions.get(ref[len(prefix) :]) if isinstance(definitions, dict) else None
+            return target if isinstance(target, dict) else None
+    return None
+
+
+def _merge_definition(root: dict, definition: dict) -> None:
+    """Merge a definition into the root; keywords beside a $ref apply on top of it, so neither side's fields are lost."""
+    for key, value in definition.items():
+        current = root.get(key)
+        if key == "properties" and isinstance(current, dict) and isinstance(value, dict):
+            merged = dict(value)
+            for name, extra in current.items():
+                base = merged.get(name)
+                merged[name] = {**base, **extra} if isinstance(base, dict) and isinstance(extra, dict) else extra
+            root[key] = merged
+        elif key == "required" and isinstance(current, list) and isinstance(value, list):
+            root[key] = value + [name for name in current if name not in value]
+        else:
+            root.setdefault(key, value)
+
+
 def sanitize_response_schema(schema: dict):
     """
     Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
@@ -110,8 +150,27 @@ def sanitize_response_schema(schema: dict):
     - Ensures that all fields defined in "properties" are listed in "required",
       making every property explicitly required as per OpenAI's expectations,
       EXCEPT for Dict fields which should not be in the required array.
-    - Removes "title" beside "$ref", which OpenAI rejects.
+    - Moves a "$ref" that has sibling keywords (title, description, examples, default)
+      into a single-item "anyOf", since OpenAI rejects any keyword beside "$ref" but
+      accepts them beside "anyOf".
+    - A root "$ref" with sibling keywords (a RootModel) is replaced by its local definition,
+      with the siblings kept on top, since the root must be an object schema.
+    - Leaves values under "default", "examples", "const" and "enum" untouched: they are data.
     """
+    # Follow a chain of root refs (a RootModel of a RootModel) to the object; seen stops a cycle
+    seen = set()
+    while isinstance(schema, dict) and _ref_siblings(schema) and schema["$ref"] not in seen:
+        seen.add(schema["$ref"])
+        definition = _local_definition(schema, schema["$ref"])
+        if definition is None:
+            break
+        schema.pop("$ref")
+        _merge_definition(schema, copy.deepcopy(definition))
+    # An anyOf root is never valid, so an unresolved root $ref is left for OpenAI to report
+    _sanitize_schema_node(schema, wrap_ref=False)
+
+
+def _sanitize_schema_node(schema: Any, wrap_ref: bool = True) -> None:
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
         if schema.get("type") == "object":
@@ -139,14 +198,18 @@ def sanitize_response_schema(schema: dict):
         if "default" in schema and schema["default"] is None:
             schema.pop("default")
 
-        # The referenced definition keeps its own title
-        if isinstance(schema.get("$ref"), str) and isinstance(schema.get("title"), str):
-            schema.pop("title")
+        if wrap_ref and _ref_siblings(schema) and "anyOf" not in schema:
+            schema["anyOf"] = [{"$ref": schema.pop("$ref")}]
 
-        # Recurse into all values
-        for value in schema.values():
-            sanitize_response_schema(value)
+        for key, value in schema.items():
+            if key in _DATA_KEYWORDS:
+                continue
+            if key in _SCHEMA_MAPS and isinstance(value, dict):
+                for subschema in value.values():
+                    _sanitize_schema_node(subschema)
+            else:
+                _sanitize_schema_node(value)
 
     elif isinstance(schema, list):
         for item in schema:
-            sanitize_response_schema(item)
+            _sanitize_schema_node(item)

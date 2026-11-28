@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from agno.media import Image
 from agno.utils.media import resolve_image_mime_type
@@ -374,29 +374,282 @@ def test_images_to_message_mixed(tmp_path):
     assert result[2]["image_url"] == "https://example.com/photo.jpg"
 
 
-def test_sanitize_response_schema_drops_title_beside_ref():
-    """OpenAI rejects a $ref with a title beside it; the definition keeps its title."""
+def _refs_with_siblings(node):
+    if isinstance(node, dict):
+        found = [node] if isinstance(node.get("$ref"), str) and len(node) > 1 else []
+        return found + [n for value in node.values() for n in _refs_with_siblings(value)]
+    if isinstance(node, list):
+        return [n for item in node for n in _refs_with_siblings(item)]
+    return []
+
+
+def test_sanitize_response_schema_wraps_ref_with_sibling_keywords():
+    """OpenAI strict mode rejects any keyword beside $ref but accepts them beside anyOf."""
+    ref = {"$ref": "#/$defs/Actor"}
     schema = {
         "type": "object",
         "$defs": {"Actor": {"type": "object", "title": "Actor", "properties": {"name": {"type": "string"}}}},
         "properties": {
-            "actors": {"type": "array", "title": "Actors", "items": {"$ref": "#/$defs/Actor", "title": "Actor"}},
-            "lead": {"$ref": "#/$defs/Actor", "title": "Lead", "description": "The lead actor."},
+            "actors": {"type": "array", "title": "Actors", "items": {**ref, "title": "Actor"}},
+            "lead": {**ref, "title": "Lead", "description": "The lead actor."},
+            "star": {**ref, "examples": [{"name": "Kate"}]},
+            "understudy": {**ref, "default": {"name": "Billy"}},
         },
     }
 
     sanitize_response_schema(schema)
 
-    assert schema["properties"]["actors"]["items"] == {"$ref": "#/$defs/Actor"}
-    assert schema["properties"]["lead"] == {"$ref": "#/$defs/Actor", "description": "The lead actor."}
-    assert schema["properties"]["actors"]["title"] == "Actors"
+    properties = schema["properties"]
+    assert properties["actors"]["items"] == {"anyOf": [ref], "title": "Actor"}
+    assert properties["lead"] == {"anyOf": [ref], "title": "Lead", "description": "The lead actor."}
+    assert properties["star"] == {"anyOf": [ref], "examples": [{"name": "Kate"}]}
+    assert properties["understudy"] == {"anyOf": [ref], "default": {"name": "Billy"}}
     assert schema["$defs"]["Actor"]["title"] == "Actor"
+    assert _refs_with_siblings(schema) == []
 
 
-def test_sanitize_response_schema_keeps_a_property_named_title():
-    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+def test_sanitize_response_schema_wraps_pydantic_field_description():
+    class Actor(BaseModel):
+        name: str
+
+    class Cast(BaseModel):
+        lead: Actor = Field(description="The lead actor.")
+
+    schema = Cast.model_json_schema()
+    sanitize_response_schema(schema)
+
+    assert schema["properties"]["lead"] == {"anyOf": [{"$ref": "#/$defs/Actor"}], "description": "The lead actor."}
+    assert _refs_with_siblings(schema) == []
+
+
+def test_sanitize_response_schema_keeps_a_recursive_root_ref():
+    """A self-referencing model's root is $defs plus $ref, which OpenAI accepts; wrapping it breaks the root."""
+
+    class Node(BaseModel):
+        name: str
+        child: Optional["Node"] = None
+
+    schema = Node.model_json_schema()
+    assert set(schema) == {"$defs", "$ref"}
 
     sanitize_response_schema(schema)
 
-    assert schema["properties"] == {"title": {"type": "string"}}
-    assert schema["required"] == ["title"]
+    assert schema["$ref"] == "#/$defs/Node"
+    assert "anyOf" not in schema
+
+
+def test_sanitize_response_schema_keeps_defs_beside_a_wrapped_ref():
+    node = {"$defs": {"Actor": {"type": "object"}}, "$ref": "#/$defs/Actor", "description": "The lead actor."}
+    schema = {"type": "object", "properties": {"lead": node}}
+
+    sanitize_response_schema(schema)
+
+    assert node["anyOf"] == [{"$ref": "#/$defs/Actor"}]
+    assert node["description"] == "The lead actor."
+    assert "Actor" in node["$defs"]
+    assert "$ref" not in node
+
+
+class _Actor(BaseModel):
+    name: str
+
+
+class _Cast(RootModel[_Actor]):
+    pass
+
+
+class _DocumentedCast(RootModel[_Actor]):
+    """The cast."""
+
+
+class _ConstrainedCast(RootModel[_Actor]):
+    model_config = ConfigDict(json_schema_extra={"minProperties": 1})
+
+
+class _Node(BaseModel):
+    name: str
+    child: Optional["_Node"] = None
+
+
+class _Tree(RootModel[_Node]):
+    """A tree."""
+
+
+@pytest.mark.parametrize(
+    "model, kept",
+    [
+        (_Cast, {"title": "_Cast"}),
+        (_DocumentedCast, {"title": "_DocumentedCast", "description": "The cast."}),
+        (_ConstrainedCast, {"title": "_ConstrainedCast", "minProperties": 1}),
+    ],
+)
+def test_sanitize_response_schema_inlines_a_root_ref_with_siblings(model, kept):
+    """OpenAI needs an object at the root, so a root $ref with siblings becomes its definition plus those siblings."""
+    schema = model.model_json_schema()
+    assert schema["$ref"] == "#/$defs/_Actor"
+
+    sanitize_response_schema(schema)
+
+    assert "$ref" not in schema and "anyOf" not in schema
+    assert schema["type"] == "object"
+    assert schema["properties"] == {"name": {"title": "Name", "type": "string"}}
+    assert schema["required"] == ["name"]
+    assert schema["additionalProperties"] is False
+    assert {key: schema[key] for key in kept} == kept
+
+
+class _Role(BaseModel):
+    name: str
+    role: str
+
+
+class _PatternedCast(RootModel[_Role]):
+    model_config = ConfigDict(json_schema_extra={"properties": {"name": {"pattern": "^[A-Z]"}}, "required": ["name"]})
+
+
+def test_sanitize_response_schema_merges_root_properties_with_the_definition():
+    """Keywords beside a $ref apply on top of the definition, so overlapping properties merge instead of replacing it."""
+    schema = _PatternedCast.model_json_schema()
+    assert schema["properties"] == {"name": {"pattern": "^[A-Z]"}}
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {
+        "name": {"title": "Name", "type": "string", "pattern": "^[A-Z]"},
+        "role": {"title": "Role", "type": "string"},
+    }
+    assert schema["required"] == ["name", "role"]
+
+
+def test_sanitize_response_schema_unions_required_when_merging_a_root_definition():
+    schema = {
+        "$defs": {"A": {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}},
+        "$ref": "#/$defs/A",
+        "required": ["y"],
+        "properties": {"y": {"type": "integer"}},
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {"x": {"type": "string"}, "y": {"type": "integer"}}
+    assert schema["required"] == ["x", "y"]
+
+
+class _Movie(RootModel[_Cast]):
+    pass
+
+
+def test_sanitize_response_schema_follows_a_root_ref_chain_to_its_object():
+    schema = _Movie.model_json_schema()
+    assert schema["$ref"] == "#/$defs/_Cast"
+    assert schema["$defs"]["_Cast"]["$ref"] == "#/$defs/_Actor"
+
+    sanitize_response_schema(schema)
+
+    assert "$ref" not in schema and "anyOf" not in schema
+    assert schema["title"] == "_Movie"
+    assert schema["type"] == "object"
+    assert schema["properties"] == {"name": {"title": "Name", "type": "string"}}
+
+
+def test_sanitize_response_schema_stops_on_a_root_ref_cycle():
+    schema = {
+        "$defs": {"A": {"$ref": "#/$defs/B", "title": "A"}, "B": {"$ref": "#/$defs/A", "title": "B"}},
+        "$ref": "#/$defs/A",
+        "title": "Root",
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["title"] == "Root"
+    assert isinstance(schema["$ref"], str)
+
+
+def test_sanitize_response_schema_inlines_a_recursive_root_ref():
+    schema = _Tree.model_json_schema()
+
+    sanitize_response_schema(schema)
+
+    assert "$ref" not in schema
+    assert schema["description"] == "A tree."
+    assert schema["properties"]["child"]["anyOf"][0] == {"$ref": "#/$defs/_Node"}
+    assert schema["$defs"]["_Node"]["additionalProperties"] is False
+
+
+def test_sanitize_response_schema_leaves_an_unresolvable_root_ref():
+    schema = {"$ref": "https://example.com/actor.json", "title": "Cast"}
+
+    sanitize_response_schema(schema)
+
+    assert schema == {"$ref": "https://example.com/actor.json", "title": "Cast"}
+
+
+def test_sanitize_response_schema_leaves_literal_data_alone():
+    """Values under examples, default, const and enum are data, not schemas."""
+
+    class Doc(BaseModel):
+        ref: Dict[str, str] = Field(examples=[{"$ref": "document-id", "title": "Read me"}])
+        meta: Dict[str, str] = Field(default={"type": "object"})
+
+    schema = Doc.model_json_schema()
+    schema["properties"]["kind"] = {"const": {"type": "object"}}
+    schema["properties"]["shape"] = {"enum": [{"$ref": "x", "title": "y"}]}
+
+    sanitize_response_schema(schema)
+
+    properties = schema["properties"]
+    assert properties["ref"]["examples"] == [{"$ref": "document-id", "title": "Read me"}]
+    assert properties["meta"]["default"] == {"type": "object"}
+    assert properties["kind"]["const"] == {"type": "object"}
+    assert properties["shape"]["enum"] == [{"$ref": "x", "title": "y"}]
+
+
+def test_sanitize_response_schema_still_sanitizes_properties_named_like_data_keywords():
+    schema = {
+        "type": "object",
+        "properties": {
+            "examples": {"type": "object", "properties": {"a": {"type": "string"}}},
+            "default": {"$ref": "#/$defs/A", "description": "A default."},
+        },
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"]["examples"]["additionalProperties"] is False
+    assert schema["properties"]["default"] == {"anyOf": [{"$ref": "#/$defs/A"}], "description": "A default."}
+
+
+def test_sanitize_response_schema_leaves_a_bare_ref_alone():
+    schema = {"$ref": "#/$defs/Actor", "default": None}
+
+    sanitize_response_schema(schema)
+
+    assert schema == {"$ref": "#/$defs/Actor"}
+
+
+def test_sanitize_response_schema_is_idempotent():
+    schema = {"type": "object", "properties": {"lead": {"$ref": "#/$defs/Actor", "description": "The lead actor."}}}
+    sanitize_response_schema(schema)
+    once = copy.deepcopy(schema)
+
+    sanitize_response_schema(schema)
+
+    assert schema == once
+
+
+def test_sanitize_response_schema_keeps_ref_beside_an_existing_any_of():
+    node = {"$ref": "#/$defs/Actor", "anyOf": [{"type": "null"}]}
+    schema = {"type": "object", "properties": {"lead": copy.deepcopy(node)}}
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"]["lead"] == node
+
+
+def test_sanitize_response_schema_keeps_properties_named_title_and_ref():
+    schema = {"type": "object", "properties": {"title": {"type": "string"}, "$ref": {"type": "string"}}}
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {"title": {"type": "string"}, "$ref": {"type": "string"}}
+    assert schema["required"] == ["title", "$ref"]
