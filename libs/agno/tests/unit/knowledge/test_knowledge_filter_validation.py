@@ -143,3 +143,21 @@ async def test_avalidate_filters_without_contents_db_keeps_list_filters(knowledg
 def test_filter_merge_raises_on_type_mismatch():
     with pytest.raises(ValueError):
         get_agentic_or_user_search_filters({"region": "us"}, [EQ("year", 2024)])
+
+
+@pytest.mark.parametrize("agentic_filters", [None, {}])
+def test_user_filters_survive_when_the_agent_supplies_none(agentic_filters):
+    """The user passed filters, so they are the ones to search with.
+
+    A truthy agentic filter list that flattens to an empty dict reaches this
+    function from Knowledge/Agent/Team search_knowledge_base, and the user's
+    filters must not be dropped along with it.
+    """
+    assert get_agentic_or_user_search_filters(agentic_filters, {"region": "us"}) == {"region": "us"}
+
+
+def test_user_filters_are_the_only_ones_applied_when_the_agent_supplies_none():
+    assert get_agentic_or_user_search_filters(None, {"region": "us", "year": 2024}) == {
+        "region": "us",
+        "year": 2024,
+    }
