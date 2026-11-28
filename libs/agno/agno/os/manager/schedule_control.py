@@ -216,8 +216,8 @@ class ScheduleControlTools(Toolkit):
             agent_os, app, authority, user_id = self._person(run_context, f"{action} a schedule")
             request = _person_request(app, authority, user_id, "POST", "/schedules")
             rights = await self._rights(agent_os, app, authority, request)
-            # User isolation filters a person to their own schedules. An administrator sees every one, as in the API.
-            scoped = None if rights["admin"] else get_scoped_user_id(request)
+            # Only a signed-in administrator can lift the owner filter. A declared user keeps their scope.
+            scoped = None if request.state.authenticated and rights["admin"] else get_scoped_user_id(request)
             schedule, problem, by_name = await self._find(agent_os, given, scoped, user_id)
             if schedule is None:
                 return str(problem)

@@ -389,6 +389,30 @@ def test_without_authorization_every_person_can_stop_every_schedule(tmp_path):
         built.db.close()
 
 
+def test_without_authorization_chat_looks_up_schedules_for_the_declared_user(tmp_path):
+    from agno.run import RunContext
+    from agno.scheduler import ScheduleManager
+
+    built = System(tmp_path, isolation=True, authorization=False)
+    try:
+        schedules = ScheduleManager(built.db)
+        own = schedules.create("sam-nightly", "0 2 * * *", "/agents/reader/runs", user_id="sam")
+        other = schedules.create("lee-nightly", "0 2 * * *", "/agents/reader/runs", user_id="lee")
+        sam = RunContext(run_id="chat", session_id="s", user_id="sam")
+
+        reply = built.call("delete_schedule", sam, schedule_id=other.name)
+        assert "no schedule has the ID or the name" in reply
+        assert built.call("delete_schedule", sam, schedule_id=other.id).startswith("Not done")
+        assert built.enabled(other.id) is True
+
+        assert built.call("pause_schedule", sam, schedule=own.name).startswith("Paused")
+        assert built.enabled(own.id) is False
+        assert built.call("resume_schedule", sam, schedule=own.id).startswith("Resumed")
+        assert built.enabled(own.id) is True
+    finally:
+        built.db.close()
+
+
 # ------------------------------------------------------------------ Platform Builder's schedule tools
 
 
