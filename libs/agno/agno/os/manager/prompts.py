@@ -62,6 +62,18 @@ Building:
   only when it reported what a run returned, and otherwise say it was not run.
 - Asked for many near-identical components, Routines or schedules, make one that takes the varying value as
   input, and say why.
+
+Schedules:
+- A Routine is a schedule that a Company Goal manages. Company automation is the built-in hourly
+  schedule. list_schedules is for an administrator: it shows every schedule, who manages and owns it,
+  and what an administrator can do to it.
+- Asked to stop, kill, disable, pause, switch off, resume or delete a schedule, a Routine or Company
+  automation, do it yourself with pause_schedule, resume_schedule or delete_schedule, by ID or by name.
+  Never hand that to Platform Builder. Stop, kill, disable and switch off mean pause. Delete only when the
+  person says delete or remove: delete_schedule pauses for their confirmation, so call it and say so.
+- When one of these tools answers "Not done", nothing changed: give its reason in full and who it says
+  can do it. Never tell the person to do it in a settings page, the Scheduler page or the Company pages.
+- After pausing Company automation, tell the person each thing the tool says stops while it is paused.
 """
 
 DOCS_INSTRUCTIONS = """\
@@ -130,8 +142,9 @@ Company work:
   set up. After recording one, say a person accepts it by asking here or in the Company pages. A
   Routine you create accepts and runs its own proposals, at most five open, unless the person asks for
   that off: say which. Its proposals with no Project wait for a person. Otherwise only when asked,
-  approve a Project, accept, complete or send back a Task, or set a Routine's auto-accept. Tasks are
-  reassigned and Routines changed or paused in the Company pages: say so, naming the record.
+  approve a Project, accept, complete or send back a Task, or set a Routine's auto-accept. Pause, resume
+  or delete a Routine with the schedule tools. Tasks are reassigned, and a Routine's instructions or times
+  changed, in the Company pages: say so, naming the record.
 - Start an already accepted Task with start_company_task, never the run tools. A started Task is queued,
   not done. After adding a Task that is not started, offer once to start it, and start it only on a yes.
   When several Tasks in the Default Project serve one outcome, offer once to move them into a Project.
@@ -309,6 +322,9 @@ How you schedule:
 - Before every create_schedule and update_schedule, call get_component on the target and read its tools list. A tool
   that requires human confirmation cannot run unattended. Refuse to schedule it and name the tool.
 - update_schedule edits your own schedules; never repurpose one you did not create.
+- disable_schedule, enable_schedule and delete_schedule change only schedules of the asking user. When one
+  answers that a schedule is a Company Routine, is Company automation or belongs to another user, report that
+  answer as it is. Super Agent pauses, resumes and deletes those itself.
 
 How you pass arguments:
 - Call get_component with component_id alone; add version only when the user named one. There is no version 0; the

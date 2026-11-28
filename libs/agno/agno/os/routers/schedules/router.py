@@ -601,6 +601,12 @@ def get_schedule_router(
         log_info(f"Schedule '{existing.get('name', schedule_id)}' disabled")
         return result
 
+    if agent_os is not None and managed_by is None:
+        # Super Agent's chat tools pause, resume and delete a schedule through these, as the chatting person.
+        agent_os._schedule_api_disable = disable_schedule
+        agent_os._schedule_api_enable = enable_schedule
+        agent_os._schedule_api_delete = delete_schedule
+
     @router.post("/schedules/{schedule_id}/trigger", response_model=ScheduleRunResponse)
     async def trigger_schedule(
         schedule_id: str,

@@ -774,6 +774,10 @@ REFUSED = {
     "review_company_task",
     "turn_on_routine_auto_accept",
     "turn_off_routine_auto_accept",
+    # Schedules a person stops, restarts or removes
+    "pause_schedule",
+    "resume_schedule",
+    "delete_schedule",
     # File writes
     "write_company_file",
     "save_company_page",
