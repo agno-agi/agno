@@ -586,7 +586,7 @@ def test_sync_calls_close_their_http_client_and_leave_no_cache(monkeypatch):
         assert sandbox.rpc(handle, "poll", b'{"execution_id": "e", "cursor": 0}').exit_code == 0
     assert len(clients) == 4
     assert all(item.is_closed for item in clients)
-    assert not sandbox._http
+    assert not sandbox._clients._entries
 
 
 def test_concurrent_sync_calls_share_the_client_cache_safely(monkeypatch):
@@ -617,7 +617,7 @@ def test_concurrent_sync_calls_share_the_client_cache_safely(monkeypatch):
             list(pool.map(calls, range(8)))
     finally:
         sys.setswitchinterval(interval)
-    assert not sandbox._http
+    assert not sandbox._clients._entries
 
 
 @pytest.mark.parametrize("order", ["close then reuse", "close then discard", "discard then close"])
@@ -633,7 +633,7 @@ def test_a_loop_closed_without_cancelling_tasks_does_not_retain_its_closer(order
         await asyncio.sleep(0)
 
     loop.run_until_complete(client(sandbox))
-    closer = weakref.ref(sandbox._http[loop][1])
+    closer = weakref.ref(sandbox._clients._entries[loop][1])
     if order == "discard then close":
         del sandbox
         gc.collect()
@@ -653,7 +653,7 @@ async def test_a_running_loop_reuses_one_http_client(monkeypatch):
     sandbox = ServedDocker()
     first = DockerSandbox._http_client(sandbox)
     assert DockerSandbox._http_client(sandbox) is first
-    assert list(sandbox._http) == [asyncio.get_running_loop()]
+    assert list(sandbox._clients._entries) == [asyncio.get_running_loop()]
 
 
 @pytest.mark.asyncio

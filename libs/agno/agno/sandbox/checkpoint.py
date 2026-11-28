@@ -30,6 +30,7 @@ from typing import (
     Callable,
     ContextManager,
     Dict,
+    Iterable,
     Iterator,
     Mapping,
     Optional,
@@ -338,6 +339,34 @@ def _fsync_directory(path: Path) -> None:
         raise SandboxError("Checkpoint storage requires directory fsync; use a filesystem that supports it") from error
 
 
+def check_exclusions(exclude: Iterable[str]) -> None:
+    """Refuse an exclusion that would drop the manifest or a whole durable root."""
+    for item in exclude:
+        if str(_name(item)) == _MANIFEST or item in _ROOTS:
+            raise ValueError("Cannot exclude a manifest or entire durable root")
+
+
+def check_excluded(path: Path, limits: CheckpointLimits, exclude: Sequence[str]) -> None:
+    """Confirm an archive written inside a computer left out exactly the requested paths."""
+    exclusions = set(exclude)
+    with _archive_bytes(path, limits) as stream:
+        with tarfile.open(fileobj=stream, mode="r:") as archive:
+            for member in archive:
+                if member.name == _MANIFEST:
+                    manifest = json.loads(archive.extractfile(member).read())  # type: ignore[union-attr]
+                    if set(manifest.get("excluded", [])) != exclusions:
+                        raise SandboxError("Checkpoint export does not record the requested exclusions")
+                elif any(member.name == item or member.name.startswith(item + "/") for item in exclusions):
+                    raise SandboxError(f"Checkpoint export contains excluded path {member.name!r}")
+            # Validation stops at the end marker, but the store uploads the whole
+            # file, so anything after it, such as a second appended archive,
+            # would reach storage unchecked.
+            stream.seek(archive.offset)
+            while chunk := stream.read(1024 * 1024):
+                if chunk.count(0) != len(chunk):
+                    raise SandboxError("Checkpoint export has data after the end of the archive")
+
+
 class CheckpointArchive:
     """Tar with exactly workspace/native roots and a JSON state manifest.
 
@@ -363,9 +392,7 @@ class CheckpointArchive:
         if set(roots) != _ROOTS:
             raise ValueError("Checkpoint requires workspace and native roots")
         exclusions = set(exclude)
-        for item in exclusions:
-            if str(_name(item)) == _MANIFEST or item in _ROOTS:
-                raise ValueError("Cannot exclude a manifest or entire durable root")
+        check_exclusions(exclusions)
         manifest = json.dumps(
             {"version": 1, "state": dict(state), "excluded": sorted(exclusions)}, allow_nan=False
         ).encode()
