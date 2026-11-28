@@ -513,8 +513,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.os.manager.person import Person, TurnContext
     from agno.os.manager.rules_pages import RulesPages
 
-    # Who the person is, which wiki pages exist, then that work, in one message right before theirs. The role store is the
-    # Authorization object when it manages roles; agent_os.authorization itself is only a switch.
+    # Who the person is, which wiki pages exist, then that work, in one message right before theirs.
+    # The role store is the Authorization object when it manages roles; agent_os.authorization itself
+    # is only a switch.
     team._message_context = TurnContext(
         Person(
             lambda: getattr(agent_os, "user_directory", None),
