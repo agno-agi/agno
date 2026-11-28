@@ -27,7 +27,7 @@ _READ_ONLY_PULL_REQUEST_INSTRUCTIONS = """\
   include_patches=false), then read the files that matter one at a time with path. Say which files
   you did not read.
 - "Safe to merge" is your judgment from the diff and the checks. Say what you checked and what
-  you could not: you do not run the code.
+  you could not: reading GitHub does not run the code.
 """
 
 
@@ -92,7 +92,8 @@ class GithubTools(Toolkit):
             read_only: Register only the tools that read, and tell the model how to read a pull
                 request well. No tool that creates, changes or deletes anything on GitHub is
                 registered, whatever the token allows. include_tools and exclude_tools narrow
-                the reading tools further; naming a writing tool in include_tools is refused.
+                the reading tools further. Naming a writing tool in include_tools is refused;
+                naming one in exclude_tools changes nothing, since it is already left out.
         """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
@@ -109,6 +110,12 @@ class GithubTools(Toolkit):
                     f"{'it writes' if len(writing) == 1 else 'they write'} to GitHub. "
                     "Remove the name from include_tools, or pass read_only=False."
                 )
+            # A writing tool is already left out, so a list that excluded one before read_only was
+            # added still works. A name that is no tool at all is still refused by the Toolkit.
+            if kwargs.get("exclude_tools"):
+                kwargs["exclude_tools"] = [
+                    name for name in kwargs["exclude_tools"] if self.tool_access.get(name) != "write"
+                ]
             kwargs.setdefault("add_instructions", True)
 
         tools: List[Any] = [getattr(self, name) for name in names]

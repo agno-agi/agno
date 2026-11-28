@@ -68,7 +68,9 @@ anywhere else, say you read only that directory.
 
 GITHUB_INSTRUCTIONS = """\
 GitHub: when an agent, a Task or a workflow tells you something about a pull request or a file, read the
-pull request or the file before you repeat it as true. If what you read disagrees, say so.
+pull request or the file before you repeat it as true. If what you read disagrees, say so. When you are
+not offered a tool that reads it, as in a "Finished work report from AgentOS", say whose claim it is and
+that you did not check it.
 """
 
 SANDBOX_CHANGES_INSTRUCTIONS = """\

@@ -2161,6 +2161,15 @@ def test_read_only_narrows_with_include_and_exclude_and_refuses_a_tool_that_writ
     assert "search_code" not in excluded.functions and "get_pull_request" in excluded.functions
     assert all(GithubTools.tool_access[name] == "read" for name in excluded.functions)
 
+    # A list that excluded writing tools before read_only was added still works: they are already out.
+    kept_list = GithubTools(read_only=True, exclude_tools=["delete_repository", "create_issue", "list_branches"])
+    assert "list_branches" not in kept_list.functions and "get_pull_request" in kept_list.functions
+    assert len(kept_list.functions) == 21
+    assert len(GithubTools(read_only=True, exclude_tools=["delete_file"]).functions) == 22
+    # A name that is no tool at all is still refused.
+    with pytest.raises(ValueError, match="Excluded tool\\(s\\) not present in the toolkit: no_such_tool"):
+        GithubTools(read_only=True, exclude_tools=["create_issue", "no_such_tool"])
+
     with pytest.raises(ValueError) as refused:
         GithubTools(read_only=True, include_tools=["get_pull_request", "create_issue", "delete_file"])
     assert str(refused.value) == (
@@ -2187,6 +2196,9 @@ def test_read_only_tells_the_model_how_to_read_and_names_only_the_tools_it_holds
     assert "say which commit it was" in github_tools.instructions
     assert "include_patches=false" in github_tools.instructions
     assert '"Safe to merge" is your judgment' in github_tools.instructions
+    # It says what reading GitHub cannot do, not what the agent cannot: another tool may run the code.
+    assert "reading GitHub does not run the code" in github_tools.instructions
+    assert "you do not run the code" not in github_tools.instructions
 
     # Without the pull request tools, nothing is said about reading a pull request.
     files_only = GithubTools(read_only=True, include_tools=["get_file_content", "search_code"])
