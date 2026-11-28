@@ -19,6 +19,7 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
+from agno.db.in_memory import InMemoryDb
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.metrics import RunMetrics
 from agno.models.message import Message
@@ -168,7 +169,8 @@ class TestTeamTruncate:
             status=RunStatus.running,
             messages=[Message(role="user", content="a"), Message(role="assistant", content="b")],
         )
-        team_run._mark_team_checkpoint_message(r)
+        team = Team(members=[], checkpoint="tool-batch", db=InMemoryDb())
+        team_run.checkpoint_team_run(team, r, TeamSession(session_id="s1"))
         assert r.messages[-1].checkpoint_status == RunStatus.running.value
         assert r.messages[-1].checkpoint_created_at is not None
 

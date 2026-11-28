@@ -9,7 +9,7 @@ Without ``checkpoint="tool-batch"`` a run only persists at terminal states
 loses everything — the session row exists, but this ``run_id`` was never
 recorded under it.
 
-``checkpoint="tool-batch"`` writes after each tool batch (post-gather barrier)
+``checkpoint="tool-batch"`` writes at the start and after each tool batch (post-gather barrier)
 with status RUNNING. If the process is killed between batch J and J+1, the DB
 row contains everything through batch J, still marked RUNNING. ``/continue``
 resumes a RUNNING run in place (same ``run_id``).

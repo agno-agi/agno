@@ -35,6 +35,7 @@ from agno.run.team import (
     TeamRunOutput,
 )
 from agno.session import TeamSession
+from agno.session._utils import continue_history_session
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -1101,49 +1102,16 @@ def _get_run_messages(
             else:
                 run_response.additional_input.extend(messages_to_add_to_run_response)
 
-    # 3. Add history to run_messages
-    if add_history_to_context:
-        # Only skip messages from history when system_message_role is NOT a standard conversation role.
-        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-        # to preserve conversation continuity.
-        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
-
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
-
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
-
-            # Refresh pre-signed URLs for media loaded from history
-            if team.media_storage is not None:
-                from agno.utils.media_offload import refresh_messages_media
-
-                refresh_messages_media(history_copy, team.media_storage)
-
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
-
-            log_debug(f"Adding {len(history_copy)} messages from history")
-
-            # Extend the messages with the history
-            run_messages.messages += history_copy
-
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
     input_start = len(run_messages.messages)
     if _is_roleful_message_list(input_message):
-        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
         # flattening the list into one user string.
         _append_input_messages(
             team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
         )
     else:
-        # 5.2 Build user message if message is None, str or list
+        # Build user message if message is None, str or list
         user_message = _get_user_message(
             team,
             run_response=run_response,
@@ -1170,6 +1138,37 @@ def _get_run_messages(
                 # Sent as a user message of its own and not stored with the run. A provider that
                 # refuses two user messages in a row has to merge them in its own formatter.
                 run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
+
+    # The context read reconciles interrupted turns before they can use a place in history.
+    if add_history_to_context:
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+
+        history = continue_history_session(session, run_response).get_messages(
+            last_n_runs=team.num_history_runs,
+            limit=team.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            team_id=team.id if team.parent_team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            history_copy = [copy_history_message(msg) for msg in history]
+
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.utils.media_offload import refresh_messages_media
+
+                refresh_messages_media(history_copy, team.media_storage)
+
+            # Filter tool calls from history messages
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+
+            run_messages.messages[input_start:input_start] = history_copy
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1254,48 +1253,16 @@ async def _aget_run_messages(
             else:
                 run_response.additional_input.extend(messages_to_add_to_run_response)
 
-    # 3. Add history to run_messages
-    if add_history_to_context:
-        # Only skip messages from history when system_message_role is NOT a standard conversation role.
-        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
-        # to preserve conversation continuity.
-        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
-
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
-
-            # Refresh pre-signed URLs for media loaded from history
-            if team.media_storage is not None:
-                from agno.utils.media_offload import arefresh_messages_media
-
-                await arefresh_messages_media(history_copy, team.media_storage)
-
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
-
-            log_debug(f"Adding {len(history_copy)} messages from history")
-
-            # Extend the messages with the history
-            run_messages.messages += history_copy
-
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
     input_start = len(run_messages.messages)
     if _is_roleful_message_list(input_message):
-        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
         # flattening the list into one user string.
         _append_input_messages(
             team, run_messages, input_message, images=images, audio=audio, videos=videos, files=files
         )
     else:
-        # 5.2 Build user message if message is None, str or list
+        # Build user message if message is None, str or list
         user_message = await _aget_user_message(
             team,
             run_response=run_response,
@@ -1322,6 +1289,36 @@ async def _aget_run_messages(
                 # Sent as a user message of its own and not stored with the run. A provider that
                 # refuses two user messages in a row has to merge them in its own formatter.
                 run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
+
+    # The context read reconciles interrupted turns before they can use a place in history.
+    if add_history_to_context:
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+        history = continue_history_session(session, run_response).get_messages(
+            last_n_runs=team.num_history_runs,
+            limit=team.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            team_id=team.id if team.parent_team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            history_copy = [copy_history_message(msg) for msg in history]
+
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.utils.media_offload import arefresh_messages_media
+
+                await arefresh_messages_media(history_copy, team.media_storage)
+
+            # Filter tool calls from history messages
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+
+            run_messages.messages[input_start:input_start] = history_copy
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages

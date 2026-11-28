@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import time
 from collections import deque
-from time import time as unix_time
+from copy import copy
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -79,7 +80,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
 from agno.run.messages import RunMessages
 from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
@@ -95,7 +96,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import continue_history_session, resolve_run_index
+from agno.session._utils import checkpoint_snapshot, continue_history_session, resolve_run_index
 from agno.team._members import member_storage
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -337,6 +338,7 @@ def _run_tasks(
             tools=_tools,
             **kwargs,
         )
+        checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
@@ -687,6 +689,7 @@ def _run_tasks_stream(
             tools=_tools,
             **kwargs,
         )
+        checkpoint_team_run(team, run_response, session, run_context, initial_messages=run_messages)
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
@@ -1039,7 +1042,11 @@ def _run_tasks_stream(
         _cleanup_and_store(team, run_response=run_response, session=session)
         yield run_error
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, GeneratorExit) as exc:
+        if isinstance(exc, GeneratorExit) and (
+            team.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+        ):
+            raise
         run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages, session=session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
@@ -1051,6 +1058,8 @@ def _run_tasks_stream(
             _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        if isinstance(exc, GeneratorExit):
+            raise
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -1151,6 +1160,7 @@ def _run(
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -1226,6 +1236,10 @@ def _run(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = checkpoint_team_run(
+                        team, run_response, session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1513,6 +1527,7 @@ def _run_stream(
     try:
         # Set up retry logic
         num_attempts = team.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -1589,6 +1604,10 @@ def _run_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = checkpoint_team_run(
+                        team, run_response, session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1842,7 +1861,11 @@ def _run_stream(
                 yield run_error
                 break
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, GeneratorExit) as exc:
+                if isinstance(exc, GeneratorExit) and (
+                    team.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+                ):
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=session
                 )
@@ -1856,6 +1879,8 @@ def _run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                if isinstance(exc, GeneratorExit):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -2236,6 +2261,7 @@ async def _arun_tasks(
             tools=_tools,
             **kwargs,
         )
+        await acheckpoint_team_run(team, run_response, team_session, run_context, initial_messages=run_messages)
 
         # 4. Start memory and learning creation in background
         memory_task = await _astart_memory_task(
@@ -2619,6 +2645,7 @@ async def _arun_tasks_stream(
             tools=_tools,
             **kwargs,
         )
+        await acheckpoint_team_run(team, run_response, team_session, run_context, initial_messages=run_messages)
 
         # 4. Start memory creation in background
         memory_task = await _astart_memory_task(
@@ -3129,6 +3156,7 @@ async def _arun(
 
         # Set up retry logic
         num_attempts = team.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -3213,6 +3241,10 @@ async def _arun(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = await acheckpoint_team_run(
+                        team, run_response, team_session, run_context, initial_messages=run_messages
+                    )
 
                 team.model = cast(Model, team.model)
 
@@ -3705,6 +3737,7 @@ async def _arun_stream(
 
         # Set up retry logic
         num_attempts = team.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -3788,6 +3821,10 @@ async def _arun_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = await acheckpoint_team_run(
+                        team, run_response, team_session, run_context, initial_messages=run_messages
+                    )
 
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
@@ -4920,7 +4957,10 @@ def _persist_team_run_in_session(
             _member_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
+    storage_copy.checkpoint_owner = run_context._checkpoint_owner if run_context else None
     scrub_run_output_for_storage(team, storage_copy)
+    if storage_copy.last_checkpoint_at_message_index is not None:
+        storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
@@ -4980,7 +5020,10 @@ async def _apersist_team_run_in_session(
             await _amember_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
         ]
+    storage_copy.checkpoint_owner = run_context._checkpoint_owner if run_context else None
     scrub_run_output_for_storage(team, storage_copy)
+    if storage_copy.last_checkpoint_at_message_index is not None:
+        storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
@@ -5027,7 +5070,7 @@ def _sync_team_run_response_with_model_response(
     delegation. Carry it over by ``tool_call_id``, mirroring the streaming merge
     in :mod:`agno.team._response`.
     """
-    if model_response.tool_executions is not None:
+    if model_response.tool_executions:
         existing_child_run_ids = {
             tool.tool_call_id: tool.child_run_id
             for tool in (run_response.tools or [])
@@ -5042,13 +5085,59 @@ def _sync_team_run_response_with_model_response(
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
-def _mark_team_checkpoint_message(run_response: TeamRunOutput) -> None:
-    """Mark the current message boundary as checkpointed for client timelines."""
-    if not run_response.messages:
-        return
-    message = run_response.messages[-1]
-    message.checkpoint_status = run_response.status.value if run_response.status else None
-    message.checkpoint_created_at = int(unix_time())
+def _previous_checkpoint_owner(
+    run: TeamRunOutput, session: TeamSession, *, fork: bool, regenerate: bool, replace_original: Optional[bool]
+) -> Optional[str]:
+    # A fork can read the source snapshot freely unless regeneration also rewrites its status.
+    if (fork or regenerate) and not (regenerate and replace_original is not False):
+        return None
+    if run.checkpoint_owner:
+        return run.checkpoint_owner
+    # A caller may supply a run object that predates the stored checkpoint.
+    stored = session.get_run(run.run_id) if run.run_id else None
+    return stored.checkpoint_owner if isinstance(stored, TeamRunOutput) else None
+
+
+@contextlib.contextmanager
+def _checkpoint_transfer(team: "Team", run: TeamRunOutput, run_context: RunContext, previous: str) -> Iterator[Any]:
+    """Prepare the same conditional ownership change for synchronous and asynchronous databases."""
+    from functools import partial
+
+    from agno.run._checkpoint_owner import checkpoint_owner, checkpoint_owner_exited
+
+    if not checkpoint_owner_exited(previous):
+        raise RunNotContinuableError(f"Cannot continue run {run.run_id}: its checkpoint owner may still be running")
+    owner = checkpoint_owner()
+    update = getattr(team.db, "update_run_if_matches", None)
+    if owner is None or not callable(update):
+        raise RunNotContinuableError(f"Cannot claim checkpoint ownership for run {run.run_id}")
+    try:
+        yield partial(
+            update,
+            run_id=run.run_id,
+            session_id=run_context.session_id,
+            user_id=run_context.user_id,
+            expected={"status": RunStatus.running.value, "checkpoint_owner": previous, "queue_attempt": None},
+            fields={"checkpoint_owner": owner},
+        )
+    except RunNotContinuableError:
+        raise
+    except Exception as exc:
+        raise RunNotContinuableError(f"Cannot claim checkpoint ownership for run {run.run_id}") from exc
+    run_context._checkpoint_owner = owner
+
+
+def _claim_checkpoint(team: "Team", run: TeamRunOutput, run_context: RunContext, previous: str) -> None:
+    with _checkpoint_transfer(team, run, run_context, previous) as update:
+        if not update():
+            raise RunNotContinuableError(f"Cannot continue run {run.run_id}: its checkpoint changed")
+
+
+async def _aclaim_checkpoint(team: "Team", run: TeamRunOutput, run_context: RunContext, previous: str) -> None:
+    with _checkpoint_transfer(team, run, run_context, previous) as update:
+        result = update()
+        if not (await result if inspect.isawaitable(result) else result):
+            raise RunNotContinuableError(f"Cannot continue run {run.run_id}: its checkpoint changed")
 
 
 def checkpoint_team_run(
@@ -5056,14 +5145,21 @@ def checkpoint_team_run(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
-) -> None:
+    *,
+    initial_messages: Optional["RunMessages"] = None,
+) -> bool:
     """Persist a mid-run team checkpoint. No-op unless ``team.checkpoint == "tool-batch"``."""
-    if team.checkpoint != "tool-batch":
-        return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_team_checkpoint_message(run_response)
-    _persist_team_run_in_session(team, run_response, session, run_context)
+    if team.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
+        return False
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        _persist_team_run_in_session(team, run_response, session, run_context)
+        return True
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
+        return False
 
 
 async def acheckpoint_team_run(
@@ -5071,14 +5167,21 @@ async def acheckpoint_team_run(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
-) -> None:
+    *,
+    initial_messages: Optional["RunMessages"] = None,
+) -> bool:
     """Async variant of :func:`checkpoint_team_run`."""
-    if team.checkpoint != "tool-batch":
-        return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_team_checkpoint_message(run_response)
-    await _apersist_team_run_in_session(team, run_response, session, run_context)
+    if team.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
+        return False
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        await _apersist_team_run_in_session(team, run_response, session, run_context)
+        return True
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
+        return False
 
 
 def build_team_after_tool_results_callback(
@@ -7080,6 +7183,7 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
+    forked.checkpoint_owner = None
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
@@ -7345,6 +7449,8 @@ def _mark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            if isinstance(r, TeamRunOutput):
+                r.checkpoint_owner = None
             save_run(
                 team,
                 run=r,
@@ -7366,6 +7472,8 @@ async def _amark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            if isinstance(r, TeamRunOutput):
+                r.checkpoint_owner = None
             await asave_run(
                 team,
                 run=r,
@@ -7653,6 +7761,14 @@ def continue_run_dispatch(
     # auto-forked (retry semantics) — same call as agent.
     if not fork and run_response.status == RunStatus.completed:
         fork = True
+
+    previous_owner = _previous_checkpoint_owner(
+        run_response, team_session, fork=fork, regenerate=regenerate, replace_original=replace_original
+    )
+    if previous_owner:
+        _claim_checkpoint(team, run_response, run_context, previous_owner)
+        run_response = copy(run_response)
+        run_response.checkpoint_owner = None  # The terminal write releases the claim.
 
     # Apply modifiers BEFORE the requirements machinery. If we forked, the
     # rest of the dispatch operates on the new run with cloned members.
@@ -8114,7 +8230,11 @@ def _continue_run_dispatch_stream_with_member_events(
         if opts.yield_run_output:
             yield run_response
         return
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, GeneratorExit) as exc:
+        if isinstance(exc, GeneratorExit) and (
+            team.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+        ):
+            raise
         run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team, run_response, error=KeyboardInterrupt(), run_context=run_context
@@ -8123,6 +8243,8 @@ def _continue_run_dispatch_stream_with_member_events(
             _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        if isinstance(exc, GeneratorExit):
+            raise
         yield cancelled_event
         yield completed_event
         if opts.yield_run_output:
@@ -8707,7 +8829,11 @@ def _continue_run_stream(
                     yield run_response
                 break
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, GeneratorExit) as exc:
+                if isinstance(exc, GeneratorExit) and (
+                    team.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+                ):
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=session
                 )
@@ -8721,6 +8847,8 @@ def _continue_run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                if isinstance(exc, GeneratorExit):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -8878,7 +9006,22 @@ async def _acontinue_run_background_stream(
         RunStatus.completed,
         RunStatus.cancelled,
     )
-    if persist_run is not None and take_over_in_place:
+    previous_owner = (
+        _previous_checkpoint_owner(
+            persist_run, team_session, fork=fork, regenerate=regenerate, replace_original=replace_original
+        )
+        if isinstance(persist_run, TeamRunOutput)
+        else None
+    )
+    if previous_owner and persist_run is not None:
+        # Claim before publishing any transition or registering the event stream.
+        await _aclaim_checkpoint(team, persist_run, run_context, previous_owner)
+        persist_run = copy(persist_run)
+        persist_run.checkpoint_owner = run_context._checkpoint_owner
+        run_response = copy(persist_run)
+        run_response.checkpoint_owner = None
+    # A claimed checkpoint is already RUNNING while the producer waits for a slot.
+    if persist_run is not None and take_over_in_place and not previous_owner:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(team, persist_run, session_id) or persist_run
         team_session.upsert_run(run_response=storage_run)
@@ -8892,9 +9035,9 @@ async def _acontinue_run_background_stream(
     if take_over_in_place:
         with contextlib.suppress(Exception):
             # Fail-open: a Redis blip must not strand an accepted run.
-            await get_event_stream().register_run(_run_id, RunStatus.pending)
+            await get_event_stream().register_run(_run_id, RunStatus.running if previous_owner else RunStatus.pending)
 
-    if take_over_in_place:
+    if take_over_in_place and not previous_owner:
         log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
@@ -8947,6 +9090,7 @@ async def _acontinue_run_background_stream(
 
             async for event in _acontinue_run_stream(
                 team,
+                checkpoint_claimed=bool(previous_owner),
                 run_response=run_response,
                 run_context=run_context,
                 requirements=requirements,
@@ -9389,6 +9533,7 @@ def acontinue_run_dispatch(  # type: ignore
     if opts.stream:
         return _acontinue_run_stream(
             team,
+            checkpoint_claimed=False,
             run_response=run_response,
             run_context=run_context,
             requirements=requirements,
@@ -9464,6 +9609,9 @@ async def _acontinue_run(
     # bound requirements, and the member-level ones consumed by the dispatch —
     # re-binding the same payload against what is left refuses a run the retry
     # was meant to rescue.
+    checkpoint_claimed = False
+    previous_owner: Optional[str] = None
+    registered = False
     requirements_applied = False
     # Member results survive retries for the same reason: routing consumed the
     # member requirements, so a retry after a transient leader failure re-enters
@@ -9535,6 +9683,16 @@ async def _acontinue_run(
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
                 if not fork and run_response.status == RunStatus.completed:
                     fork = True
+
+                if not checkpoint_claimed:
+                    previous_owner = _previous_checkpoint_owner(
+                        run_response, team_session, fork=fork, regenerate=regenerate, replace_original=replace_original
+                    )
+                    if previous_owner:
+                        await _aclaim_checkpoint(team, run_response, run_context, previous_owner)
+                        checkpoint_claimed = True
+                        run_response = copy(run_response)
+                        run_response.checkpoint_owner = None
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
@@ -9608,6 +9766,7 @@ async def _acontinue_run(
                     _did_snapshot_dispatch = True
 
                 await aregister_run(run_response.run_id)  # type: ignore
+                registered = True
 
                 # Emit RunContinued event (matching streaming variant behaviour)
                 from agno.utils.events import create_team_run_continued_event
@@ -9858,6 +10017,9 @@ async def _acontinue_run(
                 return run_response
 
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                if previous_owner and not checkpoint_claimed:
+                    # Cancellation during the ownership check cannot terminate the other writer.
+                    raise
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
@@ -9909,7 +10071,7 @@ async def _acontinue_run(
     finally:
         _disconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
-        if run_response and run_response.run_id:
+        if registered and run_response and run_response.run_id:
             await acleanup_run(run_response.run_id)
     return run_response  # type: ignore
 
@@ -9934,6 +10096,7 @@ async def _acontinue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    checkpoint_claimed: bool = False,
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
@@ -9955,6 +10118,8 @@ async def _acontinue_run_stream(
     # member results from a routing pass that succeeded are banked so a
     # transient leader failure retries the leader instead of completing a
     # run that skipped it.
+    previous_owner: Optional[str] = None
+    registered = False
     requirements_applied = False
     routed_member_results: List[str] = []
 
@@ -10022,6 +10187,16 @@ async def _acontinue_run_stream(
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
                 if not fork and run_response.status == RunStatus.completed:
                     fork = True
+
+                if not checkpoint_claimed:
+                    previous_owner = _previous_checkpoint_owner(
+                        run_response, team_session, fork=fork, regenerate=regenerate, replace_original=replace_original
+                    )
+                    if previous_owner:
+                        await _aclaim_checkpoint(team, run_response, run_context, previous_owner)
+                        checkpoint_claimed = True
+                        run_response = copy(run_response)
+                        run_response.checkpoint_owner = None
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
@@ -10095,6 +10270,7 @@ async def _acontinue_run_stream(
                     _did_snapshot_dispatch = True
 
                 await aregister_run(run_response.run_id)  # type: ignore
+                registered = True
 
                 run_response.requirements = _reclaim_own_requirements(
                     team, run_response.requirements, run_response.run_id
@@ -10562,6 +10738,9 @@ async def _acontinue_run_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                if previous_owner and not checkpoint_claimed:
+                    # Cancellation during the ownership check cannot terminate the other writer.
+                    raise
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
@@ -10631,5 +10810,5 @@ async def _acontinue_run_stream(
     finally:
         _disconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
-        if run_response and run_response.run_id:
+        if registered and run_response and run_response.run_id:
             await acleanup_run(run_response.run_id)

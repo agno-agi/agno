@@ -5,8 +5,8 @@ Scope covers:
   build_after_tool_results_callback, etc.)
 - The model-loop hook firing semantics in Model.response / aresponse /
   response_stream / aresponse_stream
-- End-to-end K+1 invariant: an agent run with K tool batches and
-  checkpoint="tool-batch" produces K+1 DB writes (K hooks + 1 terminal).
+- End-to-end K+2 invariant: an agent run with K tool batches and
+  checkpoint="tool-batch" produces K+2 DB writes (1 initial + K hooks + 1 terminal).
 """
 
 from __future__ import annotations
@@ -610,18 +610,18 @@ class TestModelLayerHookFailureContained:
 
 
 # ---------------------------------------------------------------------------
-# C. End-to-end agent-run tests (K+1 invariant)
+# C. End-to-end agent-run tests (K+2 invariant)
 # ---------------------------------------------------------------------------
 
 
-class TestKPlusOneInvariant:
-    """Full agent runs verifying the K+1 invariant.
+class TestCheckpointWriteCountInvariant:
+    """Full agent runs verifying the K+2 invariant.
 
-    K tool batches + 1 terminal write = K+1 total DB writes.
+    1 initial write + K tool batches + 1 terminal write = K+2 total DB writes.
     """
 
     @pytest.mark.asyncio
-    async def test_k_plus_one_writes_with_checkpoint_steps_async(self):
+    async def test_k_plus_two_writes_with_checkpoint_steps_async(self):
         K = 3
         db = InMemoryDb()
         agent = _make_agent(checkpoint="tool-batch", db=db)
@@ -630,12 +630,12 @@ class TestKPlusOneInvariant:
             write_count = _wrap_db_for_counting(db)
             await agent.arun(input="hi")
 
-        # K hook fires + 1 terminal write
-        assert write_count[0] == K + 1, (
-            f"Expected {K + 1} writes for {K} tool batches with checkpoint='tool-batch', got {write_count[0]}"
+        # 1 initial + K hook fires + 1 terminal write
+        assert write_count[0] == K + 2, (
+            f"Expected {K + 2} writes for {K} tool batches with checkpoint='tool-batch', got {write_count[0]}"
         )
 
-    def test_k_plus_one_writes_with_checkpoint_steps_sync(self):
+    def test_k_plus_two_writes_with_checkpoint_steps_sync(self):
         K = 3
         db = InMemoryDb()
         agent = _make_agent(checkpoint="tool-batch", db=db)
@@ -644,7 +644,7 @@ class TestKPlusOneInvariant:
             write_count = _wrap_db_for_counting(db)
             agent.run(input="hi")
 
-        assert write_count[0] == K + 1
+        assert write_count[0] == K + 2
 
     @pytest.mark.asyncio
     async def test_one_write_with_checkpoint_runs_async(self):
@@ -660,8 +660,8 @@ class TestKPlusOneInvariant:
         assert write_count[0] == 1, f"Expected 1 terminal write with checkpoint='runs', got {write_count[0]}"
 
     @pytest.mark.asyncio
-    async def test_one_write_for_single_turn_no_tools(self):
-        """Single-turn run with no tool calls → 0 hook fires + 1 terminal = 1 write."""
+    async def test_two_writes_for_single_turn_no_tools(self):
+        """Single-turn run with no tool calls → 1 initial + 0 hook fires + 1 terminal = 2 writes."""
         db = InMemoryDb()
         agent = _make_agent(checkpoint="tool-batch", db=db)
 
@@ -669,7 +669,7 @@ class TestKPlusOneInvariant:
             write_count = _wrap_db_for_counting(db)
             await agent.arun(input="hi")
 
-        assert write_count[0] == 1
+        assert write_count[0] == 2
 
     @pytest.mark.asyncio
     async def test_checkpoint_writes_contain_running_status(self):
@@ -703,11 +703,10 @@ class TestKPlusOneInvariant:
         with patch.object(agent.model, "aresponse", side_effect=_make_fake_aresponse(K)):
             await agent.arun(input="hi")
 
-        # K writes were RUNNING checkpoints; the final write is the terminal COMPLETED
-        # The first K snapshots correspond to checkpoint writes.
-        assert len(snapshots) == K + 1
+        # The initial snapshot and each batch are RUNNING.
+        assert len(snapshots) == K + 2
         running_snapshots = [s for s in snapshots if s["status"] == RunStatus.running]
-        assert len(running_snapshots) == K
+        assert len(running_snapshots) == K + 1
         # All RUNNING snapshots have last_checkpoint_at_message_index set
         for s in running_snapshots:
             assert s["last_checkpoint_at_message_index"] is not None

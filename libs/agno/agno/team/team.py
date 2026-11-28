@@ -209,7 +209,7 @@ class Team:
     # --- Checkpointing ---
     # When to persist run state to the database. Mirrors Agent.checkpoint.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "tool-batch" — write after each team-level model turn (post-gather barrier)
+    #   "tool-batch" — write before the first model call and after each batch of tool results
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
@@ -1145,7 +1145,10 @@ class Team:
         yield_run_output: bool = False,
         **kwargs,
     ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
-        return _run.continue_run_dispatch(
+        from functools import partial
+
+        dispatch = partial(
+            _run.continue_run_dispatch,
             self,
             run_response=run_response,
             run_id=run_id,
@@ -1168,6 +1171,15 @@ class Team:
             yield_run_output=yield_run_output,
             **kwargs,
         )
+        if self.checkpoint == "tool-batch" and (stream if stream is not None else self.stream):
+            # Opening a stream must not claim a checkpoint if the caller never starts consuming it.
+            def resume_stream() -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+                result = dispatch(stream=True)
+                assert not isinstance(result, TeamRunOutput)
+                yield from result
+
+            return resume_stream()
+        return dispatch()
 
     @overload
     def acontinue_run(

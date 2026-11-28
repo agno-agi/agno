@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import time
 from collections import deque
-from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -77,12 +76,12 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot, is_worker_managed
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
 from agno.session import AgentSession
-from agno.session._utils import resolve_run_index
+from agno.session._utils import checkpoint_snapshot, resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,
@@ -425,6 +424,7 @@ def _run(
     try:
         # Set up retry logic
         num_attempts = agent.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -518,6 +518,10 @@ def _run(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = checkpoint_run(
+                        agent, run_response, agent_session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -833,6 +837,7 @@ def _run_stream(
     try:
         # Set up retry logic
         num_attempts = agent.retries + 1
+        initial_checkpoint_written = False
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -927,6 +932,10 @@ def _run_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = checkpoint_run(
+                        agent, run_response, agent_session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1244,7 +1253,11 @@ def _run_stream(
                     )
                 yield run_error
                 break
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, GeneratorExit) as exc:
+                if isinstance(exc, GeneratorExit) and (
+                    agent.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+                ):
+                    raise
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 cancelled_event, completed_event = _build_cancel_terminal_events(
                     agent,
@@ -1263,6 +1276,8 @@ def _run_stream(
                         )
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                if isinstance(exc, GeneratorExit):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -1570,6 +1585,7 @@ async def _arun(
 
     # Set up retry logic
     num_attempts = agent.retries + 1
+    initial_checkpoint_written = False
 
     try:
         for attempt in range(num_attempts):
@@ -1669,6 +1685,10 @@ async def _arun(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = await acheckpoint_run(
+                        agent, run_response, agent_session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
@@ -2178,6 +2198,7 @@ async def _arun_stream(
 
     # Set up retry logic
     num_attempts = agent.retries + 1
+    initial_checkpoint_written = False
     try:
         for attempt in range(num_attempts):
             if attempt > 0:
@@ -2286,6 +2307,10 @@ async def _arun_stream(
                     tools=_tools,
                     **kwargs,
                 )
+                if not initial_checkpoint_written:
+                    initial_checkpoint_written = await acheckpoint_run(
+                        agent, run_response, agent_session, run_context, initial_messages=run_messages
+                    )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -4160,7 +4185,11 @@ def _continue_run_stream(
                 )
                 yield run_error
                 break
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, GeneratorExit) as exc:
+                if isinstance(exc, GeneratorExit) and (
+                    agent.checkpoint != "tool-batch" or run_response.status != RunStatus.running
+                ):
+                    raise
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 cancelled_event, completed_event = _build_cancel_terminal_events(
                     agent,
@@ -4174,6 +4203,8 @@ def _continue_run_stream(
                     )
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                if isinstance(exc, GeneratorExit):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -6076,6 +6107,8 @@ def persist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(
             agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
         )
+        if storage_copy.last_checkpoint_at_message_index is not None:
+            storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -6117,6 +6150,8 @@ async def apersist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(
             agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
         )
+        if storage_copy.last_checkpoint_at_message_index is not None:
+            storage_copy.last_checkpoint_at_message_index = len(storage_copy.messages or [])
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
@@ -6326,18 +6361,9 @@ def _sync_run_response_with_model_response(
     will redo this work; the duplication is intentional — we need an accurate
     intermediate snapshot.
     """
-    if model_response.tool_executions is not None:
+    if model_response.tool_executions:
         run_response.tools = list(model_response.tool_executions)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
-
-
-def _mark_checkpoint_message(run_response: RunOutput) -> None:
-    """Mark the current message boundary as checkpointed for client timelines."""
-    if not run_response.messages:
-        return
-    message = run_response.messages[-1]
-    message.checkpoint_status = run_response.status.value if run_response.status else None
-    message.checkpoint_created_at = int(unix_time())
 
 
 def _mark_run_regenerated(
@@ -6406,7 +6432,9 @@ def checkpoint_run(
     run_response: RunOutput,
     session: AgentSession,
     run_context: Optional[RunContext] = None,
-) -> None:
+    *,
+    initial_messages: Optional["RunMessages"] = None,
+) -> bool:
     """Persist a mid-run checkpoint when ``agent.checkpoint == "tool-batch"``.
 
     Sets ``RunStatus.running`` and ``last_checkpoint_at_message_index``, then
@@ -6417,12 +6445,17 @@ def checkpoint_run(
     ``run_response.tools`` reflect the state to persist (see
     :func:`_sync_run_response_with_model_response`).
     """
-    if agent.checkpoint != "tool-batch":
-        return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_checkpoint_message(run_response)
-    persist_run_in_session(agent, run_response, session, run_context)
+    if agent.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
+        return False
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        persist_run_in_session(agent, run_response, session, run_context)
+        return True
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
+        return False
 
 
 async def acheckpoint_run(
@@ -6430,14 +6463,21 @@ async def acheckpoint_run(
     run_response: RunOutput,
     session: AgentSession,
     run_context: Optional[RunContext] = None,
-) -> None:
+    *,
+    initial_messages: Optional["RunMessages"] = None,
+) -> bool:
     """Async variant of :func:`checkpoint_run`."""
-    if agent.checkpoint != "tool-batch":
-        return
-    run_response.status = RunStatus.running
-    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
-    _mark_checkpoint_message(run_response)
-    await apersist_run_in_session(agent, run_response, session, run_context)
+    if agent.checkpoint != "tool-batch" or (
+        initial_messages is not None and is_worker_managed(run_response.run_id or "")
+    ):
+        return False
+    try:
+        run_response, session, run_context = checkpoint_snapshot(run_response, session, run_context, initial_messages)
+        await apersist_run_in_session(agent, run_response, session, run_context)
+        return True
+    except Exception as exc:
+        log_warning(f"Could not save a checkpoint for run {run_response.run_id}: {exc}")
+        return False
 
 
 def build_after_tool_results_callback(

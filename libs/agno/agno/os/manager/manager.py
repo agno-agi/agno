@@ -500,6 +500,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     team = Team(
         id=config.id,
+        checkpoint="tool-batch",
         metadata={"_agno": {"internal": True, "id": config.id}},
         name=config.name,
         model=model,
@@ -527,12 +528,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
     # The work a conversation started: its Tasks when Company is on, and its background runs.
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
+    from agno.os.manager.interrupted_turn import InterruptedTurns
     from agno.os.manager.person import Person, TurnContext
     from agno.os.manager.rules_pages import RulesPages
 
-    # Who the person is, which wiki pages exist, then that work, in one message right before theirs.
-    # The role store is the Authorization object when it manages roles; agent_os.authorization itself
-    # is only a switch.
+    # Who the person is, which wiki pages exist, a message of theirs that a restart cut, then that
+    # work, in one message right before theirs. The role store is the Authorization object when it
+    # manages roles; agent_os.authorization itself is only a switch.
     team._message_context = TurnContext(
         Person(
             lambda: getattr(agent_os, "user_directory", None),
@@ -541,6 +543,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         work,
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
+        interrupted=InterruptedTurns(lambda: team),
         pages=RulesPages(company_db) if company_db is not None else None,
     )
     # That message is where Super Agent reads the time, so the time is left out of its system message:
