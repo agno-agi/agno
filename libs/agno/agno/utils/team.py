@@ -9,6 +9,9 @@ from agno.utils.log import log_debug
 from agno.utils.string import url_safe_string
 
 if TYPE_CHECKING:
+    from agno.agent.remote import RemoteAgent
+    from agno.agents.base import BaseExternalAgent
+    from agno.team.remote import RemoteTeam
     from agno.team.team import Team
 
 
@@ -30,7 +33,9 @@ def format_member_agent_task(
     return member_task_str
 
 
-def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
+def get_member_id(
+    member: Union[Agent, "Team", "RemoteAgent", "RemoteTeam", "BaseExternalAgent"],
+) -> Optional[str]:
     """
     Get the ID of a member
 
@@ -44,11 +49,13 @@ def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
     passes back when delegating tasks. Only a name, which may contain spaces or other
     characters unsafe for tool-call arguments, is converted.
     """
+    from agno.agent.remote import RemoteAgent
     from agno.agents.base import BaseExternalAgent
+    from agno.team.remote import RemoteTeam
     from agno.team.team import Team
 
-    # First priority: Use the ID if explicitly provided. A harness member (Claude Code, Codex) has one too.
-    if isinstance(member, (Agent, Team, BaseExternalAgent)) and member.id is not None:
+    # First priority: Use the ID if explicitly provided
+    if isinstance(member, (Agent, Team, RemoteAgent, RemoteTeam, BaseExternalAgent)) and member.id is not None:
         return member.id
     # Second priority: Use the name if available
     elif member.name is not None:
