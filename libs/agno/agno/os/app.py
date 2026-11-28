@@ -813,6 +813,7 @@ class AgentOS:
         self._routine_api_read: Any = None
         self._routine_api_update: Any = None
         self._routine_api_resume: Any = None
+        self._routine_api_live_runs: Any = None
         self._routine_api_pause: Any = None
         self._routine_api_delete: Any = None
         self._schedule_api_disable: Any = None

@@ -200,6 +200,20 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 return runs
             page += 1
 
+    async def live_runs(routine_id, request):
+        """The running runs the cancel route can stop. The Scheduler API refuses to delete a Routine over these."""
+        try:
+            row = await routine(routine_id, request, include_deleted=True)
+            await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
+        except HTTPException as exc:
+            if exc.status_code not in (404, 409):
+                raise
+            # A schedule with no Goal behind it is out of the cancel route's reach, so nothing holds its delete back.
+            return []
+        return await running_runs(row, request)
+
+    agent_os._routine_api_live_runs = live_runs
+
     def schedule_type(row):
         return "on_demand" if is_on_demand(row["cron_expr"]) else "scheduled"
 

@@ -2133,12 +2133,15 @@ async def test_runtime_automation_schedule_rejects_public_mutation(system, tmp_p
         await client.patch(path, json={"enabled": False}),
         await client.patch(path, json={"cron_expr": "0 0 * * *"}),
         await client.delete(path),
-        await client.post(path + "/enable"),
-        await client.post(path + "/disable"),
         await client.post(path + "/trigger"),
     ]:
         assert response.status_code == 409, response.text
-        assert response.json()["detail"] == "Company-managed schedules must be changed through /company/routines"
+        assert response.json()["detail"].startswith("Company automation can only be paused and resumed.")
+    # It is paused and resumed, and nothing else. This AgentOS checks no permissions, so every caller may.
+    paused = await client.post(path + "/disable")
+    assert paused.status_code == 200 and paused.json()["enabled"] is False, paused.text
+    resumed = await client.post(path + "/enable")
+    assert resumed.status_code == 200 and resumed.json()["enabled"] is True, resumed.text
     manager = ScheduleManager(db)
     for method in ("update", "delete", "enable", "disable", "aupdate", "adelete", "aenable", "adisable"):
         with pytest.raises(ValueError, match="runtime-managed"):
