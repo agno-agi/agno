@@ -12,6 +12,7 @@ from agno.agents.base import BaseExternalAgent, ExternalRunResult
 from agno.agents.claude import ClaudeAgent
 from agno.agents.codex import CodexAgent
 from agno.agents.dspy import DSPyAgent
+from agno.agents.google_adk import GoogleADKAgent
 from agno.agents.langgraph import LangGraphAgent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import AgentRunException, RunCancelledException
@@ -48,6 +49,7 @@ class ExampleAgent(BaseExternalAgent):
         (CodexAgent, "codex"),
         (LangGraphAgent, "langgraph"),
         (DSPyAgent, "dspy"),
+        (GoogleADKAgent, "google-adk"),
         (AntigravityAgent, "antigravity"),
     ],
 )
