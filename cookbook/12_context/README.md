@@ -25,6 +25,7 @@ Providers ship in this package:
 | `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelBackend` | Web via Parallel's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelMCPBackend` | Web via Parallel's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `AnySearchBackend` | Web via AnySearch's REST API (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
 | `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
@@ -59,6 +60,7 @@ All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `Sla
 | `15a_wiki_notion.py` | Same provider against a Notion database (flat: one row per page); files a customer call summary and prints the local mirror path + Notion page URL (env-gated on `NOTION_API_KEY` / `NOTION_DATABASE_ID`) |
 | `16_wiki_with_web.py` | Wiki + Exa MCP web backend; "add this paper" fetches the URL, digests it, and files it in one update call |
 | `17_wiki_dual.py` | Two `WikiContextProvider` instances on one agent — `company_knowledge` (full) + `company_voice` (`write=False`) |
+| `26_web_anysearch.py` | Web research via AnySearch's REST API (keyless; `ANYSEARCH_API_KEY` raises the ceiling) |
 
 ## Run
 
@@ -95,6 +97,9 @@ OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/11_web_parallel_mc
 
 # Parallel SDK
 OPENAI_API_KEY=... PARALLEL_API_KEY=... .venvs/demo/bin/python cookbook/12_context/03_web_parallel.py
+
+# AnySearch REST — keyless by default; set ANYSEARCH_API_KEY for the paid quota
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/26_web_anysearch.py
 
 # Slack bot token (xoxb-...); set SLACK_WRITE_CHANNEL=#channel to also demo posting
 OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/12_context/05_slack.py
