@@ -113,6 +113,19 @@ def get_schedule_router(
 
         return await _caller_is_admin(agent_os, request)
 
+    async def _owner_scope(request: Request) -> Optional[str]:
+        """The owner the caller's schedules are filtered to. None for a caller who sees every schedule.
+
+        User isolation drops the filter for the admin scope on a token. An administrator by a stored
+        role has no such scope, and would not find Company automation or another person's schedule to stop.
+        """
+        owner = get_scoped_user_id(request)
+        if owner is None or agent_os is None or managed_by == "company":
+            return owner
+        from agno.os.router import _caller_is_admin
+
+        return None if await _caller_is_admin(agent_os, request) else owner
+
     async def _require_changeable(
         existing: Dict[str, Any], request: Request, action: Literal["update", "delete", "enable", "disable", "trigger"]
     ) -> None:
@@ -160,7 +173,7 @@ def get_schedule_router(
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ScheduleResponse]:
         # ``None`` means no scoping (admin / isolation off); a string filters to that owner.
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         schedules, total_count = await _db_call(
             "get_schedules", enabled=enabled, limit=limit, page=page, user_id=scoped_user_id
         )
@@ -330,7 +343,7 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        owner = get_scoped_user_id(request)
+        owner = await _owner_scope(request)
         schedule = await _db_call("get_schedule", schedule_id, user_id=None if company_reads else owner)
         if schedule is None or (company_reads and schedule.get("managed_by") != "company"):
             raise HTTPException(status_code=404, detail="Schedule not found")
@@ -452,7 +465,7 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
@@ -488,7 +501,7 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
@@ -563,7 +576,7 @@ def get_schedule_router(
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        scoped_user_id = get_scoped_user_id(request)
+        scoped_user_id = await _owner_scope(request)
         owner_filter = None if managed_by == "company" else scoped_user_id
         existing = await _db_call("get_schedule", schedule_id, user_id=owner_filter)
         if existing is None:
