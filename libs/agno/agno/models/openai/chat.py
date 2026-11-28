@@ -131,6 +131,9 @@ class OpenAIChat(Model):
             client_params.update(self.client_params)
         return client_params
 
+    def _with_client_defaults(self, client_params: Dict[str, Any]) -> Dict[str, Any]:
+        return client_params
+
     def get_client(self) -> OpenAIClient:
         """
         Returns an OpenAI client. Caches the client to avoid recreating it on every request.
@@ -154,7 +157,7 @@ class OpenAIChat(Model):
         # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
-        self.client = OpenAIClient(**client_params)
+        self.client = OpenAIClient(**self._with_client_defaults(client_params))
         return self.client
 
     def get_async_client(self) -> AsyncOpenAIClient:
@@ -182,7 +185,7 @@ class OpenAIChat(Model):
         # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
-        self.async_client = AsyncOpenAIClient(**client_params)
+        self.async_client = AsyncOpenAIClient(**self._with_client_defaults(client_params))
         return self.async_client
 
     def get_request_params(
