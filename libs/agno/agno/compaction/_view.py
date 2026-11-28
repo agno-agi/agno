@@ -37,6 +37,20 @@ def _produced_after(message: Message, record: Optional[CompactionRecord]) -> boo
     return message.created_at > record.created_at
 
 
+def without_chaining(message: Message) -> Message:
+    """The message, or a copy without the keys its provider continues a conversation from.
+
+    The rest of provider_data survives: a function_call without its paired reasoning item is a
+    provider error. The message given is never changed.
+    """
+    if message.role != "assistant" or message.provider_data is None:
+        return message
+    if not any(key in message.provider_data for key in _CHAINING_KEYS):
+        return message
+    trimmed = {key: value for key, value in message.provider_data.items() if key not in _CHAINING_KEYS}
+    return message.model_copy(update={"provider_data": trimmed or None})
+
+
 def surviving_result_ids(folded: List[Message]) -> List[str]:
     """Result ids from offload envelopes that this fold is about to remove.
 
@@ -118,14 +132,7 @@ def build_view(
         # never appears twice in one view.
         if boundary_index is not None and is_injected_compaction_message(message):
             continue
-        if (
-            strip_provider_chaining
-            and message.role == "assistant"
-            and message.provider_data is not None
-            and any(key in message.provider_data for key in _CHAINING_KEYS)
-            and not (boundary_index is not None and _produced_after(message, record))
-        ):
-            trimmed = {key: value for key, value in message.provider_data.items() if key not in _CHAINING_KEYS}
-            message = message.model_copy(update={"provider_data": trimmed or None})
+        if strip_provider_chaining and not (boundary_index is not None and _produced_after(message, record)):
+            message = without_chaining(message)
         view.append(message)
     return view

@@ -82,6 +82,19 @@ def stores_compaction_records(db: Any) -> bool:
     return method is not getattr(BaseDb, "upsert_compaction", None)
 
 
+def made_at_or_before(
+    run_id: Optional[str], created_at: Optional[int], at_or_before: Collection[str], started_at: Optional[int]
+) -> bool:
+    """Whether a fold was made at or before a run, so that run was built from it or from a later one.
+
+    ``at_or_before`` holds the run and the runs before it: a fold one of them made counts.
+    ``started_at`` is when the run began, which places a manual fold: it has no run, only a time.
+    """
+    if run_id is not None:
+        return run_id in at_or_before
+    return started_at is not None and (created_at or 0) < started_at
+
+
 class CompactionArchive:
     """Reads and writes one session's compaction records.
 
@@ -193,10 +206,7 @@ class CompactionArchive:
         # Rows are newest first, so the first made at or before the target run is the one it saw.
         at_or_before = {up_to_run_id, *(earlier_run_ids or ())}
         for row in rows:
-            run_id = row.get("run_id")
-            if run_id in at_or_before:
-                return row
-            if run_id is None and started_at is not None and (row.get("created_at") or 0) < started_at:
+            if made_at_or_before(row.get("run_id"), row.get("created_at"), at_or_before, started_at):
                 return row
         return None
 

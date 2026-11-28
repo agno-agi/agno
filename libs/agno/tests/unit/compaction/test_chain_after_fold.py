@@ -369,3 +369,143 @@ def test_the_system_prompt_in_front_of_the_folded_list_is_not_summarized_or_arch
     assert "INSTRUCTIONS" not in row["archived_messages"] and "q0 " in row["archived_messages"]
     view = compaction.apply_record(messages, record)
     assert view[0] is system and view[1].content.startswith(SUMMARY_PREFIX)
+
+
+# ------------------------------------------------------------------ a regenerated answer and a fold
+
+
+class _WallClock:
+    """Stands in for the wall clock everywhere a message, a run or a fold is stamped."""
+
+    def __init__(self):
+        self.now = 1_000_000.0
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds=10):
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    import time
+
+    from agno.compaction import compaction, types
+    from agno.models import message, response
+    from agno.run import agent, team
+
+    wall_clock = _WallClock()
+    # A run takes its time from its first model response, so that is stamped by this clock too.
+    for module in (compaction, types, message, response, agent, team, time):
+        monkeypatch.setattr(module, "time", wall_clock)
+    return wall_clock
+
+
+def _chaining_model():
+    """A model whose replies carry a response_id, as OpenAI Responses replies do. ``continued``
+    holds, for each request, the reply ids it was sent, which are what it could continue from."""
+    from agno.metrics import MessageMetrics
+    from tests.unit.compaction.test_compaction import _RecordingModel
+
+    model = _RecordingModel.build()
+    model.continued = []
+
+    def invoke(*args, **kwargs):
+        messages = list(kwargs.get("messages") or [])
+        model.requests.append(messages)
+        model.continued.append([(m.provider_data or {}).get("response_id") for m in messages if m.role == "assistant"])
+        return ModelResponse(
+            role="assistant",
+            content="answer " + "pad " * 50,
+            response_usage=MessageMetrics(),
+            provider_data={"response_id": f"resp_{len(model.requests)}"},
+        )
+
+    async def ainvoke(*args, **kwargs):
+        return invoke(*args, **kwargs)
+
+    model.invoke, model.ainvoke = invoke, ainvoke
+    model._parse_provider_response = lambda response, **kwargs: response
+    return model
+
+
+def _conversation_owner(kind, model, tmp_path):
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.team import Team
+    from tests.unit.compaction.test_compaction import _RecordingModel
+
+    settings = dict(
+        model=model,
+        db=SqliteDb(db_file=str(tmp_path / "regenerate.db")),
+        session_id="s",
+        add_history_to_context=True,
+        num_history_runs=50,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=2, model=_Summarizer()),
+    )
+    if kind == "agent":
+        return Agent(id="a", **settings)
+    return Team(id="t", members=[Agent(id="m1", name="M1", model=_RecordingModel.build())], **settings)
+
+
+def _ask(owner, clock, count, start=0):
+    for i in range(start, start + count):
+        clock.advance()
+        owner.run(f"question {i} " + "pad " * 50)
+    return owner.get_last_run_output(session_id="s").run_id
+
+
+def _has_summary(request):
+    return any(m.role == "user" and str(m.content).startswith(SUMMARY_PREFIX) for m in request)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("regenerated", ["the latest answer", "an earlier answer, kept beside the new one"])
+def test_an_answer_regenerated_as_it_was_before_the_fold_is_not_continued_from(kind, regenerated, clock, tmp_path):
+    """The run is rebuilt as its source run was, which was before the fold: it is sent the turns
+    the fold replaced, and its reply is new. Continued from, it would bring those turns back."""
+    model = _chaining_model()
+    owner = _conversation_owner(kind, model, tmp_path)
+    latest_run_id = _ask(owner, clock, 6)
+    earlier_run_id = [run.run_id for run in owner.get_session(session_id="s").runs if run.parent_run_id is None][-2]
+    clock.advance()
+    assert owner.compact(session_id="s").record is not None
+
+    clock.advance()
+    if regenerated == "the latest answer":
+        owner.continue_run(run_id=latest_run_id, session_id="s", regenerate=True)
+    else:
+        owner.continue_run(run_id=earlier_run_id, session_id="s", regenerate=True, replace_original=False)
+    # Rebuilt without the fold, so it was continued from a reply made before it.
+    assert not _has_summary(model.requests[-1]) and model.continued[-1][-1] is not None
+    regenerated_reply = f"resp_{len(model.requests)}"
+
+    _ask(owner, clock, 1, start=6)
+    # The next turn is sent in full, from the summary: nothing in it can be continued from.
+    assert _has_summary(model.requests[-1])
+    assert model.continued[-1] and set(model.continued[-1]) == {None}
+
+    _ask(owner, clock, 1, start=7)
+    # That turn's reply was made from the fold, so the conversation is continued from it again.
+    assert model.continued[-1][-1] == f"resp_{len(model.requests) - 1}"
+    assert regenerated_reply not in model.continued[-1]
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_an_answer_regenerated_from_the_fold_is_still_continued_from(kind, clock, tmp_path):
+    """Its source run was made from the fold, so the regenerated run is too."""
+    model = _chaining_model()
+    owner = _conversation_owner(kind, model, tmp_path)
+    _ask(owner, clock, 6)
+    clock.advance()
+    assert owner.compact(session_id="s").record is not None
+    latest_run_id = _ask(owner, clock, 1, start=6)
+
+    clock.advance()
+    owner.continue_run(run_id=latest_run_id, session_id="s", regenerate=True)
+    assert _has_summary(model.requests[-1])
+    regenerated_reply = f"resp_{len(model.requests)}"
+
+    _ask(owner, clock, 1, start=7)
+    assert model.continued[-1][-1] == regenerated_reply
