@@ -95,6 +95,9 @@ class CompactionRecord:
     # about one run rather than a value shared by the session.
     id: Optional[str] = None
     run_id: Optional[str] = None
+    # Id of the agent or team whose conversation this fold is of. A Team and its members run in one
+    # session, so a session's records are told apart by it.
+    owner_id: Optional[str] = None
     # Whether the folded transcript was stored alongside this record.
     archived: bool = False
     tokens_before: Optional[int] = None
@@ -110,6 +113,7 @@ class CompactionRecord:
             "first_kept_message_id": self.first_kept_message_id,
             "id": self.id,
             "run_id": self.run_id,
+            "owner_id": self.owner_id,
             "archived": self.archived,
             "tokens_before": self.tokens_before,
             "tokens_after": self.tokens_after,
@@ -125,6 +129,7 @@ class CompactionRecord:
             first_kept_message_id=data.get("first_kept_message_id"),
             id=data.get("id") or data.get("compaction_id"),
             run_id=data.get("run_id"),
+            owner_id=data.get("owner_id"),
             archived=bool(data.get("archived") or data.get("archived_messages")),
             tokens_before=data.get("tokens_before"),
             tokens_after=data.get("tokens_after"),

@@ -969,7 +969,9 @@ def attach_routes(
             "Every compaction of a session, newest first: how many messages each replaced and the context "
             "size before and after. A compaction a run made on its own context carries that run's 'run_id'. "
             "A manual one was made by no run and carries none, so place it in the conversation by "
-            "'created_at'. The summary text and the archived messages are not returned. Returns an empty "
+            "'created_at'. 'owner_id' is the agent or team whose conversation was compacted: a team session "
+            "holds the team leader's compactions and those of its members, and 'owner_id' in the query keeps "
+            "only one owner's. The summary text and the archived messages are not returned. Returns an empty "
             "list when the database does not store compaction records."
         ),
         response_model_exclude_none=True,
@@ -987,6 +989,10 @@ def attach_routes(
             alias="type",
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query compactions from"),
+        owner_id: Optional[str] = Query(
+            default=None,
+            description="Only the compactions of this agent or team, for a team session that also holds its members'",
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query compactions from"),
         table: Optional[str] = Query(default=None, description="Table to query the session from"),
     ) -> List[CompactionSchema]:
@@ -996,7 +1002,7 @@ def attach_routes(
             return []
         try:
             return await get_session_compactions(
-                db, session_id=session_id, session_type=session_type, user_id=effective_user_id
+                db, session_id=session_id, session_type=session_type, user_id=effective_user_id, owner_id=owner_id
             )
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")

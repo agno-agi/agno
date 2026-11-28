@@ -29,6 +29,7 @@ TABLE_TYPE_TO_ATTR = {
     "schedules": "schedules_table_name",
     "schedule_runs": "schedule_runs_table_name",
     "learnings": "learnings_table_name",
+    "compactions": "compactions_table_name",
 }
 
 _COMPANY_RENAME_VERSION = packaging_version.parse("3.3.0")
@@ -113,6 +114,15 @@ class MigrationManager:
             ):
                 current_version = _BEFORE_COMPANY_RENAME
 
+            # A compactions table created by a 3.3.0 development build is stamped current and can still
+            # be without the owner column, so its stamp is not trusted while the column is missing.
+            if (
+                table_type == "compactions"
+                and current_version >= _COMPANY_RENAME_VERSION <= _target_version
+                and await self._compaction_owner_pending()
+            ):
+                current_version = _BEFORE_COMPANY_RENAME
+
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
                 log_info(
@@ -166,6 +176,14 @@ class MigrationManager:
         if isinstance(self.db, AsyncBaseDb):
             return await v3_3_0.acompany_rename_pending(self.db)
         return v3_3_0.company_rename_pending(self.db)
+
+    async def _compaction_owner_pending(self) -> bool:
+        """Whether the compactions table exists without its owner column."""
+        from agno.db.migrations.versions import v3_3_0
+
+        if isinstance(self.db, AsyncBaseDb):
+            return await v3_3_0.acompaction_owner_pending(self.db)
+        return v3_3_0.compaction_owner_pending(self.db)
 
     async def _company_files_pending(self) -> bool:
         """Whether Company files still wait in their namespaces from before 3.3.0."""

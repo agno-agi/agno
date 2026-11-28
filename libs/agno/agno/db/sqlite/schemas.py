@@ -621,6 +621,9 @@ COMPACTIONS_TABLE_SCHEMA = {
     # The run that produced this fold. A record is an immutable fact about one
     # run, so resuming that run resolves the fold it actually saw.
     "run_id": {"type": String, "nullable": True},
+    # The agent or team whose conversation was folded. A Team and its members run in
+    # one session, so each reads the session's records that carry its own id.
+    "owner_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
     # Anchors are message ids, never indexes: history is rebuilt from stored runs
     # each run, so a position means something different every time.

@@ -781,6 +781,7 @@ class Compaction:
         user_id: Optional[str] = None,
         message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
         run_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> Optional[CompactionArchive]:
         """The record store for one session, or None without a database.
 
@@ -789,11 +790,12 @@ class Compaction:
 
         ``message_ids`` limits reads to the records anchored on those messages, for a session that
         holds more than one conversation: a Team's and its members'. ``run_id`` adds the records
-        that run made. See :class:`CompactionArchive`.
+        that run made. ``owner_id`` limits them to the records of that agent or team. See
+        :class:`CompactionArchive`.
         """
         if db is None:
             return None
-        return CompactionArchive(db, session_id, user_id, message_ids, run_id)
+        return CompactionArchive(db, session_id, user_id, message_ids, run_id, owner_id)
 
     # -- applying -------------------------------------------------------
 
@@ -1040,6 +1042,7 @@ class Compaction:
         user_id: Optional[str] = None,
         sent_messages: Optional[List[Message]] = None,
         overhead_tokens: Optional[int] = None,
+        owner_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -1083,6 +1086,7 @@ class Compaction:
             run_id=run_id,
             started_at=started_at,
         )
+        record.owner_id = owner_id
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
@@ -1115,6 +1119,7 @@ class Compaction:
         user_id: Optional[str] = None,
         sent_messages: Optional[List[Message]] = None,
         overhead_tokens: Optional[int] = None,
+        owner_id: Optional[str] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
@@ -1152,6 +1157,7 @@ class Compaction:
             run_id=run_id,
             started_at=started_at,
         )
+        record.owner_id = owner_id
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
         prefix = context_prefix or []
@@ -1179,6 +1185,7 @@ class Compaction:
         message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
         run_id: Optional[str] = None,
         offer_before_first_fold: bool = False,
+        owner_id: Optional[str] = None,
     ) -> Optional[List[Any]]:
         """A tool letting the agent or team leader read back what this session compacted away.
 
@@ -1193,11 +1200,12 @@ class Compaction:
 
         ``message_ids`` limits the search to the folds anchored on those messages, so a Team and a
         member sharing a session each search their own conversation. ``run_id`` is the run the
-        tool is built for, so that it also finds a fold that run makes.
+        tool is built for, so that it also finds a fold that run makes. ``owner_id`` is the agent or
+        team searching: a fold that names its owner is found only by that owner.
         """
         if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
-        archive = self.archive_for(session_id, db, message_ids=message_ids, run_id=run_id)
+        archive = self.archive_for(session_id, db, message_ids=message_ids, run_id=run_id, owner_id=owner_id)
         if archive is None or not (offer_before_first_fold or archive.latest() is not None):
             return None
 

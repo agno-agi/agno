@@ -544,6 +544,13 @@ def _get_history_for_member_agent(
     if not member_agent_id and not member_team_id:
         return []
 
+    # A member with compaction of its own is given its fold's summary and the turns kept after it
+    from agno.team import _compaction
+
+    compacted = _compaction.member_history(team, session, member_agent)
+    if compacted is not None:
+        return compacted
+
     # Only skip messages from history when system_message_role is NOT a standard conversation role.
     # Standard conversation roles ("user", "assistant", "tool") should never be filtered
     # to preserve conversation continuity.

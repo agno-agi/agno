@@ -930,17 +930,6 @@ def _run_stream(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                # Events raised while assembling messages (compaction). Assembly
-                # is not a generator, so they are collected there and emitted here.
-                if stream_events:
-                    for assembly_event in run_messages.events:
-                        yield handle_event(  # type: ignore
-                            assembly_event,
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-
                 # 7. Start memory creation in background thread
                 from agno.agent import _managers
 
@@ -969,6 +958,17 @@ def _run_stream(
                         events_to_skip=agent.events_to_skip,  # type: ignore
                         store_events=agent.store_events,
                     )
+
+                # Events raised while assembling messages (compaction), sent after RunStarted. Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
                 # 8. Reason about the task if reasoning is enabled
                 yield from handle_reasoning_stream(

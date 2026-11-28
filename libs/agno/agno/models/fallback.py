@@ -200,6 +200,28 @@ def _sync_appended_messages(
         original_messages.extend(attempt_messages[seed_len:])
 
 
+def _carry_over(response: ModelResponse, error: ModelProviderError) -> ModelResponse:
+    """Put what the failed call's tool loop had gathered in front of what the retry gathered.
+
+    A non-streamed call runs its whole tool loop and returns one response. When a model call in the
+    middle of the loop is rejected as too long, the request is shrunk and the call is made again,
+    which starts a new response: the tools that ran before the rejection are in the messages but
+    not in that response, so the run would report none of them.
+    """
+    partial = error.partial_response
+    if not isinstance(partial, ModelResponse) or partial is response:
+        return response
+    if partial.tool_executions:
+        response.tool_executions = [*partial.tool_executions, *(response.tool_executions or [])]
+    for name in ("images", "videos", "audios", "files"):
+        earlier = getattr(partial, name, None)
+        if earlier:
+            setattr(response, name, [*earlier, *(getattr(response, name, None) or [])])
+    if response.updated_session_state is None:
+        response.updated_session_state = partial.updated_session_state
+    return response
+
+
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
@@ -222,7 +244,7 @@ def call_model_with_fallback(
             and _recovered_from_overflow(recover_from_overflow)
         ):
             try:
-                return model.response(**kwargs)
+                return _carry_over(model.response(**kwargs), primary_error)
             except ModelProviderError as retry_error:
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
@@ -258,7 +280,7 @@ async def acall_model_with_fallback(
             and await _arecovered_from_overflow(recover_from_overflow)
         ):
             try:
-                return await model.aresponse(**kwargs)
+                return _carry_over(await model.aresponse(**kwargs), primary_error)
             except ModelProviderError as retry_error:
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)

@@ -122,6 +122,7 @@ def _get_task_management_tools(
     _audio: List[Audio] = list(audio) if audio else []
     _files: List[File] = list(files) if files else []
 
+    from agno.team import _compaction
     from agno.team._init import _initialize_member
     from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
@@ -514,6 +515,8 @@ def _get_task_management_tools(
 
         try:
             member_task_description = task.description or task.title
+            # Fold the member's history first when it has grown past the member's own threshold
+            _compaction.compact_member_history(team, session, member_agent, run_response)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -695,6 +698,8 @@ def _get_task_management_tools(
 
         try:
             member_task_description = task.description or task.title
+            # Fold the member's history first when it has grown past the member's own threshold
+            await _compaction.acompact_member_history(team, session, member_agent, run_response)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
@@ -889,6 +894,8 @@ def _get_task_management_tools(
         def _run_single_task(task_obj, member_agent):
             """Run a single task in a thread. Returns (task_id, member_run_response, session_state_copy, error)."""
             member_task_description = task_obj.description or task_obj.title
+            # Fold the member's history first when it has grown past the member's own threshold
+            _compaction.compact_member_history(team, session, member_agent, run_response)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()
@@ -1093,6 +1100,8 @@ def _get_task_management_tools(
         async def _run_single_task_async(task_obj, member_agent):
             """Run a single task asynchronously."""
             member_task_description = task_obj.description or task_obj.title
+            # Fold the member's history first when it has grown past the member's own threshold
+            await _compaction.acompact_member_history(team, session, member_agent, run_response)
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             use_agent_logger()

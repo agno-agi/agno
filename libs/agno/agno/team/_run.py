@@ -691,17 +691,6 @@ def _run_tasks_stream(
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
-        # Events raised while assembling messages (compaction). Assembly
-        # is not a generator, so they are collected there and emitted here.
-        if stream_events:
-            for assembly_event in run_messages.events:
-                yield handle_event(  # type: ignore
-                    assembly_event,
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
-
         # 4. Start memory creation in background
         memory_future = _start_memory_future(
             team,
@@ -725,6 +714,17 @@ def _run_tasks_stream(
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
             )
+
+        # Events raised while assembling messages (compaction), sent after RunStarted. Assembly
+        # is not a generator, so they are collected there and emitted here.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1607,17 +1607,6 @@ def _run_stream(
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                # Events raised while assembling messages (compaction). Assembly
-                # is not a generator, so they are collected there and emitted here.
-                if stream_events:
-                    for assembly_event in run_messages.events:
-                        yield handle_event(  # type: ignore
-                            assembly_event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,
-                            store_events=team.store_events,
-                        )
-
                 # 4. Start memory creation in background thread
                 memory_future = _start_memory_future(
                     team,
@@ -1641,6 +1630,17 @@ def _run_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+
+                # Events raised while assembling messages (compaction), sent after RunStarted. Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2646,17 +2646,6 @@ async def _arun_tasks_stream(
             **kwargs,
         )
 
-        # Events raised while assembling messages (compaction). Assembly
-        # is not a generator, so they are collected there and emitted here.
-        if stream_events:
-            for assembly_event in run_messages.events:
-                yield handle_event(  # type: ignore
-                    assembly_event,
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
-
         # 4. Start memory creation in background
         memory_task = await _astart_memory_task(
             team,
@@ -2680,6 +2669,17 @@ async def _arun_tasks_stream(
                 events_to_skip=team.events_to_skip,
                 store_events=team.store_events,
             )
+
+        # Events raised while assembling messages (compaction), sent after RunStarted. Assembly
+        # is not a generator, so they are collected there and emitted here.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3829,17 +3829,6 @@ async def _arun_stream(
                     **kwargs,
                 )
 
-                # Events raised while assembling messages (compaction). Assembly
-                # is not a generator, so they are collected there and emitted here.
-                if stream_events:
-                    for assembly_event in run_messages.events:
-                        yield handle_event(  # type: ignore
-                            assembly_event,
-                            run_response,
-                            events_to_skip=team.events_to_skip,
-                            store_events=team.store_events,
-                        )
-
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
                     team,
@@ -3863,6 +3852,17 @@ async def _arun_stream(
                         events_to_skip=team.events_to_skip,
                         store_events=team.store_events,
                     )
+
+                # Events raised while assembling messages (compaction), sent after RunStarted. Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 # 5. Reason about the task if reasoning is enabled
                 async for item in ahandle_reasoning_stream(

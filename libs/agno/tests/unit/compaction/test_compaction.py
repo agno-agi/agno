@@ -3972,3 +3972,139 @@ def test_a_later_folds_before_is_what_was_sent_not_the_whole_session():
     assert len(records) >= 2
     later = records[-1]
     assert later.tokens_before < whole_session * 0.75  # was the whole session, folded turns included
+
+
+# ---------------------------------------------------------------------------
+# The run after a refused request, and where a stream announces a fold
+# ---------------------------------------------------------------------------
+
+
+def test_a_call_sent_again_after_a_refusal_keeps_what_the_first_call_gathered():
+    """A non-streamed call runs its whole tool loop and returns one response. Sent again after a
+    refusal it starts a new response, so what the tools did before the refusal is carried over."""
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.fallback import call_model_with_fallback
+    from agno.models.response import ModelResponse, ToolExecution
+
+    before = ToolExecution(tool_call_id="1", tool_name="first_tool")
+    after = ToolExecution(tool_call_id="2", tool_name="second_tool")
+
+    class Model:
+        id = "m"
+        calls = 0
+
+        def response(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                error = ContextWindowExceededError("prompt is too long")
+                error.partial_response = ModelResponse(tool_executions=[before], updated_session_state={"k": 1})
+                raise error
+            return ModelResponse(content="done", tool_executions=[after])
+
+    response = call_model_with_fallback(Model(), None, recover_from_overflow=lambda: True, messages=[])
+
+    assert [tool.tool_name for tool in response.tool_executions] == ["first_tool", "second_tool"]
+    assert response.updated_session_state == {"k": 1} and response.content == "done"
+
+
+def test_a_refusal_at_the_first_call_carries_nothing_over():
+    from agno.exceptions import ContextWindowExceededError
+    from agno.models.fallback import call_model_with_fallback
+    from agno.models.response import ModelResponse
+
+    class Model:
+        id = "m"
+        calls = 0
+
+        def response(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise ContextWindowExceededError("prompt is too long")
+            return ModelResponse(content="done")
+
+    response = call_model_with_fallback(Model(), None, recover_from_overflow=lambda: True, messages=[])
+
+    assert response.content == "done" and not response.tool_executions
+
+
+@pytest.mark.parametrize("stamp", [None, "3.2.1", "3.3.0"])
+def test_the_owner_column_is_added_to_a_table_made_without_it(stamp):
+    """The compactions table has been created since 3.1.2 without an owner column. The 3.3.0
+    migration adds it once: to a table with no version stamp or an earlier one, and to one a 3.3.0
+    development build stamped current."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from agno.db.migrations.manager import MigrationManager
+    from agno.db.migrations.versions import v3_3_0
+
+    db = _db()
+    with db.Session() as sess, sess.begin():
+        sess.execute(
+            text(
+                "CREATE TABLE agno_compactions (compaction_id VARCHAR PRIMARY KEY, session_id VARCHAR NOT NULL, "
+                "run_id VARCHAR, user_id VARCHAR, first_kept_message_id VARCHAR, summary VARCHAR, "
+                "archived_messages VARCHAR, messages_compacted BIGINT, tokens_before BIGINT, tokens_after BIGINT, "
+                "created_at BIGINT NOT NULL)"
+            )
+        )
+        sess.execute(
+            text(
+                "INSERT INTO agno_compactions (compaction_id, session_id, first_kept_message_id, summary, created_at) "
+                "VALUES ('old', 's', 'm1', 'an earlier summary', 1)"
+            )
+        )
+    if stamp is not None:
+        db.upsert_schema_version("agno_compactions", stamp)
+    assert v3_3_0.compaction_owner_pending(db) is True
+    # Until the migration has run the records cannot be read, and the error says to run it
+    from agno.compaction.archive import CompactionArchive
+    from agno.db.utils import table_schema_mismatch_error
+    from agno.exceptions import MigrationRequiredError
+
+    assert CompactionArchive(db, "s").latest() is None
+    assert isinstance(table_schema_mismatch_error("agno_compactions", "compactions"), MigrationRequiredError)
+
+    asyncio.run(MigrationManager(db).up(table_type="compactions"))
+
+    assert v3_3_0.compaction_owner_pending(db) is False
+    assert db.get_latest_schema_version("agno_compactions") == "3.3.0"
+    (row,) = db.get_compactions_for_session("s")
+    assert row["summary"] == "an earlier summary" and row["owner_id"] is None
+    assert CompactionArchive(db, "s").latest()["compaction_id"] == "old"
+    assert v3_3_0.up(db, "compactions", "agno_compactions") is False
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_streamed_agent_run_starts_before_it_announces_its_compaction(use_async):
+    import asyncio
+
+    from agno.agent import Agent
+
+    class Summarizer(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages)
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=2_000, uncompacted_runs=2, model=Summarizer()),
+    )
+
+    async def astream(text):
+        return [event.event async for event in agent.arun(text, stream=True, stream_events=True)]
+
+    names = []
+    for turn in range(8):
+        text = f"question {turn} " + "pad " * 300
+        if use_async:
+            names += asyncio.run(astream(text))
+        else:
+            names += [event.event for event in agent.run(text, stream=True, stream_events=True)]
+
+    announced = names.index("CompactionStarted")
+    assert names[announced - 1] == "RunStarted"
+    assert names[announced + 1] == "CompactionCompleted"

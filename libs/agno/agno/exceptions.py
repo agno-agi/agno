@@ -168,6 +168,9 @@ class ModelProviderError(AgnoError):
 
         self.type = "model_provider_error"
         self.error_id = "model_provider_error"
+        # The response a non-streamed tool loop had gathered when a later model call failed: the
+        # tool executions, media and session state of the calls that succeeded before it.
+        self.partial_response: Optional[Any] = None
 
     @classmethod
     def classify(cls, error: "ModelProviderError") -> "ModelProviderError":

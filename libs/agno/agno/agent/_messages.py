@@ -106,10 +106,12 @@ def search_tools(agent: "Agent", session: AgentSession, run_response: RunOutput)
     return (
         compaction.tools_for(
             session.session_id,
-            agent.db,
+            _conversation.records_db(agent),
+            # Read only for a fold that names no owner
             message_ids=partial(_stored_member_message_ids, agent, session),
             run_id=run_response.run_id,
             offer_before_first_fold=True,
+            owner_id=agent.id,
         )
         or []
     )

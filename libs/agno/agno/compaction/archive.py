@@ -93,6 +93,10 @@ class CompactionArchive:
 
     ``run_id`` is the run this archive is held by. A fold that run makes is anchored on a message
     the session does not hold until the run is stored, so its records are read by their run id.
+
+    ``owner_id`` is the id of the agent or team whose conversation is being read. A record that
+    names its owner is read only by that owner, whatever its anchor. ``message_ids`` and ``run_id``
+    then decide only for a record with no owner, written before records named one.
     """
 
     def __init__(
@@ -102,30 +106,41 @@ class CompactionArchive:
         user_id: Optional[str] = None,
         message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
         run_id: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> None:
         self.db = db
         self.session_id = session_id
         self.user_id = user_id
         self.message_ids = message_ids
         self.run_id = run_id
+        self.owner_id = owner_id
 
     def _in_this_conversation(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """The rows this conversation made, or every row when no conversation is named."""
+        if self.owner_id is not None:
+            owned = [row for row in rows if row.get("owner_id") is not None]
+            if len(owned) == len(rows):
+                # Every record names its owner, so the session's messages need not be read
+                return [row for row in rows if row.get("owner_id") == self.owner_id]
         message_ids = self.message_ids() if callable(self.message_ids) else self.message_ids
-        if message_ids is None:
-            return rows
-        return [
-            row
-            for row in rows
-            if row.get("first_kept_message_id") in message_ids
-            or (self.run_id is not None and row.get("run_id") == self.run_id)
-        ]
+
+        def is_ours(row: Dict[str, Any]) -> bool:
+            if self.owner_id is not None and row.get("owner_id") is not None:
+                return row.get("owner_id") == self.owner_id
+            if message_ids is None:
+                return True
+            return row.get("first_kept_message_id") in message_ids or (
+                self.run_id is not None and row.get("run_id") == self.run_id
+            )
+
+        return [row for row in rows if is_ours(row)]
 
     def _row(self, record: Any, messages: List[Message]) -> Dict[str, Any]:
         return {
             "compaction_id": record.id or uuid4().hex,
             "session_id": self.session_id,
             "run_id": record.run_id,
+            "owner_id": record.owner_id,
             "user_id": self.user_id,
             "first_kept_message_id": record.first_kept_message_id,
             "summary": record.summary,

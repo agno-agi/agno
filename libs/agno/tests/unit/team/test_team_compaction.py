@@ -875,3 +875,155 @@ def test_a_manual_compactions_usage_is_added_to_the_leaders_latest_run_and_the_s
     # The session's newest run is the leader's, but a member's run in it is never the one.
     assert member_runs and all("compaction_model" not in (run.metrics.details or {}) for run in member_runs)
     assert "compaction_model" in (team.get_session_metrics(session_id="s").details or {})
+
+
+# ----------------------------------------------------------------- a member's own compaction
+
+
+def _answering_member(compaction=None, **settings):
+    """A member Agent whose every answer is long, so its history grows by a few hundred tokens a turn."""
+    model = _RecordingModel.build()
+    model._reply = lambda: ModelResponse(
+        content=f"member answer {PAD}", role="assistant", response_usage=MessageMetrics()
+    )
+    settings.setdefault("add_history_to_context", True)
+    settings.setdefault("num_history_runs", 20)
+    return Agent(id="m1", name="M1", model=model, compaction=compaction, **settings)
+
+
+def _member_folding(**settings):
+    settings.setdefault("compact_at_tokens", 1_000)
+    settings.setdefault("uncompacted_runs", 1)
+    return _folding(**settings)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_members_history_is_folded_at_the_members_own_threshold(mode):
+    """A Team gives a member its history as input, so the member's run has no history to fold. The
+    Team folds it where it builds that input, by the member's own setting."""
+    member = _answering_member(_member_folding())
+    team = _team(model=_leader(delegate=True), members=[member])
+
+    _talk(team, 8, mode)
+
+    rows = _rows(team)
+    assert rows and all(row["owner_id"] == "m1" for row in rows)
+    last = member.model.requests[-1]
+    assert len(_summaries(last)) == 1
+    # The summary stands in for the earlier tasks: the member is not sent all eight
+    assert sum(1 for text in _texts(last) if "look it up" in text) < 8
+    # The leader has no compaction of its own, and is never marked or sent a summary
+    assert not any(_summaries(request) for request in team.model.requests)
+    assert all(run.compaction is None for run in _leader_runs(team))
+
+
+def test_a_members_fold_is_replayed_and_not_paid_for_on_every_delegation():
+    member = _answering_member(_member_folding(compact_at_tokens=1_500))
+    team = _team(model=_leader(delegate=True), members=[member])
+
+    _talk(team, 10)
+
+    # Ten delegations, and far fewer summaries than delegations
+    assert 1 <= len(member.compaction.model.asked) <= 4
+    assert len(_rows(team)) == len(member.compaction.model.asked)
+
+
+def test_the_summary_of_a_members_history_is_paid_for_by_the_run_that_delegates():
+    member = _answering_member(_member_folding())
+    team = _team(model=_leader(delegate=True), members=[member])
+
+    _talk(team, 8)
+
+    run_ids = {run.run_id for run in _leader_runs(team)}
+    assert all(row["run_id"] in run_ids for row in _rows(team))
+
+
+def test_a_member_without_compaction_is_given_its_history_as_before():
+    member = _answering_member()
+    team = _team(model=_leader(delegate=True), members=[member])
+
+    _talk(team, 6)
+
+    assert _rows(team) == []
+    assert not _summaries(member.model.requests[-1])
+    assert sum(1 for text in _texts(member.model.requests[-1]) if "look it up" in text) == 6
+
+
+def test_a_member_and_its_leader_each_fold_and_read_their_own():
+    member = _answering_member(_member_folding())
+    team = _team(model=_leader(delegate=True), members=[member], compaction=_folding(model=_LeaderSummarizer()))
+
+    _talk(team, 10)
+
+    assert {row["owner_id"] for row in _rows(team)} == {"t", "m1"}
+    (leader_summary,) = _summaries(team.model.requests[-1])
+    (member_summary,) = _summaries(member.model.requests[-1])
+    assert "THE LEADER'S SUMMARY" in leader_summary.content
+    assert "THE LEADER'S SUMMARY" not in member_summary.content
+    assert "SUMMARY OF THE EARLIER TURNS" in member_summary.content
+    assert all("THE LEADER'S SUMMARY" not in asked for asked in member.compaction.model.asked)
+
+
+def test_a_members_records_are_stored_with_the_teams_session_whatever_database_the_member_has():
+    member = _answering_member(_member_folding(), db=_db())
+    team = _team(model=_leader(delegate=True), members=[member])
+
+    _talk(team, 8)
+
+    assert _rows(team) and member.db.get_compactions_for_session("s") == []
+    assert "look it up" in _member_search(member)("look it up")
+
+
+def test_a_record_that_names_its_owner_is_read_only_by_that_owner():
+    """With an owner on the record, the message it is anchored on no longer decides who reads it."""
+    import time
+
+    db = _db()
+    db.upsert_compaction(
+        {
+            "compaction_id": "member-fold",
+            "session_id": "s",
+            "run_id": "member-run",
+            "owner_id": "m1",
+            "first_kept_message_id": "anything",
+            "summary": "A MEMBER'S SUMMARY",
+            "archived_messages": "## user\n\nthe member's private text",
+            "messages_compacted": 4,
+            "created_at": int(time.time()),
+        }
+    )
+
+    assert CompactionArchive(db, "s", owner_id="m1", message_ids=set()).latest()["compaction_id"] == "member-fold"
+    assert CompactionArchive(db, "s", owner_id="t", message_ids={"anything"}).latest() is None
+    assert len(CompactionArchive(db, "s", owner_id="m1").search("private")) == 1
+    assert CompactionArchive(db, "s", owner_id="t").search("private") == []
+    # No owner named by the reader: every record of the session, as a standalone agent reads them
+    assert CompactionArchive(db, "s").latest()["compaction_id"] == "member-fold"
+
+
+# ----------------------------------------------------------------- the run after a refused request
+
+
+@pytest.mark.parametrize("mode", ["run", "arun"])
+def test_the_tools_that_ran_before_a_refused_request_are_still_on_the_run(mode):
+    """A request refused in the middle of the tool loop is folded and sent again, which starts a
+    new model response. The delegation that ran before the refusal stays on the run."""
+    # Two requests a turn: the delegation, then the answer. The answer of the fourth turn is refused.
+    team = _team(model=_leader(delegate=True, overflow_on=8), compaction=True, num_history_runs=10)
+
+    _talk(team, 4, mode)
+
+    last = _leader_runs(team)[-1]
+    assert last.compaction is not None
+    assert [tool.tool_name for tool in last.tools or []] == ["delegate_task_to_member"]
+
+
+@pytest.mark.parametrize("mode", ["stream", "astream"])
+def test_a_streamed_run_starts_before_it_announces_its_compaction(mode):
+    team = _team(compaction=_folding())
+
+    names = [event.event for event in _talk(team, 8, mode)]
+
+    announced = names.index("TeamCompactionStarted")
+    assert names[announced - 1] == "TeamRunStarted"
+    assert names[announced + 1] == "TeamCompactionCompleted"

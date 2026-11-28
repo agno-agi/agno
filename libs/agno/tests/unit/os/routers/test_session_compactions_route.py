@@ -71,3 +71,31 @@ def test_a_database_without_compaction_records_returns_none(tmp_path):
         response = client.get("/sessions/s1/compactions")
 
     assert (response.status_code, response.json()) == (200, [])
+
+
+def test_a_team_sessions_compactions_say_whose_conversation_each_is_of(tmp_path):
+    """A team and its members share one session, so its compactions are told apart by owner_id, and the
+    owner_id query keeps one owner's."""
+    from agno.session import TeamSession
+
+    db = SqliteDb(id="test-db", db_file=str(tmp_path / "sessions.db"))
+    db.upsert_session(TeamSession(session_id="t1", team_id="support-team", user_id="alice", runs=[]))
+    db.upsert_compaction(
+        {**_row("leader-fold", created_at=100, run_id="r1", session_id="t1"), "owner_id": "support-team"}
+    )
+    db.upsert_compaction(
+        {**_row("member-fold", created_at=200, run_id="r2", session_id="t1"), "owner_id": "researcher"}
+    )
+    app = FastAPI()
+    app.include_router(get_session_router({"test-db": [db]}))
+    client = TestClient(app)
+
+    everything = client.get("/sessions/t1/compactions", params={"type": "team"}).json()
+    assert [(row["id"], row["owner_id"]) for row in everything] == [
+        ("member-fold", "researcher"),
+        ("leader-fold", "support-team"),
+    ]
+
+    only_member = client.get("/sessions/t1/compactions", params={"type": "team", "owner_id": "researcher"}).json()
+    assert [row["id"] for row in only_member] == ["member-fold"]
+    assert client.get("/sessions/t1/compactions", params={"type": "team", "owner_id": "nobody"}).json() == []
