@@ -1015,6 +1015,116 @@ def test_continuing_a_paused_run_from_the_db_replays_the_fold(use_async):
     assert [m.content for m in model.requests[-1]][: len(sent_by_the_run)] == sent_by_the_run
 
 
+def refusing_model(limit: int, tool_name: str):
+    """A model that refuses any request over ``limit`` tokens as too long, and calls ``tool_name``
+    once in a run whose question asks to delete something."""
+    import json
+
+    from agno.compaction._tokens import estimate_tokens
+    from agno.exceptions import ContextWindowExceededError
+    from agno.metrics import MessageMetrics
+    from agno.models.response import ModelResponse
+
+    model = _RecordingModel.build()
+
+    def invoke(*args, **kwargs):
+        messages = list(kwargs.get("messages") or [])
+        model.requests.append(messages)
+        if estimate_tokens(messages) > limit:
+            raise ContextWindowExceededError("prompt is too long")
+        fresh = [m for m in messages if not m.from_history]
+        question = next(m for m in reversed(fresh) if m.role == "user")
+        if "delete" in str(question.content) and not any(m.role == "tool" for m in fresh):
+            call = {"id": "call_1", "type": "function", "function": {"name": tool_name, "arguments": json.dumps({})}}
+            return ModelResponse(role="assistant", tool_calls=[call], response_usage=MessageMetrics())
+        return ModelResponse(role="assistant", content="answer", response_usage=MessageMetrics())
+
+    model.invoke = invoke
+    return model
+
+
+def pause_after_a_refused_request(owner):
+    """Four short turns, then one whose request is refused as too long, folded down to the summary
+    and its own question, and paused for a confirmation. Returns the paused run."""
+    for i in range(4):
+        owner.run(f"question {i} " + "pad " * 300)
+    paused = owner.run("please delete it " + "pad " * 1200)
+    assert paused.is_paused
+    (row,) = owner.db.get_compactions_for_session("s")
+    question = next(m for m in paused.messages if m.role == "user" and "delete" in str(m.content))
+    assert row["first_kept_message_id"] == question.id
+    for requirement in paused.active_requirements:
+        requirement.confirm()
+    return paused
+
+
+def sends_the_summary_not_the_folded_turns(request) -> bool:
+    texts = [str(m.content) for m in request]
+    return any("SUMMARY" in text for text in texts) and not any(text.startswith("question 0") for text in texts)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_run_folded_on_its_own_question_continues_and_regenerates(use_async):
+    """A fold made after a refused request is anchored on the run's own question, which a run
+    continued from the db or regenerated holds as its input, not as history. Without finding it
+    there, the run was sent the whole unfolded history again and ended in an error."""
+    import asyncio
+
+    from agno.agent import Agent
+    from agno.run.base import RunStatus
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def delete() -> str:
+        """Delete it."""
+        return "deleted"
+
+    agent = Agent(
+        model=refusing_model(2000, "delete"),
+        db=_db(),
+        session_id="s",
+        tools=[delete],
+        add_history_to_context=True,
+        num_history_runs=6,
+        compaction=Compaction(on_context_overflow=True, uncompacted_runs=1, model=_StubModel()),
+    )
+    paused = pause_after_a_refused_request(agent)
+
+    kwargs = dict(run_id=paused.run_id, requirements=paused.requirements, session_id="s")
+    continued = asyncio.run(agent.acontinue_run(**kwargs)) if use_async else agent.continue_run(**kwargs)
+    assert continued.status == RunStatus.completed, continued.content
+    assert sends_the_summary_not_the_folded_turns(agent.model.requests[-1])
+
+    kwargs = dict(run_id=paused.run_id, session_id="s", regenerate=True)
+    regenerated = asyncio.run(agent.acontinue_run(**kwargs)) if use_async else agent.continue_run(**kwargs)
+    assert regenerated.status == RunStatus.completed, regenerated.content
+    assert sends_the_summary_not_the_folded_turns(agent.model.requests[-1])
+
+
+def test_a_regenerated_agent_run_replays_the_fold_its_source_run_inherited():
+    """Most runs make no fold and inherit an earlier one. Regenerating such a run sends the summary
+    it was sent, not the whole conversation from the first turn."""
+    from agno.agent import Agent
+
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=_db(),
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=3000, uncompacted_runs=4, model=_StubModel()),
+    )
+    for i in range(14):
+        agent.run(f"question {i} " + "pad " * 300)
+    runs = agent.get_session(session_id="s").runs
+    folded_by = {row["run_id"] for row in agent.db.get_compactions_for_session("s")}
+    first_fold = next(i for i, run in enumerate(runs) if run.run_id in folded_by)
+    inherited = next(run for run in runs[first_fold + 1 :] if run.run_id not in folded_by)
+
+    agent.continue_run(run_id=inherited.run_id, session_id="s", regenerate=True, replace_original=False)
+
+    assert sends_the_summary_not_the_folded_turns(agent.model.requests[-1])
+
+
 # --- session deletion -------------------------------------------------------------
 
 
