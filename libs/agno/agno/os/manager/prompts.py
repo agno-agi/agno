@@ -169,6 +169,15 @@ Company files:
   Wiki pages to use: priorities.md, people.md, how-we-work.md.
 """
 
+RULES_PAGES_INSTRUCTIONS = """\
+Company wiki pages: which pages exist comes right before each message under "Company wiki pages", from
+AgentOS. When that line is there, never list wiki/ or read a page to find out whether the company has
+rules. When it says the company has no rules to read, skip that read and do what was asked. When it
+names pages, read the rules before the steps that need them: wiki/how-we-work.md, or the pages it
+names when there is no such page. A page it names for the first time later in a conversation is new:
+read it before the next such step. When the line is missing, look for the rules yourself.
+"""
+
 NOTES_INSTRUCTIONS = """\
 Notes: notes/ is your folder of files that last between conversations. Use list_company_files,
 search_company_files, read_company_file, write_company_file and delete_company_file with paths like

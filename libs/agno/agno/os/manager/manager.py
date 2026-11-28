@@ -25,6 +25,7 @@ from agno.os.manager.prompts import (
     NOTES_INSTRUCTIONS,
     PERSON_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
+    RULES_PAGES_INSTRUCTIONS,
     SANDBOX_CHANGES_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
@@ -73,7 +74,12 @@ _CATALOG_LIMIT = 20
 
 # Sentences that describe the linked-work block, and the ones said in their place to a model that is
 # not sent it.
-_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, PERSON_INSTRUCTIONS)
+_SAID_WITH_THE_BLOCK = (
+    LINKED_WORK_INSTRUCTIONS,
+    BACKGROUND_RUNS_SHOWN_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
+    RULES_PAGES_INSTRUCTIONS,
+)
 _SAID_WITHOUT_THE_BLOCK = (BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS,)
 
 
@@ -480,6 +486,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
 
         tools.append(CompanyFileTools(company_db, notes_db=notes_db, user_isolation=_user_isolation(agent_os)))
         instructions.append(COMPANY_FILES_INSTRUCTIONS if company_db is not None else NOTES_INSTRUCTIONS)
+        if company_db is not None:
+            # Said only to a model that is sent the note that names the pages.
+            instructions.append(RULES_PAGES_INSTRUCTIONS)
         if notes_db is not None:
             instructions.append(
                 PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
@@ -519,9 +528,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     # The work a conversation started: its Tasks when Company is on, and its background runs.
     work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
     from agno.os.manager.person import Person, TurnContext
+    from agno.os.manager.rules_pages import RulesPages
 
-    # Who the person is, then that work, in one message right before theirs. The role store is the
-    # Authorization object when it manages roles; agent_os.authorization itself is only a switch.
+    # Who the person is, which wiki pages exist, then that work, in one message right before theirs.
+    # The role store is the Authorization object when it manages roles; agent_os.authorization itself
+    # is only a switch.
     team._message_context = TurnContext(
         Person(
             lambda: getattr(agent_os, "user_directory", None),
@@ -530,6 +541,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         work,
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
+        pages=RulesPages(company_db) if company_db is not None else None,
     )
     # That message is where Super Agent reads the time, so the time is left out of its system message:
     # a timestamp there differs on every request, which stops the provider caching the prompt, and it
