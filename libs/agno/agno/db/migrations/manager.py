@@ -114,8 +114,8 @@ class MigrationManager:
             ):
                 current_version = _BEFORE_COMPANY_RENAME
 
-            # The compactions table is new in 3.3.0 and stamped current when it is created, so its stamp
-            # says nothing about a table a 3.3.0 development build created without the owner column.
+            # A compactions table created by a 3.3.0 development build is stamped current and can still
+            # be without the owner column, so its stamp is not trusted while the column is missing.
             if (
                 table_type == "compactions"
                 and current_version >= _COMPANY_RENAME_VERSION <= _target_version

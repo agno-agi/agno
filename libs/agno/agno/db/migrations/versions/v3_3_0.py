@@ -34,8 +34,11 @@ others. It acts on the tables and columns the database holds, not on a table's v
 
 In the database that holds the compaction records (SQLite or PostgreSQL):
 - The compactions table gets the column ``owner_id``: the agent or team whose conversation a record
-  is of. The table is new in 3.3.0, so this runs only for a table created by a 3.3.0 development
-  build. Its existing records keep no owner, and are still read by the message they are anchored on.
+  is of. The table has been created since 3.1.2 without it, so every database that has compacted a
+  conversation needs this. Until it has run, compaction records cannot be read or stored: a run goes
+  on without its summary, and says so with ``MigrationRequiredError`` in the log. Existing records
+  keep no owner, and are still read by the message they are anchored on. This also runs for a table
+  created by a 3.3.0 development build.
 
 No table is dropped. The versions table records, for each of the two tables, that its rename is done
 or that it was created under its current name. An agno 3.2 process that starts after that creates its products
