@@ -285,10 +285,12 @@ async def test_command_output_over_the_frame_limit_does_not_end_the_turn(tmp_pat
 
     monkeypatch.setenv("HOME", os.environ.get("HOME", ""))
     monkeypatch.setenv("CODEX_HOME", "unused")
+    # The runtime logs a Codex agent in when a key is set; this turn must not depend on the environment.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(runtime, "_agent", make_agent)
     directory = tmp_path / "jobs/e"
     directory.mkdir(parents=True)
-    result = await runtime._execute(directory, {"sdk": "codex", "run_id": "r", "session_id": "s", "input": "upgrade"})
+    result = await runtime._execute(directory, {"sdk": "claude", "run_id": "r", "session_id": "s", "input": "upgrade"})
     assert result["type"] == "execution_finished" and result["run"]["content"] == "done"
     # The run the host stores keeps the whole output; only the journaled event is shortened.
     assert result["run"]["tools"][0]["result"] == output
