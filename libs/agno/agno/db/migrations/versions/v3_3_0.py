@@ -25,6 +25,8 @@ In the database that holds the schedules (SQLite, PostgreSQL or MongoDB):
 - A Company tool that ``payload.message`` of a Routine names by its 3.2.0 name gets its current name,
   for example ``read_product_source`` becomes ``read_goal_source``.
 - ``work_scope.product_ids`` in a Routine's auto-accept policy becomes ``goal_ids``.
+- A Routine whose executor is ``company-manager-internal``, the agent that ran Routines before 3.2,
+  gets Mini Agent as its executor. It keeps its cron, its enabled state and its run history.
 - The ``disabled_reason`` ``company_product_archived`` becomes ``company_goal_archived``.
 - ``automation_failure.product_id`` in the output of a schedule run becomes ``goal_id``.
 
@@ -97,7 +99,8 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
-from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, RUN_ENDPOINT_RE, build_run_endpoint
+from agno.registry._reserved import FORMER_ROUTINE_EXECUTOR_ID, MINI_AGENT_ID
 from agno.db.utils import LEGACY_GOALS_TABLE_NAME
 from agno.utils.log import log_info, log_warning
 
@@ -660,6 +663,12 @@ def _goal_routine(schedule: Dict[str, Any]) -> Dict[str, Any]:
             changes["payload"] = {**payload, "metadata": renamed}
     if schedule.get("disabled_reason") == "company_product_archived":
         changes["disabled_reason"] = "company_goal_archived"
+    target = RUN_ENDPOINT_RE.fullmatch(schedule.get("endpoint") or "")
+    if target is not None and target.group(2) == FORMER_ROUTINE_EXECUTOR_ID:
+        # No agent has this ID any more, so every run of the Routine was refused. Mini Agent runs it now.
+        changes.update(
+            endpoint=build_run_endpoint("agent", MINI_AGENT_ID), target_type="agent", target_id=MINI_AGENT_ID
+        )
     return changes
 
 
@@ -682,6 +691,9 @@ def _rename_routines(sess: Any, db_type: str, schema: Optional[str], table_name:
         column("managed_by"),
         column("payload", sql.json),
         column("disabled_reason"),
+        column("endpoint"),
+        column("target_type"),
+        column("target_id"),
         schema=sql.schema,
     )
     changed = False
