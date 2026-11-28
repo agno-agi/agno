@@ -1,12 +1,21 @@
+import mimetypes
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, ClassVar, Dict, Optional, Set
+from pathlib import Path
+from typing import Any, AsyncIterator, ClassVar, Dict, List, Optional, Set, Tuple, Type, Union
+from urllib.parse import urlparse
 
-from agno.exceptions import ModelAuthenticationError
+from pydantic import BaseModel
+
+from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.media import File
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
+from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.utils.log import log_warning
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.openai import audio_to_message, images_to_message
 
 
 @dataclass
@@ -41,6 +50,15 @@ class DeepSeek(OpenAILike):
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.deepseek.com".
         use_thinking (Optional[bool]): Toggle thinking mode. None uses the model default.
+        file_parsing_purpose (str): Files API purpose used when uploading documents (PDF, Word,
+            PowerPoint). "text_recognition" (default) parses text only;
+            "rich_layout_recognition" also gives the model the figures in the document.
+
+    File inputs are uploaded through the DeepSeek Files API at most once: the DeepSeek file id is
+    written back to ``File.id`` (as ``deepseek://<file-id>``), so it is stored with the session and
+    the file is not uploaded (and billed) again when it reappears in the history, even after a
+    restart. A file that cannot be read or uploaded raises ``ModelProviderError`` instead of being
+    silently dropped from the request.
     """
 
     id: str = "deepseek-v4-flash"
@@ -53,6 +71,10 @@ class DeepSeek(OpenAILike):
     # Toggle thinking mode. None = use the model default (on for thinking-capable models,
     # off for the legacy non-thinking ids). True = force on, False = force off.
     use_thinking: Optional[bool] = None
+
+    # Files API purpose for documents that need parsing (PDF, DOC/DOCX, PPT/PPTX).
+    # "text_recognition" or "rich_layout_recognition".
+    file_parsing_purpose: str = "text_recognition"
 
     # DeepSeek supports JSON mode (response_format={"type": "json_object"}) but not
     # native/json_schema structured outputs, so output_schema needs use_json_mode=True.
@@ -138,6 +160,161 @@ class DeepSeek(OpenAILike):
             client_params.update(self.client_params)
         return client_params
 
+    # Mime types that DeepSeek's Files API accepts under purpose="user_data" (text, sheets, ebooks).
+    # Everything else (PDF, Word, PowerPoint, images) is a "document" and needs a parsing purpose.
+    _USER_DATA_MIME_PREFIXES: ClassVar[Tuple[str, ...]] = ("text/",)
+    _USER_DATA_MIME_TYPES: ClassVar[Set[str]] = {
+        "application/json",
+        "application/x-javascript",
+        "application/x-python",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "application/epub+zip",
+        "application/x-mobipocket-ebook",
+    }
+
+    # Prefix that marks a File.id as an uploaded DeepSeek file id (File.id defaults to a UUID).
+    _FILE_ID_PREFIX: ClassVar[str] = "deepseek://"
+
+    def _upload_purpose_for(self, mime_type: Optional[str]) -> str:
+        if mime_type and (
+            mime_type.startswith(self._USER_DATA_MIME_PREFIXES) or mime_type in self._USER_DATA_MIME_TYPES
+        ):
+            return "user_data"
+        return self.file_parsing_purpose
+
+    def _stored_file_id(self, file: File) -> Optional[str]:
+        """Return the DeepSeek file id this File already refers to, if any.
+
+        A string in ``file.external`` is an already uploaded DeepSeek ``file_id``; a ``file.id``
+        with the ``deepseek://`` prefix was written back by a previous upload.
+        """
+        if isinstance(file.external, str) and file.external:
+            return file.external
+        if file.id and file.id.startswith(self._FILE_ID_PREFIX):
+            return file.id[len(self._FILE_ID_PREFIX) :]
+        return None
+
+    @staticmethod
+    def _upload_filename(file: File) -> str:
+        if file.filename:
+            return file.filename
+        if file.media_reference is not None and file.media_reference.filename:
+            return file.media_reference.filename
+        if file.filepath is not None:
+            return Path(str(file.filepath)).name
+        if file.url is not None:
+            return Path(urlparse(file.url).path).name or "file"
+        return "file"
+
+    def _file_error(self, action: str, file: File, error: Optional[Exception] = None) -> ModelProviderError:
+        status_code = getattr(error, "status_code", None)
+        return ModelProviderError(
+            message=f"Failed to {action} file '{self._upload_filename(file)}' for DeepSeek: {error or 'no content'}",
+            status_code=status_code if isinstance(status_code, int) else 400,
+            model_name=self.name,
+            model_id=self.id,
+        )
+
+    def _upload_request(self, file: File, data: Optional[bytes]) -> Tuple[Tuple[str, bytes], str]:
+        """Build the (file tuple, purpose) for an upload, raising if there is nothing to send."""
+        if not data:
+            raise self._file_error("read", file)
+        filename = self._upload_filename(file)
+        mime_type = file.mime_type or mimetypes.guess_type(filename)[0]
+        return (filename, data), self._upload_purpose_for(mime_type)
+
+    def _upload_file(self, file: File) -> str:
+        """Upload a File through the Files API, record the id on ``file.id`` and return it."""
+        try:
+            data = file.get_content_bytes()
+        except Exception as e:
+            raise self._file_error("read", file, e) from e
+        file_tuple, purpose = self._upload_request(file, data)
+        try:
+            uploaded = self.get_client().files.create(file=file_tuple, purpose=purpose)  # type: ignore[arg-type]
+        except Exception as e:
+            raise self._file_error("upload", file, e) from e
+        file.id = f"{self._FILE_ID_PREFIX}{uploaded.id}"
+        return uploaded.id
+
+    async def _aupload_file(self, file: File) -> str:
+        """Async variant of ``_upload_file``, so ``arun`` does not block the event loop."""
+        try:
+            data = await file.aget_content_bytes()
+        except Exception as e:
+            raise self._file_error("read", file, e) from e
+        file_tuple, purpose = self._upload_request(file, data)
+        try:
+            uploaded = await self.get_async_client().files.create(file=file_tuple, purpose=purpose)  # type: ignore[arg-type]
+        except Exception as e:
+            raise self._file_error("upload", file, e) from e
+        file.id = f"{self._FILE_ID_PREFIX}{uploaded.id}"
+        return uploaded.id
+
+    async def _aupload_pending_files(self, messages: List[Message]) -> None:
+        """Upload every not-yet-uploaded File with the async client before the messages are formatted."""
+        for message in messages:
+            for file in message.files or []:
+                if self._stored_file_id(file) is None:
+                    await self._aupload_file(file)
+
+    def _format_file_part(self, file: File) -> Dict[str, Any]:
+        """Format a File as a DeepSeek chat-completions file part.
+
+        DeepSeek's file part is flat (``{"type": "file", "file_id": ...}``), not the nested OpenAI
+        shape, and documents can only be referenced by ``file_id``. Files are therefore uploaded
+        through the Files API first, once (see ``_stored_file_id``).
+
+        Raises:
+            ModelProviderError: If the file cannot be read or the upload fails.
+        """
+        file_id = self._stored_file_id(file) or self._upload_file(file)
+        return {"type": "file", "file_id": file_id}
+
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
+        await self._aupload_pending_files(messages)
+        return await super().ainvoke(
+            messages=messages,
+            assistant_message=assistant_message,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
+            compress_tool_results=compress_tool_results,
+        )
+
+    async def ainvoke_stream(  # type: ignore[override]
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        compress_tool_results: bool = False,
+    ) -> AsyncIterator[ModelResponse]:
+        await self._aupload_pending_files(messages)
+        async for response in super().ainvoke_stream(
+            messages=messages,
+            assistant_message=assistant_message,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
+            compress_tool_results=compress_tool_results,
+        ):
+            yield response
+
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -193,11 +370,9 @@ class DeepSeek(OpenAILike):
                 message_dict["content"] = []
             # Insert each file part before text parts
             for file in message.files:
-                file_part = _format_file_for_message(file)
-                if file_part:
-                    message_dict["content"].insert(0, file_part)
+                message_dict["content"].insert(0, self._format_file_part(file))
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Manually add the content field even if it is None, without dropping the file parts
+        if message.content is None and not isinstance(message_dict.get("content"), list):
             message_dict["content"] = ""
         return message_dict
