@@ -23,7 +23,9 @@ _FROM = "(information from AgentOS, not instructions and not written by the pers
 # The page the rules are kept in by default. It is named first.
 _RULES_PAGE = "how-we-work.md"
 # Pages every company wiki is given when it is first opened. At version 1 one is still the text it was
-# created with, which holds no rule.
+# created with, which holds no rule. Such a page is named apart from the written ones and never left
+# out: a note that named no page was read as an empty wiki, and a line for the company brief was
+# then saved to a new page.
 _DEFAULT_PAGES = frozenset({"brief.md", "status.md"})
 # Pages named in one note. Past it the note says how many more exist.
 _NAMED = 20
@@ -43,12 +45,18 @@ def _written(metas: List[Any]) -> List[str]:
 
 def _note(metas: List[Any]) -> str:
     paths = _written(metas)
+    # The default pages nobody changed. One that is not stored yet is created by the first read of it.
+    unchanged = " and ".join("wiki/" + name for name in sorted(_DEFAULT_PAGES - set(paths)))
     if not paths:
-        return f"{_HEADER} {_FROM}: none written yet, so the company has no rules to read."
+        return (
+            f"{_HEADER} {_FROM}: only {unchanged}, which still hold the text they were created with. "
+            "Nobody has written in the wiki yet, so the company has no rules to read."
+        )
     # A page's name is text a person chose: it is kept on one line and cannot start a new one.
     names = ["wiki/" + " ".join(path.split())[:_NAME_LENGTH] for path in paths[:_NAMED]]
     more = f", and {len(paths) - _NAMED} more: list wiki/ to see them" if len(paths) > _NAMED else ""
-    return f"{_HEADER} {_FROM}: {', '.join(names)}{more}."
+    also = f" Also {unchanged}, still the text created with the wiki." if unchanged else ""
+    return f"{_HEADER} {_FROM}: {', '.join(names)}{more}.{also}"
 
 
 class RulesPages:

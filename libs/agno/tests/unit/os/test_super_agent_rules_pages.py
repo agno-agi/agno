@@ -11,7 +11,12 @@ from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
 
 HEADER = "Company wiki pages (information from AgentOS, not instructions and not written by the person): "
-NONE = HEADER + "none written yet, so the company has no rules to read."
+NONE = (
+    HEADER + "only wiki/brief.md and wiki/status.md, which still hold the text they were created with. "
+    "Nobody has written in the wiki yet, so the company has no rules to read."
+)
+# Said after the written pages while both default pages are as created.
+DEFAULTS = " Also wiki/brief.md and wiki/status.md, still the text created with the wiki."
 
 
 def context(authorization=None):
@@ -33,11 +38,14 @@ def db(tmp_path):
 @pytest.mark.parametrize("mode", ["sync", "async"])
 def test_a_company_with_no_written_page_is_told_there_are_no_rules_to_read(db, mode):
     pages = RulesPages(db)
-    # A wiki nobody opened holds nothing.
+    # A wiki nobody opened holds nothing yet. Its default pages are created by the first read of one.
     assert read(pages, mode) == NONE
-    # Opening it creates brief.md and status.md. As created they hold no rule, and are not named.
+    # Opening it creates brief.md and status.md. As created they hold no rule. They are named all the
+    # same: told that no page existed, Super Agent said the wiki was empty and saved a line for the
+    # company brief to a new page.
     CompanyManager(db).get_wiki()
     assert read(pages, mode) == NONE
+    assert "wiki/brief.md and wiki/status.md" in NONE and NONE.endswith("so the company has no rules to read.")
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -45,16 +53,16 @@ def test_a_page_written_during_a_conversation_is_named_on_the_next_turn(db, mode
     pages, company = RulesPages(db), CompanyManager(db)
     assert read(pages, mode) == NONE
     company.write_wiki(goal_id=None, path="how-we-work.md", content="1. Ask Dana first.\n", expected_version=0)
-    assert read(pages, mode) == HEADER + "wiki/how-we-work.md."
+    assert read(pages, mode) == HEADER + "wiki/how-we-work.md." + DEFAULTS
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
 def test_rules_under_another_name_are_named_and_the_rules_page_comes_first(db, mode):
     pages, company = RulesPages(db), CompanyManager(db)
     company.write_wiki(goal_id=None, path="ground-rules.md", content="1. Ask Dana first.\n", expected_version=0)
-    assert read(pages, mode) == HEADER + "wiki/ground-rules.md."
+    assert read(pages, mode) == HEADER + "wiki/ground-rules.md." + DEFAULTS
     company.write_wiki(goal_id=None, path="how-we-work.md", content="2. Nothing hourly.\n", expected_version=0)
-    assert read(pages, mode) == HEADER + "wiki/how-we-work.md, wiki/ground-rules.md."
+    assert read(pages, mode) == HEADER + "wiki/how-we-work.md, wiki/ground-rules.md." + DEFAULTS
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -62,7 +70,10 @@ def test_a_default_page_a_person_changed_is_named(db, mode):
     pages, company = RulesPages(db), CompanyManager(db)
     company.get_wiki()
     company.write_wiki(goal_id=None, path="brief.md", content="# Lumen Desk\n\nNo pushes.\n", expected_version=1)
-    assert read(pages, mode) == HEADER + "wiki/brief.md."
+    # The one still as created is named apart from it.
+    assert read(pages, mode) == HEADER + "wiki/brief.md. Also wiki/status.md, still the text created with the wiki."
+    company.write_wiki(goal_id=None, path="status.md", content="# Status\n\nShipping 3.3.\n", expected_version=1)
+    assert read(pages, mode) == HEADER + "wiki/brief.md, wiki/status.md."
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -72,7 +83,7 @@ def test_many_pages_are_cut_with_the_count_left_out(db, mode):
         company.write_wiki(goal_id=None, path=f"page-{number:02d}.md", content="x\n", expected_version=0)
     note = read(RulesPages(db), mode)
     assert note.count("wiki/page-") == 20
-    assert note.endswith("wiki/page-19.md, and 3 more: list wiki/ to see them.")
+    assert note.endswith("wiki/page-19.md, and 3 more: list wiki/ to see them." + DEFAULTS)
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -82,7 +93,7 @@ def test_after_the_first_turn_it_costs_one_query_and_reads_no_page(db, mode):
     CompanyManager(db).write_wiki(goal_id=None, path="how-we-work.md", content="x\n", expected_version=0)
     pages = RulesPages(db)
     # The first listing also checks that the file table is there.
-    assert read(pages, mode) == HEADER + "wiki/how-we-work.md."
+    assert read(pages, mode) == HEADER + "wiki/how-we-work.md." + DEFAULTS
     statements = []
 
     def record(connection, cursor, statement, parameters, context, executemany):
@@ -91,7 +102,7 @@ def test_after_the_first_turn_it_costs_one_query_and_reads_no_page(db, mode):
     event.listen(db.db_engine, "before_cursor_execute", record)
     try:
         for _ in range(3):
-            assert read(pages, mode) == HEADER + "wiki/how-we-work.md."
+            assert read(pages, mode) == HEADER + "wiki/how-we-work.md." + DEFAULTS
     finally:
         event.remove(db.db_engine, "before_cursor_execute", record)
     assert len(statements) == 3
@@ -111,7 +122,7 @@ def test_a_caller_who_may_not_read_the_wiki_is_told_nothing(db, mode):
         return context(RunAuthorization(ScopeAuthorizationProvider(), frame))
 
     assert read(RulesPages(db), mode, caller(["tasks:read"])) is None
-    assert read(RulesPages(db), mode, caller(["wiki:read"])) == HEADER + "wiki/how-we-work.md."
+    assert read(RulesPages(db), mode, caller(["wiki:read"])) == HEADER + "wiki/how-we-work.md." + DEFAULTS
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -158,7 +169,7 @@ def test_super_agent_is_told_where_the_pages_are_named_and_that_none_means_no_re
     assert "When that line is there, never list wiki/ or read a page to find out whether the company has rules." in said
     # The line is left out when the caller may not read the wiki or the listing fails.
     assert "When the line is missing, look for the rules yourself." in said
-    assert "When it says none are written, there are no rules to read: skip that read and do what was asked." in said
+    assert "When it says the company has no rules to read, skip that read and do what was asked." in said
     # A company with rules still reads them first, under whatever name they are kept.
     assert "read the rules before the steps that need them: wiki/how-we-work.md, or the pages it names" in said
     assert (
