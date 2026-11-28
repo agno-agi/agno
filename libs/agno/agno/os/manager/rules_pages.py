@@ -6,7 +6,8 @@ person's input, so a company with no written rules costs no tool call to find th
 written during a conversation shows on the next turn.
 
 The cost is one listing of the wiki folder for each turn: one query for the names and versions of its
-files, with no content read and no model call.
+files, with no content read and no model call. The first listing also checks that the file table is
+there.
 """
 
 import asyncio
@@ -59,11 +60,19 @@ class RulesPages:
 
     def __init__(self, db: Any):
         self.db = db
+        self._wiki: Any = None
 
     def _folder(self) -> Any:
         from agno.company.filesystem import company_folder
 
-        return company_folder(self.db, "wiki")
+        # A store checks that its table is there on first use, which takes several queries. The store
+        # of a synchronous database is kept, so each later turn is the one listing. An asynchronous
+        # store is tied to the event loop it was first used on, and is opened for each read.
+        if isinstance(self.db, AsyncBaseDb):
+            return company_folder(self.db, "wiki")
+        if self._wiki is None:
+            self._wiki = company_folder(self.db, "wiki")
+        return self._wiki
 
     def read(self, run_context: Any) -> Optional[str]:
         # A synchronous run cannot read an asynchronous database.

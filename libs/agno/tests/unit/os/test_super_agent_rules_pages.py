@@ -76,20 +76,27 @@ def test_many_pages_are_cut_with_the_count_left_out(db, mode):
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_it_costs_one_listing_and_reads_no_page(db, mode, monkeypatch):
+def test_after_the_first_turn_it_costs_one_query_and_reads_no_page(db, mode):
+    from sqlalchemy import event
+
     CompanyManager(db).write_wiki(goal_id=None, path="how-we-work.md", content="x\n", expected_version=0)
     pages = RulesPages(db)
-    folder = pages._folder()
-    calls = []
-
-    class Spy:
-        def __getattr__(self, name):
-            calls.append(name)
-            return getattr(folder, name)
-
-    monkeypatch.setattr(pages, "_folder", lambda: Spy())
+    # The first listing also checks that the file table is there.
     assert read(pages, mode) == HEADER + "wiki/how-we-work.md."
-    assert calls == ["list"]
+    statements = []
+
+    def record(connection, cursor, statement, parameters, context, executemany):
+        statements.append(" ".join(statement.split()))
+
+    event.listen(db.db_engine, "before_cursor_execute", record)
+    try:
+        for _ in range(3):
+            assert read(pages, mode) == HEADER + "wiki/how-we-work.md."
+    finally:
+        event.remove(db.db_engine, "before_cursor_execute", record)
+    assert len(statements) == 3
+    for statement in statements:
+        assert statement.startswith("SELECT") and "content" not in statement.split(" FROM ")[0]
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
@@ -148,7 +155,9 @@ def test_super_agent_is_told_where_the_pages_are_named_and_that_none_means_no_re
 
     said = " ".join(RULES_PAGES_INSTRUCTIONS.split())
     assert 'comes right before each message under "Company wiki pages", from AgentOS' in said
-    assert "Never list wiki/ or read a page to find out whether the company has rules." in said
+    assert "When that line is there, never list wiki/ or read a page to find out whether the company has rules." in said
+    # The line is left out when the caller may not read the wiki or the listing fails.
+    assert "When the line is missing, look for the rules yourself." in said
     assert "When it says none are written, there are no rules to read: skip that read and do what was asked." in said
     # A company with rules still reads them first, under whatever name they are kept.
     assert "read the rules before the steps that need them: wiki/how-we-work.md, or the pages it names" in said
