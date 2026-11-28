@@ -2185,11 +2185,13 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope.
 
-        moved_by is recorded on the Task's history when the update changes its Project.
+        moved_by is recorded on the Task's history when the update changes its Project. goal_id,
+        given with a project_id, files a Task that has no Goal under that Goal in the Default Project.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
@@ -4384,11 +4386,13 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update descriptive fields on an active Task within the owner scope.
 
-        moved_by is recorded on the Task's history when the update changes its Project.
+        moved_by is recorded on the Task's history when the update changes its Project. goal_id,
+        given with a project_id, files a Task that has no Goal under that Goal in the Default Project.
         """
         raise NotImplementedError("Company tasks not supported by the configured database")
 

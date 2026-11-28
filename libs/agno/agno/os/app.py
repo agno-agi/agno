@@ -812,6 +812,8 @@ class AgentOS:
         # The Routine API's read and its PATCH handler, set when the Company routes are built.
         self._routine_api_read: Any = None
         self._routine_api_update: Any = None
+        self._routine_api_resume: Any = None
+        self._routine_api_live_runs: Any = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
             from agno.company.mini_agent import _build_mini_agent

@@ -300,9 +300,10 @@ class CompanyTaskTools(Toolkit):
             project_id: The active Project this Task is part of: check list_company_projects for the one
                 it serves. Null when none fits, which puts the Task in the Default Project. A proposed
                 Project cannot hold accepted work.
-            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
-                Project's Goal and another Goal is refused. For an executor that works in a sandbox,
-                null files the Task under the Goal that has its repository as a git Source.
+            goal_id: The Goal this Task serves: check list_company_goals. Its executor reads that
+                Goal's Sources, and none with no Goal. Null only when it serves no Goal. In a Project,
+                null takes the Project's Goal and another Goal is refused. For an executor that works
+                in a sandbox, null files the Task under the Goal that has its repository as a git Source.
             executor_type: agent, team or workflow, only when the person named a component. Null with a
                 null executor_id runs it on Mini Agent, which does the work itself or runs the components
                 the person may run.
@@ -428,37 +429,51 @@ class CompanyTaskTools(Toolkit):
         return await self._decide(call)
 
     def move_company_task(
-        self, task_id: str, project_id: _OptionalString, _agno_run_context: Optional[Any] = None
+        self,
+        task_id: str,
+        project_id: _OptionalString,
+        goal_id: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
-        """Move a Company Task into another Project.
+        """Move a Company Task into another Project, or file it under a Goal.
 
         Args:
             task_id: The Task to move.
             project_id: The Project it moves into; null moves it to the Default Project.
+            goal_id: The Goal a Task with no Goal is filed under in the Default Project; null for none.
         """
         return "Moving a Task needs an asynchronous run. Move it from AgentOS instead."
 
     async def amove_company_task(
-        self, task_id: str, project_id: _OptionalString, _agno_run_context: Optional[Any] = None
+        self,
+        task_id: str,
+        project_id: _OptionalString,
+        goal_id: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
-        """Move a Company Task into another Project. The move is the person's and is recorded on the
-        Task's history with their name. It does not pause.
+        """Move a Company Task into another Project, or file it under a Goal. The move is the person's
+        and is recorded on the Task's history with their name. It does not pause.
 
-        Call this only when the person asked to move this Task. A Task moves while it is Backlog,
-        Ready, In review or Done, and not while it is In progress or once it is cancelled. An
-        accepted Task moves only into an active Project. A Task with a Goal moves only into a
-        Project of that Goal or the Default Project; a Task with no Goal takes the Goal of the
-        Project it moves into. Nothing else about the Task changes: its brief, executor and
-        acceptance stay as they are.
+        Call this only when the person asked to move this Task or to put it under a Goal. A Task
+        moves while it is Backlog, Ready, In review or Done, and not while it is In progress or once
+        it is cancelled. An accepted Task moves only into an active Project. A Task with a Goal
+        keeps it and moves only into a Project of that Goal or the Default Project; a Task with no
+        Goal takes the Goal of the Project it moves into. To file a Task with no Goal under a Goal
+        that has no Project for it, pass a null project_id and that goal_id: it sits in the Default
+        Project under the Goal, and its next run reads the Goal's Sources. Nothing else about the
+        Task changes: its brief, executor and acceptance stay as they are.
 
         Args:
             task_id: The Task to move.
             project_id: The Project it moves into: check list_company_projects. Null moves it to the
                 Default Project.
+            goal_id: The Goal a Task with no Goal is filed under, with a null project_id: check
+                list_company_goals. Null leaves its Goal as it is.
         """
         from dataclasses import replace
 
         from agno.company.routines import _manager_call
+        from agno.db.schemas.projects import is_default_project
         from agno.os.routers.company.runs import _TaskStarter
         from agno.run.authorization import authorization_scope
 
@@ -469,6 +484,22 @@ class CompanyTaskTools(Toolkit):
             starter = _TaskStarter(agent_os)
             value = await starter.task(task_id)
             title = value.get("title") or task_id
+            target, wanted = _named(project_id), _named(goal_id)
+
+            async def name_of(method: str, record_id: str) -> str:
+                record = await _manager_call(starter.manager, method, record_id)
+                return (record or {}).get("name") or record_id
+
+            if wanted is not None and wanted == value["goal_id"] and target is None:
+                # Filing names no Project. For a Task that has this Goal it would only take the Task
+                # out of its Project, which the person did not ask for. A call that names the Default
+                # Project is a move there, whatever Goal is passed beside it.
+                under = await name_of("get", wanted)
+                held = await name_of("get_project", value["project_id"])
+                reply = f"'{title}' (Task {task_id}) is already under Goal '{under}', in Project '{held}'."
+                if is_default_project(value["project_id"]):
+                    return reply
+                return f"{reply} It was not moved: to move it to the Default Project, pass a null goal_id."
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             with authorization_scope(lambda: saved):
                 moved = await _manager_call(
@@ -477,15 +508,27 @@ class CompanyTaskTools(Toolkit):
                     task_id,
                     user_id=None,
                     moved_by=user_id,
-                    project_id=_named(project_id),
+                    goal_id=wanted,
+                    project_id=target,
                 )
             if moved is None:
                 return f"Not done: '{title}' changed while it was being moved. Read it again."
-            if moved["project_id"] == value["project_id"]:
+            name = await name_of("get_project", moved["project_id"])
+            took_goal = moved["goal_id"] != value["goal_id"]
+            if moved["project_id"] != value["project_id"]:
+                # A Project names its own Goal. The Default Project holds Tasks of any Goal, so the
+                # Goal a Task took on its way there is said.
+                filed = ""
+                if took_goal and is_default_project(moved["project_id"]):
+                    filed = f" and filed it under Goal '{await name_of('get', moved['goal_id'])}'"
+                return f"Moved '{title}' (Task {task_id}) into Project '{name}'{filed}. Nothing else about it changed."
+            if not took_goal:
                 return f"'{title}' (Task {task_id}) is already in that Project."
-            project = await _manager_call(starter.manager, "get_project", moved["project_id"])
-            name = (project or {}).get("name") or moved["project_id"]
-            return f"Moved '{title}' (Task {task_id}) into Project '{name}'. Nothing else about it changed."
+            under = await name_of("get", moved["goal_id"])
+            return (
+                f"Filed '{title}' (Task {task_id}) under Goal '{under}', in Project '{name}'. "
+                "Nothing else about it changed."
+            )
 
         return await self._decide(call)
 
