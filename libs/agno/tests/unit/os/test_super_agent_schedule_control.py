@@ -22,11 +22,15 @@ ROUTINE_WRITER = [*MEMBER, "routines:write"]
 
 
 class System:
-    def __init__(self, tmp_path, isolation=False, authorization=True):
+    def __init__(self, tmp_path, isolation=False, authorization=True, stored_admin=None):
         self.db = SqliteDb(db_file=str(tmp_path / "schedule-control.db"))
         options = {"user_isolation": isolation}
         if authorization:
             options["authorization"] = Authorization(verification_keys=[SECRET], algorithm="HS256")
+        if stored_admin:
+            # An administrator by a stored role: the role store holds the admin scope, and no token carries it.
+            options["authorization"].define_role("owner", ["agent_os:admin"])
+            options["authorization"].assign(stored_admin, "owner")
         self.os = AgentOS(
             id="company-decision-tools",
             db=self.db,
@@ -213,6 +217,71 @@ def test_two_schedules_with_one_name_are_told_apart(system):
     assert asked.startswith("Not done: 2 schedules are named 'agentos-maintenance'"), asked
     assert first in asked and second in asked and "Goal 'This AgentOS'" in asked and "Goal 'Maintenance'" in asked
     assert system.enabled(first) is True and system.enabled(second) is True
+
+
+def test_a_name_means_the_persons_own_schedule_and_another_users_is_said_to_be_theirs(system):
+    lees = system.persons_schedule(user="lee", name="daily-report")
+
+    # sam owns no schedule of that name. The one found is lee's, and the answer says so.
+    paused = system.call("pause_schedule", member("sam"), schedule="daily-report")
+    assert paused.startswith(f"Paused user lee's schedule 'daily-report' ({lees})"), paused
+    # A confirmed name does not say whose schedule it is, so another user's is deleted by its ID.
+    refused = system.call("delete_schedule", member("sam"), schedule_id="daily-report", name="daily-report")
+    assert refused.startswith("Not done") and "user lee's schedule 'daily-report'" in refused and lees in refused
+    assert system.db.get_schedule(lees) is not None
+    deleted = system.call("delete_schedule", member("sam"), schedule_id=lees, name="daily-report")
+    assert deleted.startswith("Deleted user lee's schedule 'daily-report'"), deleted
+
+    # With a schedule of their own by that name, the name is their own.
+    sams, lees = (
+        system.persons_schedule(user="sam", name="nightly"),
+        system.persons_schedule(user="lee", name="nightly"),
+    )
+    assert system.call("pause_schedule", member("sam"), schedule="nightly").startswith("Paused schedule 'nightly' (")
+    assert system.enabled(sams) is False and system.enabled(lees) is True
+    assert system.call("delete_schedule", member("sam"), schedule_id="nightly", name="nightly").startswith("Deleted")
+    assert system.db.get_schedule(sams) is None and system.db.get_schedule(lees) is not None
+
+    # Two other users' schedules with one name are listed with their owners.
+    kims = system.persons_schedule(user="kim", name="nightly")
+    asked = system.call("pause_schedule", member("sam"), schedule="nightly")
+    assert asked.startswith("Not done: 2 schedules are named 'nightly'"), asked
+    assert f"{lees} is user lee's schedule 'nightly'" in asked and f"{kims} is user kim's schedule 'nightly'" in asked
+
+
+def test_an_administrator_by_a_stored_role_stops_what_a_member_cannot(tmp_path):
+    from agno.os.auth import resolve_authorization_provider
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.run import RunContext
+    from agno.run.authorization import RunAuthorization
+
+    built = System(tmp_path, stored_admin="ada")
+    try:
+        _, routine_id = built.routine()
+
+        def signed_in(user):
+            # A token with no scopes: what the person may do is read from the role store.
+            provider = resolve_authorization_provider(built.os._manager_app)
+            person = AuthorizationContext(principal_id=user, scopes=[], claims={"sub": user})
+            authority = RunAuthorization(provider, person)
+            return RunContext(run_id="chat-run", session_id="chat-session", user_id=user, authorization=authority)
+
+        refused = built.call("pause_schedule", signed_in("sam"), schedule=COMPANY_AUTOMATION_SCHEDULE_ID)
+        assert refused.startswith("Not done") and "Only an administrator" in refused, refused
+        assert built.enabled(COMPANY_AUTOMATION_SCHEDULE_ID) is True
+
+        paused = built.call("pause_schedule", signed_in("ada"), schedule=COMPANY_AUTOMATION_SCHEDULE_ID)
+        assert paused.startswith("Paused Company automation") and AUTOMATION_PAUSED_EFFECT in paused, paused
+        assert built.call("resume_schedule", signed_in("ada"), schedule=COMPANY_AUTOMATION_SCHEDULE_ID).startswith(
+            "Resumed Company automation"
+        )
+        assert built.call("pause_schedule", signed_in("ada"), schedule="review").startswith("Paused Routine 'review'")
+        assert built.call("delete_schedule", signed_in("ada"), schedule_id=routine_id, name="review").startswith(
+            "Deleted Routine 'review'"
+        )
+        assert built.db.get_schedule(routine_id) is None
+    finally:
+        built.db.close()
 
 
 @pytest.mark.parametrize("caller", ["routine-run", "task-run", "service-account", "scheduler"])
