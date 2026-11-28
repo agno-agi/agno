@@ -289,7 +289,8 @@ class PineconeDb(VectorDb):
 
         vectors = []
         for document in documents:
-            document.embed(embedder=self.embedder)
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
             document.meta_data["text"] = document.content
             # Include name and content_id in metadata
             metadata = document.meta_data.copy()

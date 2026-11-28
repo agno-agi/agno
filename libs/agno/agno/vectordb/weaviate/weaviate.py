@@ -325,7 +325,8 @@ class Weaviate(VectorDb):
         collection = self.get_client().collections.get(self.collection)
 
         for document in documents:
-            document.embed(embedder=self.embedder)
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
             if document.embedding is None:
                 log_error(f"Document embedding is None: {document.name}")
                 continue

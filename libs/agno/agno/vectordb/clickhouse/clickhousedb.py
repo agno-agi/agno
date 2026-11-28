@@ -352,7 +352,8 @@ class Clickhouse(VectorDb):
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         for document in documents:
-            document.embed(embedder=self.embedder)
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             _id = self._scoped_record_id(cleaned_content, user_id)
 
@@ -407,42 +408,44 @@ class Clickhouse(VectorDb):
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
 
-        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
-            # Use batch embedding when enabled and supported
-            try:
-                # Extract content from all documents
-                doc_contents = [doc.content for doc in documents]
+        docs_to_embed = [doc for doc in documents if doc.embedding is None]
+        if docs_to_embed:
+            if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+                # Use batch embedding when enabled and supported
+                try:
+                    # Extract content from documents needing embeddings
+                    doc_contents = [doc.content for doc in docs_to_embed]
 
-                # Get batch embeddings and usage
-                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                    # Get batch embeddings and usage
+                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                # Process documents with pre-computed embeddings
-                for j, doc in enumerate(documents):
-                    try:
-                        if j < len(embeddings):
-                            doc.embedding = embeddings[j]
-                            doc.usage = usages[j] if j < len(usages) else None
-                    except Exception:
-                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
+                    # Process documents with pre-computed embeddings
+                    for j, doc in enumerate(docs_to_embed):
+                        try:
+                            if j < len(embeddings):
+                                doc.embedding = embeddings[j]
+                                doc.usage = usages[j] if j < len(usages) else None
+                        except Exception:
+                            logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
-            except Exception as e:
-                # A throttle must not fall back to per-item calls, which would throttle harder.
-                is_rate_limit = is_rate_limit_error(e)
+                except Exception as e:
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
-                if is_rate_limit:
-                    logger.exception("Rate limit detected during batch embedding.")
-                    raise e
-                else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
-                    # Fall back to individual embedding
-                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                    raise_embedding_failures(results)
-        else:
-            # Use individual embedding
-            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-            raise_embedding_failures(results)
+                    if is_rate_limit:
+                        logger.exception("Rate limit detected during batch embedding.")
+                        raise e
+                    else:
+                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+                        # Fall back to individual embedding
+                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in docs_to_embed]
+                        results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        raise_embedding_failures(results)
+            else:
+                # Use individual embedding
+                embed_tasks = [document.async_embed(embedder=self.embedder) for document in docs_to_embed]
+                results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                raise_embedding_failures(results)
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")

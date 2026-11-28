@@ -283,7 +283,8 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 counter = 0
                 for document in batch:
-                    document.embed(embedder=self.embedder)
+                    if document.embedding is None:
+                        document.embed(embedder=self.embedder)
                     cleaned_content = document.content.replace("\x00", "\ufffd")
                     # Include content_hash in ID to ensure uniqueness across different content hashes
                     base_id = document.id or md5(cleaned_content.encode()).hexdigest()
@@ -365,7 +366,8 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 counter = 0
                 for document in batch:
-                    document.embed(embedder=self.embedder)
+                    if document.embedding is None:
+                        document.embed(embedder=self.embedder)
                     cleaned_content = document.content.replace("\x00", "\ufffd")
                     # Include content_hash in ID to ensure uniqueness across different content hashes
                     base_id = document.id or md5(cleaned_content.encode()).hexdigest()

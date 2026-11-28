@@ -571,7 +571,8 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
                 doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
@@ -617,7 +618,8 @@ class MongoDb(VectorDb):
 
         for document in documents:
             try:
-                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
                 doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)

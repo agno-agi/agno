@@ -417,13 +417,15 @@ class Qdrant(VectorDb):
 
             if self.search_type == SearchType.vector:
                 # For vector search, maintain backward compatibility with unnamed vectors
-                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    document.embed(embedder=self.embedder)
                 vector = document.embedding  # type: ignore
             else:
                 # For other search types, use named vectors
                 vector = {}
                 if self.search_type in [SearchType.hybrid]:
-                    document.embed(embedder=self.embedder)
+                    if document.embedding is None:
+                        document.embed(embedder=self.embedder)
                     vector[self.dense_vector_name] = document.embedding
 
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]:
@@ -486,44 +488,44 @@ class Qdrant(VectorDb):
 
         # Apply batch embedding when needed for vector or hybrid search
         if self.search_type in [SearchType.vector, SearchType.hybrid]:
-            if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
-                # Use batch embedding when enabled and supported
-                try:
-                    # Extract content from all documents
-                    doc_contents = [doc.content for doc in documents]
+            docs_to_embed = [doc for doc in documents if doc.embedding is None]
+            if docs_to_embed:
+                if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+                    # Use batch embedding when enabled and supported
+                    try:
+                        # Extract content from documents needing embeddings
+                        doc_contents = [doc.content for doc in docs_to_embed]
 
-                    # Get batch embeddings and usage
-                    embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+                        # Get batch embeddings and usage
+                        embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
 
-                    # Process documents with pre-computed embeddings
-                    for j, doc in enumerate(documents):
-                        try:
-                            if j < len(embeddings):
-                                doc.embedding = embeddings[j]
-                                doc.usage = usages[j] if j < len(usages) else None
-                        except Exception as e:
-                            log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
+                        # Process documents with pre-computed embeddings
+                        for j, doc in enumerate(docs_to_embed):
+                            try:
+                                if j < len(embeddings):
+                                    doc.embedding = embeddings[j]
+                                    doc.usage = usages[j] if j < len(usages) else None
+                            except Exception as e:
+                                log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
-                except Exception as e:
-                    # A throttle must not fall back to per-item calls, which would throttle harder.
-                    is_rate_limit = is_rate_limit_error(e)
+                    except Exception as e:
+                        # A throttle must not fall back to per-item calls, which would throttle harder.
+                        is_rate_limit = is_rate_limit_error(e)
 
-                    if is_rate_limit:
-                        log_error(f"Rate limit detected during batch embedding.: {str(e)}")
-                        raise e
-                    else:
-                        log_warning(
-                            f"Async batch embedding failed, falling back to individual embeddings: {e}",
-                        )
+                        if is_rate_limit:
+                            log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                            raise e
+                        else:
+                            log_warning(
+                                f"Async batch embedding failed, falling back to individual embeddings: {e}",
+                            )
 
-                        # Fall back to individual embedding
-                        for doc in documents:
-                            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                            # Fall back to individual embedding
+                            for doc in docs_to_embed:
                                 await doc.async_embed(embedder=self.embedder)
-            else:
-                # Use individual embedding
-                for doc in documents:
-                    if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                else:
+                    # Use individual embedding
+                    for doc in docs_to_embed:
                         await doc.async_embed(embedder=self.embedder)
 
         async def process_document(document):
