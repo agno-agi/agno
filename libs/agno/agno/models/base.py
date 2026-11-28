@@ -35,6 +35,7 @@ from agno.exceptions import (
     AgentRunException,
     ContextWindowExceededError,
     ModelProviderError,
+    ModelResponseIncompleteError,
     RetryableModelProviderError,
     RunCancelledException,
 )
@@ -201,6 +202,7 @@ class Model(ABC):
 
         Non-retryable errors include:
         - ContextWindowExceededError (fast path after ModelProviderError.classify)
+        - ModelResponseIncompleteError: the same request is cut off the same way
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
 
@@ -210,7 +212,7 @@ class Model(ABC):
         - Anything else not explicitly non-retryable
         """
         # Fast path: already classified by ModelProviderError.classify()
-        if isinstance(error, ContextWindowExceededError):
+        if isinstance(error, (ContextWindowExceededError, ModelResponseIncompleteError)):
             return False
 
         if error.status_code in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
