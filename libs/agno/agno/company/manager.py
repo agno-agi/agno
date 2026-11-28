@@ -393,15 +393,22 @@ class CompanyManager:
         """Pause every scheduled Routine of an archived Goal, with the reason the scheduler gives.
 
         A failure is logged and the Goal stays archived: the scheduler pauses such a Routine itself
-        when it comes due.
+        when it comes due. The pause is not an edit, so the Routine keeps its updated_at.
         """
         from agno.scheduler import ScheduleManager
+        from agno.scheduler.executor import _preserve_updated_at
 
         try:
             schedules = ScheduleManager(self.schedule_db)
             for schedule in schedules.list_all(enabled=True, raise_on_error=False):
                 if _is_goal_routine(schedule, goal_id):
-                    schedules._call("update_schedule", schedule.id, enabled=False, disabled_reason=GOAL_ARCHIVED_REASON)
+                    schedules._call(
+                        "update_schedule",
+                        schedule.id,
+                        enabled=False,
+                        disabled_reason=GOAL_ARCHIVED_REASON,
+                        **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
+                    )
         except Exception as exc:
             log_error(f"Routines of archived Goal {goal_id} were not paused: {type(exc).__name__}: {exc}")
 
@@ -1542,16 +1549,21 @@ class AsyncCompanyManager:
         """Pause every scheduled Routine of an archived Goal, with the reason the scheduler gives.
 
         A failure is logged and the Goal stays archived: the scheduler pauses such a Routine itself
-        when it comes due.
+        when it comes due. The pause is not an edit, so the Routine keeps its updated_at.
         """
         from agno.scheduler import ScheduleManager
+        from agno.scheduler.executor import _preserve_updated_at
 
         try:
             schedules = ScheduleManager(self.schedule_db)
             for schedule in await schedules.alist_all(enabled=True, raise_on_error=False):
                 if _is_goal_routine(schedule, goal_id):
                     await schedules._acall(
-                        "update_schedule", schedule.id, enabled=False, disabled_reason=GOAL_ARCHIVED_REASON
+                        "update_schedule",
+                        schedule.id,
+                        enabled=False,
+                        disabled_reason=GOAL_ARCHIVED_REASON,
+                        **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
                     )
         except Exception as exc:
             log_error(f"Routines of archived Goal {goal_id} were not paused: {type(exc).__name__}: {exc}")

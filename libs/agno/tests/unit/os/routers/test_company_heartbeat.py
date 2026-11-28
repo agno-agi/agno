@@ -1,6 +1,7 @@
 """Heartbeat routes consume scheduler behavior and preserve bounded authority."""
 
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1720,7 +1721,7 @@ def test_yaml_goals_with_runtime_config_are_not_silently_discarded(tmp_path):
     db.close()
 
 
-def test_deleting_a_goal_pauses_its_routines_and_restoring_leaves_them_paused(system):
+def test_deleting_a_goal_pauses_its_routines_and_restoring_leaves_them_paused(system, monkeypatch):
     client, _, db = system
     goal = client.post("/company/goals", json={"name": "Docs"}).json()
     other = client.post("/company/goals", json={"name": "Site"}).json()
@@ -1735,10 +1736,15 @@ def test_deleting_a_goal_pauses_its_routines_and_restoring_leaves_them_paused(sy
     assert daily.json()["enabled"] is True and daily.json()["goal_status"] == "active"
     assert daily.json()["routine_name"] == "daily" and daily.json()["goal_name"] == "Docs"
 
+    edited = db.get_schedule(daily.json()["id"])["updated_at"]
+    later = int(time.time()) + 1000
+    monkeypatch.setattr(time, "time", lambda: later)
     assert client.delete("/company/goals/" + goal["id"]).status_code == 204
 
     stored = db.get_schedule(daily.json()["id"])
     assert stored["enabled"] is False and stored["disabled_reason"] == "company_goal_archived"
+    # The pause is not an edit: the Routine keeps its place in a list sorted by last edit.
+    assert stored["updated_at"] == edited
     # An on-demand Routine has no schedule to pause, and another Goal's Routine is not touched.
     assert db.get_schedule(on_demand.json()["id"])["enabled"] is True
     assert db.get_schedule(kept.json()["id"])["enabled"] is True
