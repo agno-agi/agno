@@ -209,6 +209,16 @@ def test_delete_by_metadata(lance_db, sample_documents):
     assert lance_db.get_count() == 2
 
 
+def test_delete_by_metadata_empty_filter_deletes_nothing(lance_db, sample_documents):
+    """An empty metadata dict must not match every row"""
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    assert lance_db.get_count() == 3
+
+    result = lance_db.delete_by_metadata({})
+    assert result is False
+    assert lance_db.get_count() == 3
+
+
 def test_delete_by_content_id(lance_db, sample_documents):
     """Test deleting documents by content ID"""
     # Add content_id to sample documents

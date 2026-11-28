@@ -1018,6 +1018,9 @@ class Qdrant(VectorDb):
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete all points where the given metadata is contained in the meta_data payload field."""
+        if not metadata:
+            log_warning("No metadata provided for deletion; refusing to match every point.")
+            return False
         try:
             log_info(f"Attempting to delete all points with metadata: {metadata}")
 

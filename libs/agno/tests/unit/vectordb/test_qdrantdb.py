@@ -371,6 +371,14 @@ def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
         assert result is False
 
 
+def test_delete_by_metadata_empty_filter_deletes_nothing(qdrant_db, mock_qdrant_client):
+    """An empty metadata dict must not turn into a match-all filter"""
+    result = qdrant_db.delete_by_metadata({})
+    assert result is False
+    mock_qdrant_client.count.assert_not_called()
+    mock_qdrant_client.delete.assert_not_called()
+
+
 def test_delete_by_metadata(qdrant_db, sample_documents, mock_qdrant_client):
     """Test deleting documents by metadata"""
     # Mock insert and get_count

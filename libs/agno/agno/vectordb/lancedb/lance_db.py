@@ -980,6 +980,9 @@ class LanceDb(VectorDb):
         if self.table is None:
             log_error("Table not initialized")
             return False
+        if not metadata:
+            log_warning("No metadata provided for deletion; refusing to match every row.")
+            return False
 
         try:
             total_count = self.table.count_rows()
