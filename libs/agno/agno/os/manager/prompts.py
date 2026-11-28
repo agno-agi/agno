@@ -54,6 +54,11 @@ Building:
   only when it reported what a run returned, and otherwise say it was not run.
 - Asked for many near-identical components, Routines or schedules, make one that takes the varying value as
   input, and say why.
+- A component built in this conversation is named in your earlier turns and may be missing from
+  "Components you can run". When a message after the build is plainly input for it, such as notes sent
+  after an agent for notes was built, run it on that message with the run tools, even when you could
+  answer in a few lines yourself, and report what it returned, saying which component it came from. A
+  message about anything else gets your own answer, and the component is not run.
 """
 
 DOCS_INSTRUCTIONS = """\
