@@ -465,7 +465,9 @@ class AgentCoreSandbox(Sandbox):
                 raise SandboxError("AgentCore computer refused the command: " + err.strip()[-500:])
         try:
             if code or timed_out:
-                raise ValueError(err[-500:] or "command transport timed out")
+                # A command that left no message timed out only if AgentCore said so.
+                silent = "timed out" if timed_out else f"ended with exit code {code} and left no message"
+                raise ValueError(err[-500:] or "command transport " + silent)
             result = ExecResult(**json.loads(out))
         except (TypeError, ValueError) as error:
             await self.astop(handle)
