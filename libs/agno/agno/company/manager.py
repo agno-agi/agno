@@ -690,6 +690,7 @@ class CompanyManager:
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title and the Project change, the rest requires a
@@ -697,13 +698,15 @@ class CompanyManager:
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
-        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
-        on its history.
+        Goal takes the Goal of the Project it moves into, or goal_id when it moves into or stays in
+        the Default Project. An accepted Task moves while it is Ready, In review or Done, into an
+        active Project, and only a person moves it: moved_by is recorded on its history.
         """
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
+        if goal_id is not None and "project_id" not in fields:
+            raise ValueError("A Task is filed under a Goal together with its Project")
         existing = self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
@@ -731,6 +734,17 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if goal_id is not None and goal_id != (existing["goal_id"] or project["goal_id"]):
+                if existing["goal_id"] is not None:
+                    raise ValueError("A Task keeps its Goal")
+                # Refused for a Project of another Goal, as for a Task that already had this one.
+                _task_goal(goal_id, project)
+                if self.db.get_goal(goal_id) is None:
+                    raise LookupError("Goal not found")
+                # The Default Project has no Goal: the Task takes the one named, which storage
+                # is given by name beside the fields.
+                project = {**project, "goal_id": goal_id}
+                fields["goal_id"] = goal_id
             if _require_goal_consent(existing, project, moved_by) and expected_status is None:
                 # An acceptance that lands after this check is not carried into the Goal unseen.
                 expected_status = existing["status"]
@@ -1817,6 +1831,7 @@ class AsyncCompanyManager:
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title and the Project change, the rest requires a
@@ -1824,13 +1839,15 @@ class AsyncCompanyManager:
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
-        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
-        on its history.
+        Goal takes the Goal of the Project it moves into, or goal_id when it moves into or stays in
+        the Default Project. An accepted Task moves while it is Ready, In review or Done, into an
+        active Project, and only a person moves it: moved_by is recorded on its history.
         """
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
+        if goal_id is not None and "project_id" not in fields:
+            raise ValueError("A Task is filed under a Goal together with its Project")
         existing = await self.db.get_task(task_id, user_id=user_id)
         if existing is None:
             return None
@@ -1858,6 +1875,17 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if goal_id is not None and goal_id != (existing["goal_id"] or project["goal_id"]):
+                if existing["goal_id"] is not None:
+                    raise ValueError("A Task keeps its Goal")
+                # Refused for a Project of another Goal, as for a Task that already had this one.
+                _task_goal(goal_id, project)
+                if await self.db.get_goal(goal_id) is None:
+                    raise LookupError("Goal not found")
+                # The Default Project has no Goal: the Task takes the one named, which storage
+                # is given by name beside the fields.
+                project = {**project, "goal_id": goal_id}
+                fields["goal_id"] = goal_id
             if _require_goal_consent(existing, project, moved_by) and expected_status is None:
                 # An acceptance that lands after this check is not carried into the Goal unseen.
                 expected_status = existing["status"]

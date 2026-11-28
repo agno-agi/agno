@@ -586,3 +586,123 @@ async def test_a_move_that_gives_a_goal_does_not_carry_an_acceptance_that_landed
     assert [entry.get("action") for entry in now["transitions"]] == [None]
     # A move that gives no Goal is not tied to the stage: it is allowed in each stage that moves.
     await do(manager.update_task(draft["id"], moved_by="bob", project_id=None))
+
+
+# ----------------------------------------------------------------- a Task with no Goal is filed under one
+
+
+async def loose_task_at(db, manager, status):
+    """A Task with no Goal in the Default Project, taken to a stage the way the product takes it there."""
+    task = await do(manager.create_task(title="Check upgrades", brief="Check"))
+    assert (task["goal_id"], task["project_id"]) == (None, DEFAULT_PROJECT_ID)
+    if status == "backlog":
+        return task
+    accept = dict(executor_type="agent", executor_id="writer", accepted_by="alice")
+    task = await do(manager.transition_task(task_id=task["id"], target="ready", reason="Accepted", **accept))
+    if status == "ready":
+        return task
+    if status == "cancelled":
+        return await do(manager.transition_task(task_id=task["id"], target="cancelled", reason="Dropped"))
+    task = await do(db.start_task_run(task["id"], 1, task["transitions"], user_id="alice", run_db_id="runs"))
+    if status == "in_progress":
+        return task
+    run_id = task_run_id(task["id"], 1)
+    result = {"run_id": run_id, "status": "COMPLETED", "content": "Done"}
+    task = await do(db.complete_task_run(task["id"], run_id, result, expected_transitions=task["transitions"]))
+    if status == "in_review":
+        return task
+    return await do(manager.transition_task(task_id=task["id"], target="done", reason="Good", accepted_by="alice"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("status", STATUSES)
+async def test_a_task_with_no_goal_is_filed_under_a_goal_where_it_is(tmp_path, use_async, status):
+    db, manager, goal, _ = await company(tmp_path, use_async)
+    task = await loose_task_at(db, manager, status)
+    if status not in MOVABLE:
+        with pytest.raises(ValueError) as refused:
+            await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=goal["id"]))
+        assert str(refused.value) == TASK_MOVE_REFUSAL[status]
+        assert await do(db.get_task(task["id"])) == task
+        return
+    filed = await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=goal["id"]))
+    # It stays in the Default Project and carries the Goal, so its run reads that Goal's Sources.
+    assert (filed["goal_id"], filed["project_id"], filed["status"]) == (goal["id"], DEFAULT_PROJECT_ID, status)
+    entry = filed["transitions"][-1]
+    assert (entry["action"], entry["user_id"], entry["reason"]) == ("move", "alice", "Filed under a Goal")
+    assert entry["goal"] == {"from": None, "to": goal["id"]}
+    assert entry["project"] == {"from": DEFAULT_PROJECT_ID, "to": DEFAULT_PROJECT_ID}
+    assert filed["transitions"][:-1] == task["transitions"]
+    kept = ("brief", "title", "executor_type", "executor_id", "accepted_by", "job_id", "result")
+    assert {key: filed[key] for key in kept} == {key: task[key] for key in kept}
+    # Filing it again records nothing, and it now keeps that Goal.
+    again = await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=goal["id"]))
+    assert again["transitions"] == filed["transitions"]
+    other = await do(manager.create(name="Docs"))
+    with pytest.raises(ValueError, match="A Task keeps its Goal"):
+        await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=other["id"]))
+    assert (await do(db.get_task(task["id"])))["goal_id"] == goal["id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_a_task_is_filed_only_under_a_goal_that_exists_and_fits_its_project(tmp_path, use_async):
+    db, manager, goal, (release, _) = await company(tmp_path, use_async)
+    task = await loose_task_at(db, manager, "ready")
+    with pytest.raises(LookupError, match="Goal not found"):
+        await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id="missing"))
+    other = await do(manager.create(name="Docs"))
+    # A Project carries its own Goal: another one named beside it is refused.
+    with pytest.raises(ValueError, match="Task and Project must belong to the same Goal"):
+        await do(manager.update_task(task["id"], moved_by="alice", project_id=release["id"], goal_id=other["id"]))
+    # A Goal is given with the Project it is filed in, never alone.
+    with pytest.raises(ValueError, match="filed under a Goal together with its Project"):
+        await do(manager.update_task(task["id"], moved_by="alice", goal_id=goal["id"]))
+    assert await do(db.get_task(task["id"])) == task
+    # An archived Goal takes no Task.
+    await do(manager.delete(other["id"]))
+    with pytest.raises((LookupError, ValueError)):
+        await do(manager.update_task(task["id"], moved_by="alice", project_id=None, goal_id=other["id"]))
+    assert await do(db.get_task(task["id"])) == task
+    # Named beside a Project of the same Goal, the move gives the Goal as before.
+    moved = await do(manager.update_task(task["id"], moved_by="alice", project_id=release["id"], goal_id=goal["id"]))
+    assert (moved["goal_id"], moved["project_id"]) == (goal["id"], release["id"])
+    assert "goal" not in moved["transitions"][-1]
+
+
+def test_super_agent_files_a_task_under_a_goal_that_has_no_project_for_it(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, _ = records(client)
+    added = call(agent_os, "add_company_task", context(), title="Check upgrades", brief="Check.", start=False)
+    assert added.startswith("Added"), added
+    task = next(row for row in db.get_tasks(limit=100)[0] if row["title"] == "Check upgrades")
+    assert (task["goal_id"], task["project_id"], task["status"]) == (None, DEFAULT_PROJECT_ID, "ready")
+    goal = db.get_goal(project["goal_id"])
+    file = dict(task_id=task["id"], project_id=None, goal_id=goal["id"])
+    # While it is Ready its run would act for the Goal under alice's acceptance, so only alice files it.
+    refused = call(agent_os, "move_company_task", context(user="bob"), **file)
+    assert refused == "Not done: " + TASK_MOVE_REFUSAL["goal"]
+    assert db.get_task(task["id"])["goal_id"] is None
+    reply = call(agent_os, "move_company_task", context(), **file)
+    assert reply == (
+        f"Filed 'Check upgrades' (Task {task['id']}) under Goal '{goal['name']}', in Project 'Default'. "
+        "Nothing else about it changed."
+    )
+    filed = db.get_task(task["id"])
+    assert (filed["goal_id"], filed["project_id"], filed["status"]) == (goal["id"], DEFAULT_PROJECT_ID, "ready")
+    assert (filed["accepted_by"], filed["executor_id"]) == ("alice", task["executor_id"])
+    assert "already in that Project" in call(agent_os, "move_company_task", context(), **file)
+
+
+def test_super_agent_is_told_to_file_work_under_the_goal_it_serves():
+    from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
+
+    said = " ".join(COMPANY_INSTRUCTIONS.split())
+    assert "Before adding a Task, list the Goals and the Projects and put it in the Project it serves." in said
+    assert "Work that serves a Goal and none of its Projects goes in the Default Project under that Goal" in said
+    assert "leave its Project out and pass the Goal, so its executor can read the Goal's Sources" in said
+    assert "fits no Goal and no Project goes in the Default Project with no Goal" in said
+    assert "file that Task under the Goal with move_company_task" in said
+    doc = " ".join(CompanyTaskTools.aadd_company_task.__doc__.split())
+    assert "goal_id: The Goal this Task serves: check list_company_goals." in doc
