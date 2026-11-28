@@ -225,6 +225,32 @@ def _shorten(value: Any, keep: int) -> Any:
     return value
 
 
+def _shorten_event(event: Dict[str, Any], keep: int) -> Dict[str, Any]:
+    """``event`` shortened, with a permission request it carries left whole.
+
+    A paused event holds every tool call of the turn so far, so earlier output can put it over
+    the limit. It also holds the action a person is asked to confirm: in the request, in its
+    requirement and in the waiting tool call. The host checks that action against the digest
+    taken of it here, so a cut there would make the request impossible to confirm.
+    """
+    request = event.get("external_agent_request")
+    if not isinstance(request, dict):
+        return _shorten(event, keep)
+    waiting = request.get("tool_call_id")
+    shortened: Dict[str, Any] = {}
+    for key, value in event.items():
+        if key in ("external_agent_request", "requirements"):
+            shortened[key] = value
+        elif key == "tools" and isinstance(value, list):
+            shortened[key] = [
+                tool if isinstance(tool, dict) and tool.get("tool_call_id") == waiting else _shorten(tool, keep)
+                for tool in value
+            ]
+        else:
+            shortened[key] = _shorten(value, keep)
+    return shortened
+
+
 def _fit(event: Dict[str, Any]) -> bytes:
     """The event's journal frame, with its long text shortened when the frame is over its limit.
 
@@ -237,7 +263,7 @@ def _fit(event: Dict[str, Any]) -> bytes:
     payload = _frame(event)
     keep = _MAX_FRAME // 4
     while len(payload) > _MAX_FRAME and keep >= _MIN_EVENT_TEXT:
-        shortened = _frame(_shorten(event, keep))
+        shortened = _frame(_shorten_event(event, keep))
         if len(shortened) <= _MAX_FRAME:
             return shortened
         keep //= 2
