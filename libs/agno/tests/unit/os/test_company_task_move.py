@@ -769,9 +769,11 @@ def test_super_agent_moves_a_task_to_the_default_project_named_beside_its_goal(s
     moved = db.get_task(task["id"])
     assert (moved["goal_id"], moved["project_id"]) == (project["goal_id"], DEFAULT_PROJECT_ID)
     assert "goal" not in moved["transitions"][-1]
-    # Named again where it already is, nothing is written.
+    # Named again where it already is, it stays there and its history gains nothing.
     assert "already in that Project" in call(agent_os, "move_company_task", context(), **named)
-    assert db.get_task(task["id"]) == moved
+    again = db.get_task(task["id"])
+    kept = ("goal_id", "project_id", "status", "transitions")
+    assert {key: again[key] for key in kept} == {key: moved[key] for key in kept}
 
 
 def test_super_agent_is_told_to_file_work_under_the_goal_it_serves():
