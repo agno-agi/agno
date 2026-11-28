@@ -1847,7 +1847,7 @@ def _build_continue_run_messages(
 
             # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
             # checked this same history before it paused, and its own messages are never folded.
-            history_copy = _conversation.replayed_history(agent, history_copy, stored_record, replay_ids)
+            history_copy = _conversation.replayed_history(agent, history_copy, stored_record, replay_ids, input)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
