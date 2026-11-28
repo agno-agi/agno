@@ -243,6 +243,11 @@ markdown = ["aiofiles"]
 pdf = ["pypdf", "fonttools"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
+csv = ["aiofiles"]
+excel = ["openpyxl", "xlrd"]
+markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
+pageindex = ["openai", "pymupdf", "PyPDF2", "tiktoken"]
 # The website and llms_txt readers both import bs4 at module scope.
 website = ["beautifulsoup4"]
 
@@ -547,6 +552,7 @@ target-version = "py39"
 # Ignore `F401` (import violations) in all `__init__.py` files
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"agno/knowledge/pageindex/_core/*" = ["F401", "F403", "F405", "F541", "F811", "E402", "E501", "E711", "E712", "E722", "W291", "W293"]
 
 [tool.mypy]
 check_untyped_defs = true
@@ -554,7 +560,7 @@ no_implicit_optional = true
 warn_unused_configs = true
 disable_error_code = ["override"]
 plugins = ["pydantic.mypy"]
-exclude = ["tests*"]
+exclude = ["tests*", "agno/knowledge/pageindex/_core"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -671,7 +677,9 @@ module = [
   "pycountry.*",
   "pymilvus.*",
   "pymongo.*",
+  "pymupdf.*",
   "pypdf.*",
+  "PyPDF2.*",
   "pytz.*",
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
@@ -732,3 +740,9 @@ module = [
   "glide_sync.*"
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "agno.knowledge.pageindex._core.*",
+]
+ignore_errors = true
