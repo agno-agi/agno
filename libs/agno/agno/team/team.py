@@ -157,6 +157,8 @@ class Team:
 
     # If True, adds a tool to allow the team to read the chat history
     read_chat_history: bool = False
+    # If True, adds a tool to allow the team to search the chat history for literal text
+    search_chat_history: bool = False
 
     # --- System message settings ---
     # A description of the Team that is added to the start of the system message.
@@ -527,6 +529,7 @@ class Team:
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
+        search_chat_history: bool = False,
         store_media: bool = True,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
@@ -646,6 +649,7 @@ class Team:
             search_knowledge=search_knowledge,
             add_search_knowledge_instructions=add_search_knowledge_instructions,
             read_chat_history=read_chat_history,
+            search_chat_history=search_chat_history,
             store_media=store_media,
             media_storage=media_storage,
             store_tool_messages=store_tool_messages,

@@ -109,7 +109,7 @@ def test_output_is_bounded_like_the_compacted_history_search(team):
     found = _default_tools._search_chat_history_function(team, session).entrypoint(pattern="needle")  # type: ignore[misc]
     assert len(found) < _SEARCH_OUTPUT_CHARS + 200
     assert all(len(line) < _SEARCH_LINE_CHARS + 50 for line in found.splitlines())
-    assert found.endswith("... more matches than fit; narrow the search.")
+    assert found.endswith("narrow the search.")
 
 
 def test_a_pattern_is_literal_text_not_a_regular_expression(team):
@@ -138,20 +138,167 @@ def test_agent_tool_searches_its_session_the_same_way():
     assert search(pattern="guide.md", context_lines=0).splitlines()[1] == "[turn 1 user] The file is docs/guide.md"
 
 
-def test_a_team_that_reads_its_chat_history_gets_the_search_tool():
+def _team_tool_names(team: Team) -> List[str]:
+    from agno.models.openai import OpenAIResponses
     from agno.run import RunContext
     from agno.team import _tools
 
-    team = Team(id="team-1", members=[], read_chat_history=True)
-    run_context = RunContext(run_id="r", session_id="s1")
     tools = _tools._determine_tools_for_model(
         team,
-        model=team.model or __import__("agno.models.openai", fromlist=["OpenAIResponses"]).OpenAIResponses(id="x"),
+        model=team.model or OpenAIResponses(id="x"),
         run_response=TeamRunOutput(run_id="r", session_id="s1", team_id="team-1"),
-        run_context=run_context,
+        run_context=RunContext(run_id="r", session_id="s1"),
         team_run_context={},
         session=_session(),
         user_id="u",
     )
-    names = [tool.name if hasattr(tool, "name") else tool.get("name") for tool in tools]
-    assert "get_chat_history" in names and "search_chat_history" in names
+    return [tool.name if hasattr(tool, "name") else tool.get("name") for tool in tools]
+
+
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        ({"read_chat_history": True}, {"get_chat_history"}),
+        ({"search_chat_history": True}, {"search_chat_history"}),
+        ({"read_chat_history": True, "search_chat_history": True}, {"get_chat_history", "search_chat_history"}),
+        ({}, set()),
+    ],
+)
+def test_each_team_history_flag_adds_only_its_own_tool(flags, expected):
+    names = _team_tool_names(Team(id="team-1", members=[], **flags))
+    assert {"get_chat_history", "search_chat_history"} & set(names) == expected
+
+
+def _plain_session(turns: List) -> TeamSession:
+    runs = [_team_run(index, question, answer) for index, (question, answer) in enumerate(turns, start=1)]
+    return TeamSession(session_id="s1", team_id="team-1", runs=runs)
+
+
+def test_a_number_matches_what_was_said_not_the_turn_labels(team):
+    turns = [("Next question.", "Done.")] * 16
+    turns[2] = ("Keep the budget at 15 dollars.", "Done.")
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    found = search(pattern="15", context_lines=0)  # type: ignore[misc]
+    assert found.splitlines()[1:] == ["[turn 3 user] Keep the budget at 15 dollars."]
+
+
+def test_a_role_word_matches_what_was_said_not_every_label(team):
+    turns = [("Next question.", "Done.")] * 5
+    turns[1] = ("How many seats does each user get?", "Done.")
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    assert search(pattern="user", context_lines=0).splitlines()[1:] == [  # type: ignore[misc]
+        "[turn 2 user] How many seats does each user get?"
+    ]
+    assert search(pattern="turn|assistant", context_lines=0).startswith("No earlier turn matches")  # type: ignore[misc]
+
+
+def test_a_match_deep_in_a_long_line_keeps_its_turn(team):
+    reply = "Background on the rollout. " * 40 + "The deploy path is /srv/app/blue."
+    turns = [("Next question.", "Done."), ("Where does it deploy?", reply)]
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    line = search(pattern="/srv/app", context_lines=0).splitlines()[1]  # type: ignore[misc]
+    assert line.startswith("[turn 2 assistant] ")
+    assert "/srv/app/blue" in line
+
+
+def _long_reply(topic: str) -> str:
+    return "\n".join(f"{i}. A step for the {topic} migration." for i in range(1, 31))
+
+
+def test_a_rare_term_is_not_buried_by_a_common_one(team):
+    # Models OR in broad words ("migration") next to the one that matters ("budget"). Long replies full of
+    # the broad word must not use up the matches before a short turn that holds the answer.
+    turns = [
+        ("Plan the billing migration.", _long_reply("billing")),
+        ("The load-test budget is 4,200 dollars.", "Noted."),
+        ("Plan the ledger migration.", _long_reply("ledger")),
+        ("Correction: the load-test budget is now 6,000 dollars.", "Noted."),
+        ("Plan the webhook migration.", _long_reply("webhook")),
+    ]
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    lines = search(pattern="migration|budget", context_lines=0).splitlines()  # type: ignore[misc]
+    budget = [line for line in lines if "budget" in line]
+    # Both values, oldest first, each with its turn, so the later one reads as the correction.
+    assert budget == [
+        "[turn 2 user] The load-test budget is 4,200 dollars.",
+        "[turn 4 user] Correction: the load-test budget is now 6,000 dollars.",
+    ]
+    assert lines[-1].endswith("narrow the search.")
+
+
+async def _agent_tool_names(agent: Agent, async_mode: bool) -> List[str]:
+    from agno.agent import _tools
+    from agno.run import RunContext
+
+    kwargs = dict(
+        run_response=RunOutput(run_id="r", session_id="s1"),
+        run_context=RunContext(run_id="r", session_id="s1"),
+        session=AgentSession(session_id="s1"),
+    )
+    tools = await _tools.aget_tools(agent, **kwargs) if async_mode else _tools.get_tools(agent, **kwargs)  # type: ignore[arg-type]
+    return [getattr(tool, "__name__", getattr(tool, "name", "")) for tool in tools]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_an_agent_that_searches_its_compacted_history_gets_one_search_tool(tmp_path, async_mode):
+    from agno.compaction import Compaction
+    from agno.compaction.types import CompactionRecord
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    db = SqliteDb(db_file=str(tmp_path / "agent.db"))
+    compaction = Compaction(search_compacted_messages=True)
+    compaction.archive_for("s1", db).write(  # type: ignore[union-attr]
+        CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1"),
+        [Message(role="user", content="archived")],
+    )
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    agent = Agent(model=model, db=db, compaction=compaction, read_chat_history=True, search_chat_history=True)
+    names = await _agent_tool_names(agent, async_mode)
+    assert "search_compacted_history" in names and "get_chat_history" in names
+    assert "search_chat_history" not in names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_an_agent_without_a_compacted_history_search_gets_the_chat_history_search(tmp_path, async_mode):
+    from agno.compaction import Compaction
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    db = SqliteDb(db_file=str(tmp_path / "agent.db"))
+    for agent in (
+        Agent(model=model, db=db, search_chat_history=True),
+        Agent(model=model, db=db, compaction=Compaction(search_compacted_messages=False), search_chat_history=True),
+        # Before the first fold num_history_runs can still drop turns, and nothing is archived yet.
+        Agent(model=model, db=db, compaction=True, search_chat_history=True),
+        # Without a db the compacted history has nowhere to live, so it can never be searched.
+        Agent(model=model, compaction=Compaction(search_compacted_messages=True), search_chat_history=True),
+    ):
+        names = await _agent_tool_names(agent, async_mode)
+        assert "search_chat_history" in names and "search_compacted_history" not in names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        ({"read_chat_history": True}, {"get_chat_history"}),
+        ({"search_chat_history": True}, {"search_chat_history"}),
+        ({"read_chat_history": True, "search_chat_history": True}, {"get_chat_history", "search_chat_history"}),
+        ({}, set()),
+    ],
+)
+async def test_each_agent_history_flag_adds_only_its_own_tool(flags, expected, async_mode):
+    names = await _agent_tool_names(Agent(id="agent-1", **flags), async_mode)
+    assert {"get_chat_history", "search_chat_history"} & set(names) == expected
+
+
+def test_the_search_flag_survives_a_config_round_trip():
+    agent = Agent.from_dict(Agent(id="agent-1", search_chat_history=True).to_dict())
+    assert agent.search_chat_history and not agent.read_chat_history
+    team = Team.from_dict(Team(id="team-1", members=[], search_chat_history=True).to_dict())
+    assert team.search_chat_history and not team.read_chat_history

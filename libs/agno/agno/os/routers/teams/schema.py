@@ -105,6 +105,7 @@ class TeamResponse(BaseModel):
             # Default tools defaults
             "search_knowledge": True,
             "read_chat_history": False,
+            "search_chat_history": False,
             "get_member_information_tool": False,
             # System message defaults
             "system_message_role": "system",
@@ -216,6 +217,7 @@ class TeamResponse(BaseModel):
         default_tools_info = {
             "search_knowledge": team.search_knowledge,
             "read_chat_history": team.read_chat_history,
+            "search_chat_history": team.search_chat_history,
             "get_member_information_tool": team.get_member_information_tool,
         }
 

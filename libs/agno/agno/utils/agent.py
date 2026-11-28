@@ -1253,12 +1253,11 @@ def search_chat_history_text(
     where in the conversation it was said. The pattern is literal text with "|" between alternatives.
     Matching and the limits on the output are those of the compacted history search.
     """
-    import re
-
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
     messages = session.get_messages(team_id=team_id, skip_roles=["system", "tool"])
     lines: List[str] = []
+    labels: List[str] = []
     turn = 0
     for message in messages:
         if message.role == "user":
@@ -1266,15 +1265,17 @@ def search_chat_history_text(
         content = message.get_content_string()
         if not content:
             continue
-        label = f"[turn {max(turn, 1)} {'user' if message.role == 'user' else 'assistant'}] "
-        lines.extend(label + line for line in content.split("\n") if line.strip())
+        label = f"[turn {max(turn, 1)} {'user' if message.role == 'user' else 'assistant'}]"
+        for line in content.split("\n"):
+            if line.strip():
+                lines.append(line)
+                labels.append(label)
     if not lines:
         return "This conversation has no earlier turns stored."
-    found = _grep("\n".join(lines), pattern, context_lines)
+    # Labels go beside the text, not in it, so a pattern never matches one and clipping never cuts one.
+    found = grep_text("\n".join(lines), pattern, context_lines, line_labels=labels)
     if not found:
         return f"No earlier turn matches {pattern[:200]!r}. {turn} turns are stored."
-    # Line numbers of the search text mean nothing to the reader: the turn label is the position.
-    found = re.sub(r"(?m)^\d+: ", "", found)
     return f"{turn} turns are stored, numbered from 1 at the start of the conversation.\n{found}"
 
 

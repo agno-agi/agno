@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -1076,7 +1076,7 @@ class Compaction:
             blocks: List[str] = []
             used = 0
             for row in rows:
-                hits = _grep(row.get("archived_messages") or "", pattern, context_lines)
+                hits = grep_text(row.get("archived_messages") or "", pattern, context_lines)
                 if not hits:
                     continue
                 # The cap holds across folds too, not just within each one.
@@ -1102,7 +1102,13 @@ def _clip_line(line: str, match_start: Optional[int]) -> str:
     return ("..." if start > 0 else "") + line[start:end] + ("..." if end < len(line) else "")
 
 
-def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20) -> str:
+def grep_text(
+    text: str,
+    pattern: str,
+    context_lines: int = 2,
+    max_matches: int = 20,
+    line_labels: Optional[List[str]] = None,
+) -> str:
     """Matching lines with surrounding context, numbered - the shape `grep -n -C` returns.
 
     The pattern is literal text, with "|" separating alternatives - never a regular expression. It
@@ -1112,50 +1118,86 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
 
     SQL prefilters which rows are worth scanning, so this only ever runs over candidates. Output is
     bounded - context lines, line length, and total size - since it goes into the context window.
+    When not everything fits, lines matching the rarest terms are kept, and context narrows before
+    a match is dropped.
+
+    ``line_labels``, one per line of ``text``, replaces the line numbers. A label is neither
+    searched nor clipped, so it always survives on the lines it names.
     """
     import re
 
     terms = search_terms(pattern)
     if not terms:
         return ""
-    compiled = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
+    compiled_terms = [re.compile(re.escape(term), re.IGNORECASE) for term in terms]
     context_lines = max(0, min(context_lines, _SEARCH_MAX_CONTEXT_LINES))
 
     lines = text.split("\n")
-    hits = {}
+    if line_labels is not None and len(line_labels) != len(lines):
+        raise ValueError(f"line_labels has {len(line_labels)} labels for {len(lines)} lines")
+    # Line index -> {term index: where that term starts in the line}.
+    found: Dict[int, Dict[int, int]] = {}
     for i, line in enumerate(lines):
-        found = compiled.search(line)
-        if found:
-            hits[i] = found.start()
-    if not hits:
+        starts = {t: m.start() for t, compiled in enumerate(compiled_terms) if (m := compiled.search(line))}
+        if starts:
+            found[i] = starts
+    if not found:
         return ""
 
-    hit_indexes = sorted(hits)
-    truncated = len(hit_indexes) > max_matches
-    hit_indexes = hit_indexes[:max_matches]
+    lines_per_term: Dict[int, int] = {}
+    for starts in found.values():
+        for t in starts:
+            lines_per_term[t] = lines_per_term.get(t, 0) + 1
 
-    # Merge overlapping context windows so a dense run of matches reads as one block.
-    spans: List[List[int]] = []
-    for index in hit_indexes:
-        start, end = max(0, index - context_lines), min(len(lines), index + context_lines + 1)
-        if spans and start <= spans[-1][1]:
-            spans[-1][1] = max(spans[-1][1], end)
-        else:
-            spans.append([start, end])
+    def rarest(i: int) -> int:
+        return min(found[i], key=lambda t: lines_per_term[t])
 
-    rendered = ""
-    for span_start, span_end in spans:
-        block = "\n".join(f"{i + 1}: {_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
-        candidate = block if not rendered else f"{rendered}\n--\n{block}"
-        if len(candidate) > _SEARCH_OUTPUT_CHARS:
-            truncated = True
+    hits = {i: found[i][rarest(i)] for i in found}
+    # A broad term the model ORed in must not use up the budget before the specific one it searched
+    # for, so when not everything fits the lines with the rarest terms win, the latest on a tie.
+    ranked = sorted(found, key=lambda i: (lines_per_term[rarest(i)], -i))
+    truncated = len(ranked) > max_matches
+    ranked = ranked[:max_matches]
+
+    def show(i: int) -> str:
+        prefix = f"{line_labels[i]} " if line_labels is not None else f"{i + 1}: "
+        return prefix + _clip_line(lines[i], hits.get(i))
+
+    def render(context: int) -> Tuple[str, bool]:
+        """The matches with ``context`` lines around each, and whether any did not fit."""
+        # The output budget goes to matches best first, each paying only for lines not shown yet.
+        included: Dict[int, str] = {}
+        used = 0
+        overflowed = False
+        for index in ranked:
+            window = range(max(0, index - context), min(len(lines), index + context + 1))
+            new = {i: show(i) for i in window if i not in included}
+            cost = sum(len(line) + 1 for line in new.values()) + len("--\n")
+            if used + cost > _SEARCH_OUTPUT_CHARS:
+                overflowed = True
+                continue
+            included.update(new)
+            used += cost
+        if not included:
+            return show(ranked[0])[:_SEARCH_OUTPUT_CHARS], True
+        # Print in text order; a gap between shown lines starts a new block.
+        out: List[str] = []
+        previous = None
+        for i in sorted(included):
+            if previous is not None and i > previous + 1:
+                out.append("--")
+            out.append(included[i])
+            previous = i
+        return "\n".join(out), overflowed
+
+    # A match is worth more than the context around it, so narrow the context before dropping one.
+    while True:
+        rendered, overflowed = render(context_lines)
+        if not overflowed or context_lines == 0:
             break
-        rendered = candidate
-    if not rendered:
-        # Even the first block is over the limit; return its start rather than nothing.
-        rendered = candidate[:_SEARCH_OUTPUT_CHARS]
-    if truncated:
-        rendered += "\n... more matches than fit; narrow the search."
+        context_lines //= 2
+    if truncated or overflowed:
+        rendered += "\n... more matches than fit, so the lines with the rarest terms are shown; narrow the search."
     return rendered
 
 

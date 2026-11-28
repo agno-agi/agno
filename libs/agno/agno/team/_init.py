@@ -122,6 +122,7 @@ def __init__(
     search_knowledge: bool = True,
     add_search_knowledge_instructions: bool = True,
     read_chat_history: bool = False,
+    search_chat_history: bool = False,
     store_media: bool = True,
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
     store_tool_messages: bool = True,
@@ -290,6 +291,7 @@ def __init__(
     team.search_knowledge = search_knowledge
     team.add_search_knowledge_instructions = add_search_knowledge_instructions
     team.read_chat_history = read_chat_history
+    team.search_chat_history = search_chat_history
 
     team.store_media = store_media
     team.media_storage = media_storage

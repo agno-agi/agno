@@ -255,16 +255,21 @@ def get_tools(
     from agno.agent._messages import agent_compaction
 
     compaction = agent_compaction(agent)
+    searches_compacted = False
     if compaction is not None and compaction.search_compacted_messages:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)
+            searches_compacted = True
 
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
+    # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
+    # tool results included. Before that, num_history_runs can still drop turns it never archives.
+    if agent.search_chat_history and not searches_compacted:
         agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
@@ -408,16 +413,21 @@ async def aget_tools(
     from agno.agent._messages import agent_compaction
 
     compaction = agent_compaction(agent)
+    searches_compacted = False
     if compaction is not None and compaction.search_compacted_messages:
         archive_tools = compaction.tools_for(session.session_id, agent.db)
         if archive_tools:
             agent_tools.extend(archive_tools)
+            searches_compacted = True
 
     _append_filesystem_tools(agent, agent_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
+    # Once a fold exists, compaction sends every later turn and its search covers the folded ones,
+    # tool results included. Before that, num_history_runs can still drop turns it never archives.
+    if agent.search_chat_history and not searches_compacted:
         agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))

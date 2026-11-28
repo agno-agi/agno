@@ -2787,11 +2787,11 @@ def test_folded_envelope_ids_survive_in_the_summary():
 
 
 def test_grep_returns_numbered_lines_with_context():
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
     text = "alpha\nbeta\nINC-42 here\ndelta\nepsilon"
 
-    out = _grep(text, "INC-42", context_lines=1)
+    out = grep_text(text, "INC-42", context_lines=1)
 
     assert "3: INC-42 here" in out
     assert "2: beta" in out
@@ -2804,21 +2804,21 @@ def test_search_patterns_are_literal_so_they_cannot_backtrack():
     line and cannot be interrupted; as literal text it is a plain substring search."""
     import time
 
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
     started = time.perf_counter()
-    result = _grep("a" * 40 + "!", "(a+)+$")
+    result = grep_text("a" * 40 + "!", "(a+)+$")
 
     assert time.perf_counter() - started < 0.5
     assert result == ""
-    assert "port \\d+ here" in _grep("literal port \\d+ here", "port \\d+", context_lines=0)
+    assert "port \\d+ here" in grep_text("literal port \\d+ here", "port \\d+", context_lines=0)
 
 
 def test_search_alternatives_match_any_term_case_insensitively():
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
     text = "Build hash b7f2\nRotation window: 47 days\nunrelated"
-    out = _grep(text, "build hash|ROTATION window", context_lines=0)
+    out = grep_text(text, "build hash|ROTATION window", context_lines=0)
 
     assert "Build hash b7f2" in out and "Rotation window" in out
     assert "unrelated" not in out
@@ -2826,19 +2826,19 @@ def test_search_alternatives_match_any_term_case_insensitively():
 
 def test_search_context_lines_are_capped():
     """An unbounded context_lines returned the whole archive."""
-    from agno.compaction.compaction import _SEARCH_MAX_CONTEXT_LINES, _grep
+    from agno.compaction.compaction import _SEARCH_MAX_CONTEXT_LINES, grep_text
 
     text = "\n".join(f"line {i}" for i in range(500))
-    out = _grep(text, "line 250", context_lines=100_000)
+    out = grep_text(text, "line 250", context_lines=100_000)
 
     assert len(out.splitlines()) == 2 * _SEARCH_MAX_CONTEXT_LINES + 1
 
 
 def test_a_long_matching_line_is_clipped_around_the_match():
     """A long line came back whole; clipped from the start, a match in the middle would be lost."""
-    from agno.compaction.compaction import _SEARCH_LINE_CHARS, _grep
+    from agno.compaction.compaction import _SEARCH_LINE_CHARS, grep_text
 
-    out = _grep("x" * 150_000 + " SECRET-42 " + "y" * 150_000, "secret-42")
+    out = grep_text("x" * 150_000 + " SECRET-42 " + "y" * 150_000, "secret-42")
 
     assert "SECRET-42" in out
     assert len(out) < _SEARCH_LINE_CHARS + 50
@@ -2846,10 +2846,10 @@ def test_a_long_matching_line_is_clipped_around_the_match():
 
 def test_search_output_is_capped():
     """The result goes into the context window; on a small model an unbounded one overflows it."""
-    from agno.compaction.compaction import _SEARCH_OUTPUT_CHARS, _grep
+    from agno.compaction.compaction import _SEARCH_OUTPUT_CHARS, grep_text
 
     text = "\n".join(f"hit {i} " + "z" * 400 for i in range(5_000))
-    out = _grep(text, "hit", context_lines=0, max_matches=1_000)
+    out = grep_text(text, "hit", context_lines=0, max_matches=1_000)
 
     assert len(out) <= _SEARCH_OUTPUT_CHARS + 100
     assert out.endswith("narrow the search.")
@@ -2873,19 +2873,49 @@ def test_the_search_tool_caps_output_across_folds():
     assert "narrow the search" in out
 
 
+def test_grep_keeps_the_rarest_matches_when_they_do_not_all_fit():
+    """A broad term in the pattern fills the match budget; the rare one is what the model searched for."""
+    from agno.compaction.compaction import grep_text
+
+    lines = [f"deploy step {i}" for i in range(50)]
+    lines.insert(40, "the rotation window is 02:00 UTC")
+    out = grep_text("\n".join(lines), "deploy|rotation window", context_lines=0, max_matches=5)
+
+    assert "41: the rotation window is 02:00 UTC" in out
+    # What is shown still reads top to bottom.
+    numbers = [int(line.split(":")[0]) for line in out.splitlines() if line[:1].isdigit()]
+    assert numbers == sorted(numbers)
+    assert out.endswith("narrow the search.")
+
+
+def test_grep_gives_up_context_before_it_gives_up_a_match():
+    """Wide context around many matches overflows the output; the matches matter more than their context."""
+    from agno.compaction.compaction import grep_text
+
+    lines = [f"deploy step {i} " + "z" * 400 for i in range(60)]
+    lines[50] = "deploy hotfix " + "z" * 400
+    lines[10] = "the rotation window is 02:00 UTC"
+    out = grep_text("\n".join(lines), "deploy|hotfix|rotation window", context_lines=10)
+
+    # The hotfix match sits among dense matches whose merged context alone overflows the output.
+    assert "51: deploy hotfix" in out
+    assert "11: the rotation window is 02:00 UTC" in out
+    assert out.endswith("narrow the search.")
+
+
 def test_grep_falls_back_to_literal_on_bad_regex():
     """The caller is a model; it may send plain text full of regex metacharacters."""
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
-    assert "found" in _grep("a (unclosed found", "(unclosed", context_lines=0)
+    assert "found" in grep_text("a (unclosed found", "(unclosed", context_lines=0)
 
 
 def test_grep_merges_overlapping_context():
-    from agno.compaction.compaction import _grep
+    from agno.compaction.compaction import grep_text
 
     text = "\n".join(f"hit {i}" for i in range(5))
 
-    out = _grep(text, "hit", context_lines=2)
+    out = grep_text(text, "hit", context_lines=2)
 
     # One merged block, not five overlapping ones.
     assert "--" not in out
