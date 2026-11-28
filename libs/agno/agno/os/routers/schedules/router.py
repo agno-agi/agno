@@ -122,6 +122,9 @@ def get_schedule_router(
         owner = get_scoped_user_id(request)
         if owner is None or agent_os is None or managed_by == "company":
             return owner
+        if not getattr(request.state, "authenticated", False):
+            # With no sign-in the caller only declares who they are, and stays filtered to that user.
+            return owner
         from agno.os.router import _caller_is_admin
 
         return None if await _caller_is_admin(agent_os, request) else owner
