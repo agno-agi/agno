@@ -20,7 +20,7 @@ try:
     from membase import Membase
 except ImportError:
     raise ImportError(
-        "membase is not installed. Please install it using `uv pip install unibaseio-membase`."
+        "membase is not installed. Please install it using `uv pip install membase-ai`."
     )
 
 
