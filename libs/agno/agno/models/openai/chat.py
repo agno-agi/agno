@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
 
 import httpx
@@ -9,9 +9,10 @@ from pydantic import BaseModel
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
+from agno.models.openai.types import ReasoningEffort, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
@@ -47,8 +48,8 @@ class OpenAIChat(Model):
 
     # Request parameters
     store: Optional[bool] = None
-    reasoning_effort: Optional[str] = None
-    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
+    verbosity: Optional[Verbosity] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -66,7 +67,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
-    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    service_tier: Optional[ServiceTier] = None  # Defaults to "auto" when not set
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
@@ -332,20 +333,24 @@ class OpenAIChat(Model):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
         if (message.images is not None and len(message.images) > 0) or (
             message.audio is not None and len(message.audio) > 0
         ):
-            # Ignore non-string message content
-            # because we assume that the images/audio are already added to the message
-            if isinstance(message.content, str):
-                message_dict["content"] = [{"type": "text", "text": message.content}]
+            # A non-empty content list is sent as written: its parts are taken to hold the media already.
+            # Content that is a string, None or an empty list gets the media attached here.
+            if isinstance(message.content, str) or not message.content:
+                parts: List[Dict[str, Any]] = []
+                # A message with no text gets no text part
+                if isinstance(message.content, str):
+                    parts.append({"type": "text", "text": message.content})
                 if message.images is not None:
-                    message_dict["content"].extend(images_to_message(images=message.images))
+                    parts.extend(images_to_message(images=message.images))
 
                 if message.audio is not None:
-                    message_dict["content"].extend(audio_to_message(audio=message.audio))
+                    parts.extend(audio_to_message(audio=message.audio))
+                # Media that could not be read leaves no parts, and an empty content list is not sent
+                if parts:
+                    message_dict["content"] = parts
 
         if message.audio_output is not None:
             message_dict["content"] = ""
@@ -372,8 +377,11 @@ class OpenAIChat(Model):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Manually add the content field even if it is None.
+        # Media and file parts attached above to a message with no text are kept.
+        if message.content is None and not (
+            isinstance(message_dict.get("content"), list) and len(message_dict["content"]) > 0
+        ):
             message_dict["content"] = ""
         return message_dict
 
@@ -1025,6 +1033,7 @@ class OpenAIChat(Model):
         if prompt_token_details := response_usage.prompt_tokens_details:
             metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
             metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
+            metrics.cache_write_tokens = getattr(prompt_token_details, "cache_write_tokens", 0) or 0
 
         # Add the completion_tokens_details field
         if completion_tokens_details := response_usage.completion_tokens_details:

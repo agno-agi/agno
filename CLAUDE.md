@@ -1,6 +1,6 @@
-# CLAUDE.md — Agno
+# Agno - Agent Instructions
 
-Instructions for Claude Code when working on this codebase.
+Instructions for AI coding agents (Claude Code, Codex, Cursor, etc.) working on this codebase.
 
 ---
 
@@ -43,12 +43,12 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
-| `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
+| `.venv/` | Development and cookbooks: demo dependencies, tests, formatting, validation | `./scripts/dev_setup.sh` |
+| `.venvs/demo/` | Dedicated demos: same dependencies, separate environment | `./scripts/demo_setup.sh` |
 
-**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
+**Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`) and day-to-day cookbook work.
 
-**Use `.venvs/demo`** for running cookbook examples.
+**Use `.venvs/demo`** for running demos in a separate environment. The cookbook commands below use this environment and also work with `.venv/bin/python`.
 
 ---
 
@@ -162,11 +162,12 @@ See `.cursorrules` for detailed patterns. Key rules:
 **Running tests:**
 ```bash
 source .venv/bin/activate
-pytest libs/agno/tests/
 
 # Run a specific test file
 pytest libs/agno/tests/unit/test_agent.py
 ```
+
+Before a push, run only the tests for what changed. See "Tests before a push, and CI after it" below.
 
 ---
 
@@ -195,6 +196,13 @@ source .venv/bin/activate
 ```
 
 Both scripts must pass with no errors before code review.
+
+**Tests before a push, and CI after it:**
+
+- Run only the tests you added or touched, and the test files for the modules you changed. Do not run the whole `libs/agno/tests/unit` suite locally before a push. CI runs it, against PostgreSQL, in less time.
+- Push when those tests, `format.sh` and `validate.sh` pass. Do not hold a push for a long local run.
+- Do not wait for CI before you report. Report as soon as the push is done, and say that CI is still running. Check CI again only when you are asked to, or when you are told it failed.
+- A long local run is right in one case: the PR's base is not one of the branches under `pull_request.branches` in `.github/workflows/test.yml`, so CI runs no tests on it. Then run the test files for the areas the PR changes, in the background, and keep working while they run.
 
 **PR Title Format:**
 
@@ -234,13 +242,14 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 ## Don't
 
 - Don't implement features without checking for a design doc first
+- Don't reference `specs/` paths, spec section numbers, or ADR numbers in code comments, docstrings, or user-facing strings — specs are private; every comment must state its constraint standalone
 - Don't use f-strings for print lines where there are no variables
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
 - Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
 - Don't use `OpenAIChat` in cookbooks or examples — use `OpenAIResponses` instead
-- Don't use `gpt-4o` or `gpt-4o-mini` in cookbooks or examples — use `gpt-5.5` instead
+- Don't use `gpt-4o` or `gpt-4o-mini` in cookbooks or examples — use `gpt-5.6-luna` instead
 
 ---
 
@@ -253,5 +262,5 @@ When running in GitHub Actions (CI), always end your response with a plain-text 
 Agno-specific checks to always verify:
 - Both sync and async variants exist for all new public methods
 - No agent creation inside loops (agents should be reused)
-- CLAUDE.md coding patterns are followed
+- Coding patterns in this file are followed
 - No f-strings for print lines where there are no variables

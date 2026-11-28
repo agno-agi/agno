@@ -1,72 +1,179 @@
 import json
+import time
+from datetime import datetime, timezone
+from functools import wraps
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from urllib3.util import Retry
 
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
 
+# What a read-only GithubTools tells the model about its tools.
+_READ_ONLY_INSTRUCTIONS = "GitHub: you can read GitHub yourself with {tools}. You cannot write to it."
+_READ_ONLY_PULL_REQUEST_INSTRUCTIONS = """\
+- Asked about a pull request, read it before you answer: get_pull_request for its state and head
+  commit, get_pull_request_changes for the diff, get_pull_request_checks for CI. Answer from what
+  you read and say which commit it was.
+- For a large pull request, list the files first (get_pull_request_changes with
+  include_patches=false), then read the files that matter one at a time with path. Say which files
+  you did not read.
+- "Safe to merge" is your judgment from the diff and the checks. Say what you checked and what
+  you could not: reading GitHub does not run the code.
+"""
+
+
 class GithubTools(Toolkit):
+    # Every tool, in the order it is registered, marked by what it does on GitHub: "read" only reads,
+    # "write" creates, changes or deletes something. A method is a tool only when it is listed here,
+    # and read_only=True registers the ones marked "read".
+    tool_access: Dict[str, str] = {
+        "search_repositories": "read",
+        "list_repositories": "read",
+        "get_repository": "read",
+        "get_pull_request": "read",
+        "get_pull_request_changes": "read",
+        "get_pull_request_checks": "read",
+        "create_issue": "write",
+        "create_repository": "write",
+        "delete_repository": "write",
+        "list_branches": "read",
+        "get_repository_languages": "read",
+        "get_pull_request_count": "read",
+        "get_repository_stars": "read",
+        "get_pull_requests": "read",
+        "get_pull_request_comments": "read",
+        "create_pull_request_comment": "write",
+        "edit_pull_request_comment": "write",
+        "get_pull_request_with_details": "read",
+        "get_repository_with_stats": "read",
+        "list_issues": "read",
+        "get_issue": "read",
+        "comment_on_issue": "write",
+        "close_issue": "write",
+        "reopen_issue": "write",
+        "assign_issue": "write",
+        "label_issue": "write",
+        "list_issue_comments": "read",
+        "edit_issue": "write",
+        "create_pull_request": "write",
+        "create_file": "write",
+        "get_file_content": "read",
+        "update_file": "write",
+        "delete_file": "write",
+        "get_directory_content": "read",
+        "get_branch_content": "read",
+        "create_branch": "write",
+        "set_default_branch": "write",
+        "search_code": "read",
+        "search_issues_and_prs": "read",
+        "create_review_request": "write",
+    }
+
     def __init__(
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
+        read_only: bool = False,
         **kwargs,
     ):
+        """
+        Args:
+            access_token: The GitHub token. Read from GITHUB_ACCESS_TOKEN when omitted.
+            base_url: The API address of a GitHub Enterprise server.
+            read_only: Register only the tools that read, and tell the model how to read a pull
+                request well. No tool that creates, changes or deletes anything on GitHub is
+                registered, whatever the token allows. include_tools and exclude_tools narrow
+                the reading tools further. Naming a writing tool in include_tools is refused;
+                naming one in exclude_tools changes nothing, since it is already left out.
+        """
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
+        self.read_only = read_only
 
         self.g = self.authenticate()
 
-        tools: List[Any] = [
-            self.search_repositories,
-            self.list_repositories,
-            self.get_repository,
-            self.get_pull_request,
-            self.get_pull_request_changes,
-            self.create_issue,
-            self.create_repository,
-            self.delete_repository,
-            self.list_branches,
-            self.get_repository_languages,
-            self.get_pull_request_count,
-            self.get_repository_stars,
-            self.get_pull_requests,
-            self.get_pull_request_comments,
-            self.create_pull_request_comment,
-            self.edit_pull_request_comment,
-            self.get_pull_request_with_details,
-            self.get_repository_with_stats,
-            self.list_issues,
-            self.get_issue,
-            self.comment_on_issue,
-            self.close_issue,
-            self.reopen_issue,
-            self.assign_issue,
-            self.label_issue,
-            self.list_issue_comments,
-            self.edit_issue,
-            self.create_pull_request,
-            self.create_file,
-            self.get_file_content,
-            self.update_file,
-            self.delete_file,
-            self.get_directory_content,
-            self.get_branch_content,
-            self.create_branch,
-            self.set_default_branch,
-            self.search_code,
-            self.search_issues_and_prs,
-            self.create_review_request,
-        ]
+        names = [name for name, access in self.tool_access.items() if access == "read" or not read_only]
+        if read_only:
+            writing = [name for name in kwargs.get("include_tools") or [] if self.tool_access.get(name) == "write"]
+            if writing:
+                raise ValueError(
+                    f"GithubTools(read_only=True) cannot include {', '.join(writing)}: "
+                    f"{'it writes' if len(writing) == 1 else 'they write'} to GitHub. "
+                    "Remove the name from include_tools, or pass read_only=False."
+                )
+            # A writing tool is already left out, so a list that excluded one before read_only was
+            # added still works. A name that is no tool at all is still refused by the Toolkit.
+            if kwargs.get("exclude_tools"):
+                kwargs["exclude_tools"] = [
+                    name for name in kwargs["exclude_tools"] if self.tool_access.get(name) != "write"
+                ]
+            kwargs.setdefault("add_instructions", True)
 
-        super().__init__(name="github", tools=tools, **kwargs)
+        tools: List[Any] = [getattr(self, name) for name in names]
+        super().__init__(name="github", tools=[self._without_waiting(tool) for tool in tools], **kwargs)
+
+        if read_only and self.instructions is None:
+            self.instructions = self._read_only_instructions()
+
+    def _read_only_instructions(self) -> str:
+        """How to read GitHub well, naming only tools this toolkit registered."""
+        named = (
+            "get_pull_request",
+            "get_pull_request_changes",
+            "get_pull_request_checks",
+            "get_file_content",
+            "search_code",
+        )
+        held = [name for name in named if name in self.functions]
+        if len(held) > 1:
+            tools = f"the {', '.join(held[:-1])} and {held[-1]} tools"
+        else:
+            tools = f"the {held[0]} tool" if held else "your GitHub tools"
+        instructions = _READ_ONLY_INSTRUCTIONS.format(tools=tools) + "\n"
+        if set(named[:3]) <= set(held):
+            instructions += _READ_ONLY_PULL_REQUEST_INSTRUCTIONS
+        return instructions
+
+    def _without_waiting(self, tool: Any) -> Any:
+        """The tool, answering a used-up rate limit at once with when it resets.
+
+        The GitHub client is built not to wait for the limit to reset (see authenticate), so a
+        call that hits it comes back as an error. That error is replaced with one that says when
+        to try again, which the agent can pass on.
+        """
+
+        @wraps(tool)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            result = tool(*args, **kwargs)
+            if isinstance(result, str) and '"error"' in result and "rate limit" in result.lower():
+                return json.dumps({"error": self._rate_limit_message()})
+            return result
+
+        return call
+
+    def _rate_limit_message(self) -> str:
+        """What to tell the person when GitHub's rate limit is used up. Makes no request."""
+        message = "GitHub's rate limit for this token is used up, so nothing was read."
+        try:
+            # The reset time the client saw on its last response. Read from the client's own record, never
+            # the property that asks GitHub when it has none.
+            reset = int(getattr(getattr(self.g, "requester", None), "rate_limiting_resettime", 0) or 0)
+        except (TypeError, ValueError):
+            reset = 0
+        if reset > 0:
+            minutes = max(1, round((reset - time.time()) / 60))
+            when = datetime.fromtimestamp(reset, tz=timezone.utc).strftime("%H:%M UTC")
+            message += f" It resets at {when}, in about {minutes} minute{'s' if minutes != 1 else ''}."
+        return message + " Do not retry before then; tell the person."
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
@@ -74,12 +181,16 @@ class GithubTools(Toolkit):
             raise ValueError("GitHub access token is required")
 
         auth = Auth.Token(self.access_token)
+        # The client's default retry waits for a used-up rate limit to reset, up to an hour, inside the
+        # tool call. Retry a server error a few times and nothing else: a rate limit comes back as an
+        # error at once.
+        retry = Retry(total=3, status_forcelist=(500, 502, 503, 504), backoff_factor=0.5, allowed_methods=None)
         if self.base_url:
             log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
-            return Github(base_url=self.base_url, auth=auth)
+            return Github(base_url=self.base_url, auth=auth, retry=retry)
         else:
             log_debug("Authenticating with public GitHub")
-            return Github(auth=auth)
+            return Github(auth=auth, retry=retry)
 
     def search_repositories(
         self,
@@ -308,8 +419,17 @@ class GithubTools(Toolkit):
                 "created_at": pr.created_at.isoformat(),
                 "updated_at": pr.updated_at.isoformat(),
                 "state": pr.state,
+                "draft": pr.draft,
                 "merged": pr.is_merged(),
                 "mergeable": pr.mergeable,
+                "mergeable_state": pr.mergeable_state,
+                "base": pr.base.ref,
+                "head": pr.head.ref,
+                "head_sha": pr.head.sha,
+                "commits": pr.commits,
+                "changed_files": pr.changed_files,
+                "additions": pr.additions,
+                "deletions": pr.deletions,
                 "url": pr.html_url,
             }
             return json.dumps(pr_info, indent=2)
@@ -317,37 +437,116 @@ class GithubTools(Toolkit):
             logger.exception("Error getting pull request")
             return json.dumps({"error": str(e)})
 
-    def get_pull_request_changes(self, repo_name: str, pr_number: int) -> str:
+    def get_pull_request_changes(
+        self, repo_name: str, pr_number: int, path: Optional[str] = None, include_patches: bool = True
+    ) -> str:
         """Get the changes (files modified) in a pull request.
+
+        A large pull request's patches can be too long to read in one result. For one, list the
+        files first with include_patches=False, then read the patch of each file that matters
+        with path.
 
         Args:
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             pr_number (int): The number of the pull request.
+            path (Optional[str]): Return only the file with this path, with its patch.
+            include_patches (bool): Include each file's patch and URLs. Pass False to list the
+                changed files with their line counts only. Ignored when path is given.
 
         Returns:
             A JSON-formatted string containing the list of changed files.
         """
         log_debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
+        # A model that means "no path" often sends an empty one.
+        path = path.strip() if isinstance(path, str) and path.strip() else None
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
             files = pr.get_files()
             changes = []
             for file in files:
+                if path is not None and file.filename != path:
+                    continue
                 file_info = {
                     "filename": file.filename,
                     "status": file.status,
                     "additions": file.additions,
                     "deletions": file.deletions,
                     "changes": file.changes,
-                    "raw_url": file.raw_url,
-                    "blob_url": file.blob_url,
-                    "patch": file.patch,
                 }
+                if include_patches or path is not None:
+                    file_info["raw_url"] = file.raw_url
+                    file_info["blob_url"] = file.blob_url
+                    # GitHub returns no patch for a binary file or a very large one.
+                    file_info["patch"] = file.patch
                 changes.append(file_info)
+                if path is not None:
+                    # A path names one file: stop here, so GitHub is not asked for the pages after it.
+                    break
+            if path is not None and not changes:
+                return json.dumps({"error": f"{path} is not among the files pull request #{pr_number} changes."})
             return json.dumps(changes, indent=2)
         except GithubException as e:
             logger.exception("Error getting pull request changes")
+            return json.dumps({"error": str(e)})
+
+    def get_pull_request_checks(self, repo_name: str, pr_number: int) -> str:
+        """Get the checks of a pull request's head commit: CI check runs and commit statuses.
+
+        Args:
+            repo_name (str): The full name of the repository (e.g., 'owner/repo').
+            pr_number (int): The number of the pull request.
+
+        Returns:
+            A JSON-formatted string with the head commit, a 'summary' count per result, and one
+            entry per check with its name, status and conclusion.
+        """
+        log_debug(f"Getting checks for pull request #{pr_number} in repository: {repo_name}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            pr = repo.get_pull(pr_number)
+            commit = repo.get_commit(pr.head.sha)
+            checks = []
+            for run in commit.get_check_runs():
+                checks.append(
+                    {
+                        "name": run.name,
+                        "type": "check_run",
+                        "status": run.status,
+                        # None while the check is queued or running.
+                        "conclusion": run.conclusion,
+                        "url": run.html_url,
+                    }
+                )
+            combined = commit.get_combined_status()
+            statuses = combined.statuses
+            if combined.total_count > len(statuses):
+                # The combined status holds one page of contexts (30). A commit with more has the
+                # rest read from its status history, newest first: the first seen of a context is
+                # its latest.
+                latest: dict = {}
+                for status in commit.get_statuses():
+                    latest.setdefault(status.context, status)
+                statuses = list(latest.values())
+            for status in statuses:
+                checks.append(
+                    {
+                        "name": status.context,
+                        "type": "status",
+                        "status": "completed" if status.state != "pending" else "in_progress",
+                        "conclusion": status.state if status.state != "pending" else None,
+                        "url": status.target_url,
+                    }
+                )
+            summary: dict = {}
+            for check in checks:
+                result = check["conclusion"] or check["status"]
+                summary[result] = summary.get(result, 0) + 1
+            return json.dumps(
+                {"head_sha": pr.head.sha, "total": len(checks), "summary": summary, "checks": checks}, indent=2
+            )
+        except GithubException as e:
+            logger.exception("Error getting pull request checks")
             return json.dumps({"error": str(e)})
 
     def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
@@ -710,7 +909,7 @@ class GithubTools(Toolkit):
             state (str, optional): State of the PRs to retrieve. Can be 'open', 'closed', or 'all'. Defaults to 'open'.
             sort (str, optional): What to sort results by. Can be 'created', 'updated', 'popularity', 'long-running'. Defaults to 'created'.
             direction (str, optional): The direction of the sort. Can be 'asc' or 'desc'. Defaults to 'desc'.
-            limit (int, optional): The maximum number of pull requests to return. Defaults to 20.
+            limit (int, optional): The maximum number of pull requests to return. Defaults to 50.
 
         Returns:
             A JSON-formatted string containing a list of pull requests.
@@ -1326,9 +1525,18 @@ class GithubTools(Toolkit):
                 log_debug(f"Error decoding file content: {e}")
                 decoded_content = "Binary file (content not displayed)"
 
-            # Make sure we don't try to display binary content
+            # Make sure we don't try to display binary content. Only NUL and control
+            # characters that never occur in normal text (C0 excluding common
+            # whitespace, DEL and the C1 range) are treated as a binary signal, so
+            # valid non-ASCII UTF-8 text (e.g. Chinese) is preserved.
             if isinstance(decoded_content, str) and (
-                "\x00" in decoded_content or sum(1 for c in decoded_content[:1000] if not (32 <= ord(c) <= 126)) > 200
+                "\x00" in decoded_content
+                or sum(
+                    1
+                    for c in decoded_content[:1000]
+                    if c not in "\t\n\r\x0b\x0c" and (ord(c) < 32 or 0x7F <= ord(c) <= 0x9F)
+                )
+                > 200
             ):
                 decoded_content = "Binary file (content not displayed)"
 
@@ -1539,7 +1747,7 @@ class GithubTools(Toolkit):
             branch_info = {
                 "name": branch_name,
                 "sha": new_branch.object.sha,
-                "url": new_branch.url.replace("api.github.com/repos", "github.com").replace("git/refs/heads", "tree"),
+                "url": f"{repo.html_url.rstrip('/')}/tree/{quote(branch_name, safe='/')}",
             }
 
             return json.dumps(branch_info, indent=2)

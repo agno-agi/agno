@@ -93,28 +93,19 @@ def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput])
         tool_calls_content.append("The following tool calls require confirmation:\n")
     for tool_call in non_silent_tools:
         if tool_call.requires_confirmation:
-            args_str = ""
-            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                args_str += f"{arg}={value}, "
-            args_str = args_str.rstrip(", ")
+            args_str = ", ".join(f"{arg}={value}" for arg, value in (tool_call.tool_args or {}).items())
             tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
     if any(tc.requires_user_input for tc in non_silent_tools):
         tool_calls_content.append("The following tool calls require user input:\n")
     for tool_call in non_silent_tools:
         if tool_call.requires_user_input:
-            args_str = ""
-            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                args_str += f"{arg}={value}, "
-            args_str = args_str.rstrip(", ")
+            args_str = ", ".join(f"{arg}={value}" for arg, value in (tool_call.tool_args or {}).items())
             tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
     if any(tc.external_execution_required for tc in non_silent_tools):
         tool_calls_content.append("The following tool calls require external execution:\n")
     for tool_call in non_silent_tools:
         if tool_call.external_execution_required:
-            args_str = ""
-            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                args_str += f"{arg}={value}, "
-            args_str = args_str.rstrip(", ")
+            args_str = ", ".join(f"{arg}={value}" for arg, value in (tool_call.tool_args or {}).items())
             tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
 
     # Create panel for response

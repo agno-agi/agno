@@ -7,6 +7,33 @@ from packaging.version import Version
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info, log_warning
 
+# The Company tables are migrated together and before every other table. Their migration can refuse
+# a database, and a database it refuses is then left as it was.
+_COMPANY_TABLE_ATTRS = {
+    "goals": "goals_table_name",
+    "sources": "sources_table_name",
+    "projects": "projects_table_name",
+    "tasks": "tasks_table_name",
+}
+
+# Every table type the manager migrates, with the db attribute that holds the table's name.
+TABLE_TYPE_TO_ATTR = {
+    **_COMPANY_TABLE_ATTRS,
+    "memories": "memory_table_name",
+    "sessions": "session_table_name",
+    "metrics": "metrics_table_name",
+    "evals": "eval_table_name",
+    "knowledge": "knowledge_table_name",
+    "approvals": "approvals_table_name",
+    "components": "components_table_name",
+    "schedules": "schedules_table_name",
+    "schedule_runs": "schedule_runs_table_name",
+    "learnings": "learnings_table_name",
+}
+
+_COMPANY_RENAME_VERSION = packaging_version.parse("3.3.0")
+_BEFORE_COMPANY_RENAME = packaging_version.parse("3.0.0")
+
 
 class MigrationManager:
     """Manager class to handle database migrations"""
@@ -16,6 +43,8 @@ class MigrationManager:
         ("v2_3_0", packaging_version.parse("2.3.0")),
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
+        ("v3_0_0", packaging_version.parse("3.0.0")),
+        ("v3_3_0", packaging_version.parse("3.3.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -24,6 +53,11 @@ class MigrationManager:
     @property
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
+
+    def _invalidate_table(self, table_name: str) -> None:
+        invalidate = getattr(self.db, "_invalidate_table_cache", None)
+        if invalidate is not None:
+            invalidate(table_name)
 
     async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
@@ -43,15 +77,7 @@ class MigrationManager:
             _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
-            "approvals": "approvals_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:
@@ -65,13 +91,27 @@ class MigrationManager:
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
 
-            if current_version is None:
-                log_info(f"Skipping migration: No version found for table {table_name}.")
+            if raw_version is None:
+                log_warning(
+                    f"Skipping migration for table {table_name}: the adapter returned no schema version. "
+                    "Migrations will NOT run for this table. Adapters must return their stamped version, "
+                    'or "2.0.0" when nothing is stamped yet.'
+                )
                 continue
+            current_version = packaging_version.parse(raw_version)
+
+            # A Company table is stamped current when it is created, so its stamp cannot be trusted while
+            # a table waits to be renamed or a Company file waits to be moved.
+            if (
+                table_type in _COMPANY_TABLE_ATTRS
+                and current_version >= _COMPANY_RENAME_VERSION <= _target_version
+                and (await self._company_rename_pending() or await self._company_files_pending())
+            ):
+                current_version = _BEFORE_COMPANY_RENAME
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
@@ -92,10 +132,20 @@ class MigrationManager:
                         break
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
-                    migration_executed = await self._up_migration(version, table_type, table_name)
+                    try:
+                        migration_executed = await self._up_migration(version, table_type, table_name)
+                    except BaseException:
+                        # A partial migration may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
+                        # The migration changed the table shape; the next
+                        # access must re-resolve it. No-op steps keep the cache.
+                        self._invalidate_table(table_name)
+                    # False means "nothing to migrate" — failures raise and abort
+                    # before stamping, so no-ops still advance the stamp.
                     latest_version = normalised_version.public
                     if migration_executed:
-                        latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
                     else:
                         log_info(f"Skipping application of migration {normalised_version} on table {table_name}")
@@ -108,6 +158,20 @@ class MigrationManager:
                     self.db.upsert_schema_version(table_name, latest_version)
                 log_info(f"Successfully stored version {latest_version} in database for table {table_name}")
             log_info("----------------------------------------------------------")
+
+    async def _company_rename_pending(self) -> bool:
+        """Whether a Company table still has its 3.2.0 name or columns."""
+        from agno.db.migrations.versions import v3_3_0
+
+        if isinstance(self.db, AsyncBaseDb):
+            return await v3_3_0.acompany_rename_pending(self.db)
+        return v3_3_0.company_rename_pending(self.db)
+
+    async def _company_files_pending(self) -> bool:
+        """Whether Company files still wait in their namespaces from before 3.3.0."""
+        from agno.db.migrations.versions import v3_3_0
+
+        return await v3_3_0.acompany_files_pending(self.db)
 
     async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.
@@ -136,15 +200,7 @@ class MigrationManager:
         _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
-            "approvals": "approvals_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:
@@ -157,9 +213,14 @@ class MigrationManager:
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
+
+            if raw_version is None:
+                log_info(f"Skipping down migration: No version found for table {table_name}.")
+                continue
+            current_version = packaging_version.parse(raw_version)
 
             if _target_version >= current_version and not force:
                 log_warning(
@@ -173,7 +234,14 @@ class MigrationManager:
             for version, normalised_version in reversed(self.available_versions):
                 if normalised_version > _target_version:
                     log_info(f"Reverting migration {normalised_version} on table {table_name}")
-                    migration_executed = await self._down_migration(version, table_type, table_name)
+                    try:
+                        migration_executed = await self._down_migration(version, table_type, table_name)
+                    except BaseException:
+                        # A partial revert may have changed the table shape
+                        self._invalidate_table(table_name)
+                        raise
+                    if migration_executed:
+                        self._invalidate_table(table_name)
                     if migration_executed:
                         any_migration_executed = True
                         log_info(f"Successfully reverted migration {normalised_version} on table {table_name}")

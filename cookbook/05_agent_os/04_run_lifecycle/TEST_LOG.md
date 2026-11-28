@@ -34,6 +34,12 @@ cancel route returned HTTP 200, and polling observed `RUNNING` followed by
 `CANCELLED`. The final live run ID was
 `1fa2c79e-588c-4268-aafe-f93520c50ede`.
 
+**Update (2026-09-22):** the poll loop now also prints the run's
+`cancellation_stage` (`PENDING`, `EXECUTING` or `PAUSED`) when the API
+returns one. Not re-run live for that change: no model key in the test
+environment. The field's persistence is covered by unit and Postgres
+integration tests.
+
 ---
 
 ### sse_reconnect.py
@@ -90,6 +96,26 @@ completeness judge finished before the run response and reported a 100% pass
 rate. The response then returned while the notification and background clarity
 judge continued; the clarity judge also completed with a 100% pass rate and
 persisted its eval run.
+
+---
+
+### unpack_archives.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the checked-in unpacking AgentOS server and uploaded
+`.zip` archives over HTTP to `/agents/unpack-agent/runs` using OpenAI Responses
+`gpt-5.5`. Covered a DEFLATE archive holding `invoice.txt` and `notes.md`, and a
+macOS Finder archive holding a single PDF alongside its `__MACOSX` entry.
+
+**Result:** Both runs returned `COMPLETED`. The pre-hook replaced each archive
+with its contents before the model call, and the agent quoted values that exist
+only inside the archives (`AGNO-9193`, `4242.00 EUR`, `Acme Corp`, `ZEBRA-7`).
+The Finder archive resolved its PDF and skipped the `__MACOSX` sidecar entry.
+Without the pre-hook the same upload fails at the provider with an unsupported
+MIME type, since no provider unpacks an archive.
 
 ---
 

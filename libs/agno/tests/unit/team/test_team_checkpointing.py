@@ -20,8 +20,8 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -119,6 +119,19 @@ class TestTeamTruncate:
         team_run._truncate_team_run_to_checkpoint(r, message_index=2)
         assert len(r.messages) == 2
         assert r.messages[-1].content == "b"
+
+    def test_truncate_before_a_fork_point_lowers_it(self):
+        r = TeamRunOutput(
+            run_id="r1",
+            forked_from_message_index=3,
+            messages=[
+                Message(role="user", content="a"),
+                Message(role="assistant", content="b"),
+                Message(role="user", content="c"),
+            ],
+        )
+        team_run._truncate_team_run_to_checkpoint(r, message_index=2)
+        assert r.forked_from_message_index == 2
 
     def test_truncate_drops_tools_with_removed_references(self):
         r = TeamRunOutput(
@@ -225,6 +238,18 @@ class TestTeamFork:
         forked = team_run._fork_team_run(team, message_index=5)
         assert forked.run_id != team.run_id
         assert forked.forked_from_run_id == "team-orig"
+        assert forked.forked_from_message_index == 5
+
+    def test_fork_at_negative_index_records_every_copied_message(self):
+        team = self._build_team_with_members()
+        forked = team_run._fork_team_run(team, message_index=-1)
+        assert len(forked.messages) == 5
+        assert forked.forked_from_message_index == 5
+
+    def test_fork_past_the_last_message_records_every_copied_message(self):
+        team = self._build_team_with_members()
+        forked = team_run._fork_team_run(team, message_index=10)
+        assert len(forked.messages) == 5
         assert forked.forked_from_message_index == 5
 
     def test_fork_resets_metrics_and_created_at(self):
@@ -555,6 +580,8 @@ class TestTeamCheckpointScrubIsolation:
         captured: dict = {}
 
         class FakeSession:
+            session_id = "sess-1"
+            user_id = "u1"
             session_data = None
             runs: list = []
 
@@ -567,6 +594,11 @@ class TestTeamCheckpointScrubIsolation:
             store_history_messages=True,
             store_member_responses=True,
             save_session=lambda session: None,
+            # Required by _persist_team_run_in_session -> save_run -> team._session.save_run
+            # which short-circuits on team.db is None (so no _upsert_run dispatch).
+            db=None,
+            parent_team_id=None,
+            workflow_id=None,
         )
 
         team_run._persist_team_run_in_session(team, run_response, FakeSession(), run_context=None)

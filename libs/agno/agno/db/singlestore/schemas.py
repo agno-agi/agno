@@ -3,7 +3,7 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, Integer, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -19,11 +19,43 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+# NOTE: SingleStore parses FK syntax but does not enforce constraints at
+# runtime. We declare the FK for schema documentation / introspection parity
+# with the other SQL adapters; runtime referential integrity is application-
+# managed for this backend (see ``delete_session`` which explicitly deletes
+# the session's runs).
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    return {
+        "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": lambda: String(128),
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": lambda: String(20), "nullable": False, "index": True},
+        "agent_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "team_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "workflow_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "parent_run_id": {"type": lambda: String(128), "nullable": True},
+        "status": {"type": lambda: String(50), "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSON, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        "_composite_indexes": [
+            {"name": "runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 USER_MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
@@ -52,6 +84,7 @@ EVAL_TABLE_SCHEMA = {
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
@@ -68,6 +101,8 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Owner of the row. ``NULL`` means shared: visible to every user.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -83,24 +118,133 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False, "index": True},
+    # Owner of this metric bucket. ``""`` instead of ``NULL`` for "no owner", so lookup keys stay comparable.
+    # ``get_metrics`` maps ``""`` back to ``None``.
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
+    # No ``UNIQUE(user_id, date, aggregation_period)``: SingleStore rejects a second multi-column UNIQUE
+    # alongside the ``id`` primary key (error 1706).
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
-    "name": {"type": lambda: String(255), "nullable": False, "index": True},
-    "summary": {"type": Text, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
-    "input": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
+COMPONENT_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Owner of this row. Empty string for runs with no user, since SingleStore treats NULLs as distinct. Binary
+    # collation keeps ids case-sensitive, so "Alice" and "alice" stay separate rows.
+    "user_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "component_type": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "component_id": {"type": lambda: String(128, collation="utf8mb4_bin"), "primary_key": True, "nullable": False},
+    "parent_component_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "root_component_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "tool_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_details": {"type": JSON, "nullable": False, "default": {}},
+    "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": lambda: String(128), "nullable": True},
-    "team_id": {"type": lambda: String(128), "nullable": True},
+    "_composite_indexes": [
+        # One user's rows of a date range
+        {"name": "user_id_date", "columns": ["user_id", "date"]},
+    ],
 }
 
+AGGREGATE_METRICS_TABLE_SCHEMA = {
+    "aggregation_period": {"type": lambda: String(20), "primary_key": True, "nullable": False},
+    "date": {"type": Date, "primary_key": True, "nullable": False},
+    # Owner of this row. Empty string for the everyone row, which counts every run, runs with no user included.
+    # Not NULL, since SingleStore treats NULLs as distinct. Binary collation keeps ids case-sensitive, so "Alice" and
+    # "alice" stay separate rows.
+    "user_id": {
+        "type": lambda: String(128, collation="utf8mb4_bin"),
+        "primary_key": True,
+        "nullable": False,
+        "default": "",
+    },
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "root_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "status_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "tool_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "duration_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_duration_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_duration_ms": {"type": BigInteger, "nullable": True},
+    "duration_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_time_to_first_token_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_time_to_first_token_ms": {"type": BigInteger, "nullable": True},
+    "time_to_first_token_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "model_calls_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_model_call_ms": {"type": BigInteger, "nullable": False, "default": 0},
+    "max_model_call_ms": {"type": BigInteger, "nullable": True},
+    "model_call_buckets": {"type": JSON, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_details": {"type": JSON, "nullable": False, "default": {}},
+    # The agno version that built the row
+    "metrics_version": {"type": lambda: String(50), "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "version": {"type": Integer, "nullable": False, "default": 1},
+}
+
+METRICS_REFRESHES_TABLE_SCHEMA = {
+    # One row, which one refresh of the metrics tables at a time holds
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "locked_by": {"type": lambda: String(128), "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},  # heartbeat-refreshed
+    "started_at": {"type": BigInteger, "nullable": False},
+    "finished_at": {"type": BigInteger, "nullable": True},  # of the last refresh that completed
+    # running | completed | failed
+    "status": {"type": lambda: String(20), "nullable": False},
+    "error": {"type": Text, "nullable": True},
+    "fingerprint": {"type": JSON, "nullable": True},
+}
 
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": lambda: String(128), "nullable": False, "primary_key": True},
@@ -158,7 +302,10 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
 
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -167,6 +314,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -174,14 +323,19 @@ def get_table_schema_definition(
     # Handle spans table specially to resolve the foreign key reference
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_TABLE_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_TABLE_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
     }

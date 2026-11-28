@@ -6,7 +6,7 @@ Requires environment variables:
 - LANCE_DB_API_KEY or LANCEDB_API_KEY: LanceDB Cloud API key
 
 Run from repo root with env loaded (e.g. direnv):
-  .venvs/demo/bin/python cookbook/07_knowledge/vector_db/lance_db_cloud/lance_db_cloud.py
+  .venvs/demo/bin/python cookbook/07_knowledge/09_archive/vector_dbs/lance_db_cloud.py
 """
 
 import asyncio

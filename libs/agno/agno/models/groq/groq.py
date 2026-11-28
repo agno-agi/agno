@@ -7,9 +7,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -34,7 +34,7 @@ class Groq(Model):
     For more information, see: https://console.groq.com/docs/libraries
     """
 
-    id: str = "llama-3.3-70b-versatile"
+    id: str = "openai/gpt-oss-120b"
     name: str = "Groq"
     provider: str = "Groq"
 
@@ -527,7 +527,7 @@ class Groq(Model):
             response: Raw response chunk from Groq
 
         Returns:
-            ModelResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
@@ -564,6 +564,14 @@ class Groq(Model):
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        # Add the prompt_tokens_details field
+        if prompt_token_details := getattr(response_usage, "prompt_tokens_details", None):
+            metrics.cache_read_tokens = getattr(prompt_token_details, "cached_tokens", 0) or 0
+
+        # Add the completion_tokens_details field
+        if completion_tokens_details := getattr(response_usage, "completion_tokens_details", None):
+            metrics.reasoning_tokens = getattr(completion_tokens_details, "reasoning_tokens", 0) or 0
 
         # Additional time metrics offered by Groq
         if completion_time := response_usage.completion_time:

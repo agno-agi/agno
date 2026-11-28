@@ -17,22 +17,97 @@ Examples:
 - `agents:*:run` - Run any agent (wildcard)
 - `agent_os:admin` - Full access to everything
 
+Built-in components:
+- Super Agent and its helpers (see `MANAGER_RESOURCES`) are never reached by a wildcard or a
+  type-wide scope. `teams:run` and `teams:*:run` run every team but Super Agent; only
+  `teams:superagent:run` or `agent_os:admin` runs it.
+
 Backwards compatibility:
 - Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
+- Legacy ``products:*`` scopes are accepted as aliases for ``goals:*`` in the same way:
+  a Company Goal was a Product in agno 3.2. The two names are one permission.
 """
 
 import fnmatch
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from functools import lru_cache
+from typing import Collection, Dict, FrozenSet, List, Optional, Set, Tuple
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
 # Keys are the legacy resource names, values are the current names.
 LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
+    "products": "goals",
 }
+
+
+@lru_cache(maxsize=1)
+def _built_in_resources() -> FrozenSet[str]:
+    """The built-in components as policy resources, ``type/id``. Read from the one list of them."""
+    from agno.registry._reserved import MANAGER_RESOURCES
+
+    return frozenset(MANAGER_RESOURCES.values())
+
+
+def is_built_in(resource_type: Optional[str], resource_id: Optional[str]) -> bool:
+    """Whether this is a built-in component: Super Agent or one of its helpers.
+
+    A wildcard or type-wide grant never reaches one. It is granted by its own scope
+    (``teams:superagent:run``) or by the admin scope, so that being able to run every team does
+    not mean being able to run Super Agent."""
+    return bool(resource_type and resource_id) and f"{resource_type}/{resource_id}" in _built_in_resources()
+
+
+def built_in_ids(resource_type: str) -> Set[str]:
+    """The ids of the built-in components of one type."""
+    prefix = f"{resource_type}/"
+    return {resource[len(prefix) :] for resource in _built_in_resources() if resource.startswith(prefix)}
+
+
+def accessible_ids_cover(
+    resource_type: Optional[str], resource_id: Optional[str], accessible_ids: Collection[str]
+) -> bool:
+    """Whether a set of accessible ids covers one resource.
+
+    The set is what ``get_accessible_resource_ids`` or a provider's ``accessible_resource_ids``
+    returns. ``"*"`` in it stands for every resource of the type that is not built in; a built-in
+    component is covered only when its own id is in the set."""
+    if resource_id in accessible_ids:
+        return True
+    return "*" in accessible_ids and not is_built_in(resource_type, resource_id)
+
+
+# Route paths that were renamed, by their old prefix. A scope mapping written for the old path
+# also guards the route under its current path. Without it the route has no mapping, and a
+# route with no mapping is open to any authenticated caller.
+RENAMED_ROUTE_PREFIXES: Dict[str, str] = {
+    "/company/products": "/company/goals",
+}
+
+
+def _under_prefix(path: str, prefix: str) -> bool:
+    """Whether ``path`` starts with ``prefix``, ending at a segment or at a wildcard that continues it."""
+    return path.startswith(prefix) and path[len(prefix) : len(prefix) + 1] in ("", "/", "*", "?", "[", "{")
+
+
+def without_renamed_defaults(
+    defaults: Dict[str, List[str]], scope_mappings: Dict[str, List[str]]
+) -> Dict[str, List[str]]:
+    """``defaults`` without each current-path mapping that a mapping in ``scope_mappings`` overrides under its old path.
+
+    The caller's old-path mapping then guards the route, as it overrode the default before the rename.
+    """
+    dropped = set()
+    for key in scope_mappings:
+        method, _, path = key.partition(" ")
+        for old, new in RENAMED_ROUTE_PREFIXES.items():
+            current = f"{method} {new}{path[len(old) :]}"
+            if _under_prefix(path, old) and current not in scope_mappings:
+                dropped.add(current)
+    return {key: scopes for key, scopes in defaults.items() if key not in dropped}
 
 
 class AgentOSScope(str, Enum):
@@ -63,6 +138,7 @@ class AgentOSScope(str, Enum):
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
+    - filesystem:read - Browse, read and search AgentOS and agent filesystems
     - metrics:read - View metrics
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
@@ -244,14 +320,17 @@ def matches_scope(
 
     # If required scope has a resource_id, check it
     if required_scope.resource_id:
-        # User has wildcard resource access
-        if user_scope.is_wildcard_resource:
-            return True
-        # User has global resource access (no resource_id in user scope)
-        if not user_scope.resource_id:
-            return True
+        # The component asked about: the one the request names, else the one the required scope
+        # itself names (a route with no id in its path, mapped to one component's scope)
+        target_id = resource_id
+        if target_id is None and not required_scope.is_wildcard_resource:
+            target_id = required_scope.resource_id
+        # User has wildcard resource access, or global resource access (no resource_id in user
+        # scope). Neither reaches a built-in component: only its own scope does.
+        if user_scope.is_wildcard_resource or not user_scope.resource_id:
+            return not is_built_in(user_scope.resource, target_id)
         # User has specific resource access - must match
-        return user_scope.resource_id == resource_id
+        return user_scope.resource_id == target_id
 
     # Required scope is global (no resource_id), user scope matches if:
     # - User has global scope (no resource_id), OR
@@ -305,6 +384,11 @@ def has_required_scopes(
     if not required_scopes:
         return True
 
+    # The resource type is part of what is required, so a legacy name reads as the current one,
+    # the same as in a scope.
+    if resource_type is not None:
+        resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
+
     # Parse user scopes once
     parsed_user_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
@@ -317,8 +401,12 @@ def has_required_scopes(
         parts = required_scope_str.split(":")
         if len(parts) == 2:
             resource, action = parts
-            # Build the required scope based on context
-            if resource_id and resource_type:
+            # Build the required scope based on context. The per-resource rewrite applies only
+            # when the required scope is about the path's own family: a route under
+            # /agents/{id} that requires a scope from another family (say ``sessions:read``)
+            # must be checked as written, or a caller holding ``agents:<id>:read`` would
+            # satisfy a ``sessions:read`` requirement they never held.
+            if resource_id and resource_type and LEGACY_RESOURCE_ALIASES.get(resource, resource) == resource_type:
                 # Per-resource scope required
                 full_required_scope = f"{resource_type}:<resource-id>:{action}"
             else:
@@ -358,7 +446,9 @@ def get_accessible_resource_ids(
                 If None, considers scopes with any action (backwards compatible for list filtering).
 
     Returns:
-        Set of resource IDs the user can access. Returns {"*"} for wildcard access.
+        Set of resource IDs the user can access. ``"*"`` in the set stands for every resource
+        of the type that is not a built-in component; a built-in is in the set by its own id.
+        Test one resource against the set with :func:`accessible_ids_cover`.
 
     Examples:
         >>> get_accessible_resource_ids(
@@ -370,11 +460,11 @@ def get_accessible_resource_ids(
         >>> get_accessible_resource_ids(["agents:*:read"], "agents")
         {'*'}
 
-        >>> get_accessible_resource_ids(["agents:read"], "agents")
-        {'*'}
+        >>> get_accessible_resource_ids(["teams:read", "teams:superagent:read"], "teams")
+        {'*', 'superagent'}
 
-        >>> get_accessible_resource_ids(["admin"], "agents")
-        {'*'}
+        >>> get_accessible_resource_ids(["agent_os:admin"], "teams")
+        {'*', 'superagent'}
 
         >>> get_accessible_resource_ids(
         ...     ["agents:agent-1:read"],
@@ -385,36 +475,26 @@ def get_accessible_resource_ids(
     """
     # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
     allowed_actions = [action] if action else ["read", "run"]
+    # A legacy name for the resource type reads as the current one, the same as in a scope.
+    resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
 
-    parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
-
-    # Check for admin or global wildcard access
-    for scope in parsed_scopes:
-        if scope.scope_type == "admin":
-            return {"*"}
-
-        # Check if resource type matches
-        if scope.resource == resource_type:
-            # Global resource scope (no resource_id) grants access to all
-            if not scope.resource_id and scope.action in allowed_actions:
-                return {"*"}
-            # Wildcard resource scope grants access to all
-            if scope.is_wildcard_resource and scope.action in allowed_actions:
-                return {"*"}
-
-    # Collect specific resource IDs
     accessible_ids: Set[str] = set()
-    for scope in parsed_scopes:
-        # Check if resource type matches
-        if scope.resource == resource_type:
-            # Specific resource ID
-            if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
-                accessible_ids.add(scope.resource_id)
+    for scope in (parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes):
+        if scope.scope_type == "admin":
+            # Admin reaches everything, the built-in components included
+            return {"*", *built_in_ids(resource_type)}
+        if scope.resource != resource_type or scope.action not in allowed_actions:
+            continue
+        if not scope.resource_id or scope.is_wildcard_resource:
+            # A global or wildcard scope: every resource of the type that is not built in
+            accessible_ids.add("*")
+        else:
+            accessible_ids.add(scope.resource_id)
 
     return accessible_ids
 
 
-def get_default_scope_mappings() -> Dict[str, List[str]]:
+def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]:
     """
     Get default scope mappings for AgentOS endpoints.
 
@@ -456,6 +536,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /sessions": ["sessions:read"],
         "GET /sessions/*": ["sessions:read"],
         "POST /sessions": ["sessions:write"],
+        "POST /sessions/search": ["sessions:read"],
         "POST /sessions/*/rename": ["sessions:write"],
         "PATCH /sessions/*": ["sessions:write"],
         "DELETE /sessions": ["sessions:delete"],
@@ -481,6 +562,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /knowledge/content/*": ["knowledge:read"],
         "GET /knowledge/config": ["knowledge:read"],
         "POST /knowledge/content": ["knowledge:write"],
+        "POST /knowledge/content/*/refresh": ["knowledge:write"],
         "PATCH /knowledge/content/*": ["knowledge:write"],
         "POST /knowledge/search": ["knowledge:read"],
         "DELETE /knowledge/content": ["knowledge:delete"],
@@ -488,6 +570,15 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         # Metrics endpoints
         "GET /metrics": ["metrics:read"],
         "POST /metrics/refresh": ["metrics:write"],
+        "GET /metrics/refresh/status": ["metrics:read"],
+        "GET /os/metrics/sessions": ["metrics:read"],
+        "GET /os/metrics/tokens": ["metrics:read"],
+        "GET /os/metrics/users": ["metrics:read"],
+        "GET /os/metrics/models": ["metrics:read"],
+        "GET /os/metrics/runs": ["metrics:read"],
+        "GET /os/metrics/latency": ["metrics:read"],
+        "POST /os/metrics/refresh": ["metrics:write"],
+        "GET /os/metrics/refresh/status": ["metrics:read"],
         # Evaluation endpoints
         "GET /eval-runs": ["evals:read"],
         "GET /eval-runs/*": ["evals:read"],
@@ -529,6 +620,11 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
+        # Filesystem browser (read-only). Filesystems declared on the AgentOS need
+        # only this scope; agent-held ones are further limited to the agents the
+        # caller may read. The router asks for wiki:read too on the Company
+        # filesystem, and tasks:read under its tasks/.
+        "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
         # Component endpoints (Studio)
@@ -537,6 +633,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /components": ["components:write"],
         "PATCH /components/*": ["components:write"],
         "DELETE /components/*": ["components:delete"],
+        "POST /components/*/restore": ["components:delete"],
         "GET /components/*/configs": ["components:read"],
         "GET /components/*/configs/*": ["components:read"],
         "GET /components/*/configs/current": ["components:read"],
@@ -545,29 +642,89 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "DELETE /components/*/configs/*": ["components:delete"],
         "POST /components/*/configs/*/set-current": ["components:write"],
     }
+    if company:
+        mappings.update(
+            {
+                # Company playbook and learning-decision endpoints. Keep nested
+                # wiki routes before goals/*: matching is first-match and *
+                # spans slashes, so the generic Goal pattern also matches wiki.
+                "GET /company/goals/*/wiki": ["wiki:read"],
+                "GET /company/goals/*/wiki/*": ["wiki:read"],
+                "PUT /company/goals/*/wiki/*": ["wiki:write"],
+                "GET /company/details": ["company:read"],
+                "GET /company/details/access": ["company:read"],
+                "PATCH /company/details": ["company:write"],
+                "GET /company/wiki": ["wiki:read"],
+                "GET /company/wiki/*": ["wiki:read"],
+                "PUT /company/wiki/*": ["wiki:write"],
+                # The shared notes of the Company file tree, read beside the wiki.
+                "GET /company/notes": ["wiki:read"],
+                "GET /company/notes/*": ["wiki:read"],
+                "GET /company/decisions": ["decisions:read"],
+                "POST /company/decisions": ["decisions:write"],
+                # Company Goal endpoints
+                # Company Sources, scheduler-backed Routines and first-Goal setup.
+                "GET /company/sources": ["sources:read"],
+                "POST /company/sources": ["sources:write"],
+                "DELETE /company/sources/*": ["sources:delete"],
+                "POST /company/sources/*/restore": ["sources:delete"],
+                "GET /company/routines": ["routines:read"],
+                "GET /company/routines/*/runs": ["routines:read", "schedules:read"],
+                "GET /company/routines/*": ["routines:read"],
+                "POST /company/routines/*/trigger": ["routines:write", "schedules:write"],
+                "POST /company/routines": ["routines:write", "schedules:write"],
+                "PATCH /company/routines/*": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/pause": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/resume": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/cancel": ["routines:write", "schedules:write"],
+                "POST /company/routines/*/archive": ["routines:delete", "schedules:delete"],
+                "DELETE /company/routines/*": ["agent_os:admin"],
+                "POST /company/routines/*/restore": ["routines:delete", "schedules:delete"],
+                "POST /company/setup": ["goals:write"],
+                "GET /company/goals": ["goals:read"],
+                "GET /company/goals/*": ["goals:read"],
+                "POST /company/goals": ["goals:write"],
+                "PATCH /company/goals/*": ["goals:write"],
+                "DELETE /company/goals/*": ["goals:delete"],
+                "POST /company/goals/*/restore": ["goals:delete"],
+                # Company Project endpoints
+                "GET /company/projects": ["projects:read"],
+                "GET /company/projects/*": ["projects:read"],
+                "POST /company/projects": ["projects:write"],
+                "PATCH /company/projects/*": ["projects:write"],
+                "DELETE /company/projects/*": ["projects:delete"],
+                "POST /company/projects/*/restore": ["projects:delete"],
+                "POST /company/projects/*/transitions": ["projects:write"],
+                # Company Task endpoints. A Task's files ask for wiki:read too, as reading them in chat does.
+                # Their rows come before tasks/*, which also matches them and asks for less.
+                "GET /company/tasks/*/files": ["tasks:read", "wiki:read"],
+                "GET /company/tasks/*/files/*": ["tasks:read", "wiki:read"],
+                # A Task's context. The route also asks for the permission that reads what is attached.
+                "POST /company/tasks/*/context": ["tasks:write"],
+                "DELETE /company/tasks/*/context/*": ["tasks:write"],
+                "GET /company/tasks": ["tasks:read"],
+                "GET /company/tasks/*": ["tasks:read"],
+                "POST /company/tasks": ["tasks:write"],
+                "PATCH /company/tasks/*": ["tasks:write"],
+                "DELETE /company/tasks/*": ["tasks:delete"],
+                "POST /company/tasks/*/restore": ["tasks:delete"],
+                "POST /company/tasks/*/transitions": ["tasks:write"],
+                # Company execution and attention reuse Task access; executor routes check run permission too.
+                "POST /company/tasks/*/runs": ["tasks:write", "wiki:read"],
+                "GET /company/runs/*": ["tasks:read"],
+                "POST /company/runs/*/cancel": ["tasks:write"],
+                "GET /company/attention": ["tasks:read"],
+            }
+        )
     return mappings
 
 
-def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
-    """
-    Look up the required scopes for a method and path in a scope-mappings dict.
-
-    Args:
-        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
-        method: HTTP method (GET, POST, etc.)
-        path: Request path
-
-    Returns:
-        List of required scopes. Empty list [] means no scopes required (allow access).
-        Routes not present in scope_mappings also return [], allowing access.
-    """
+def _first_mapping(scope_mappings: Dict[str, List[str]], method: str, path: str) -> Optional[Tuple[str, List[str]]]:
+    """The first mapping that matches ``method`` and ``path``, with its key; an exact key first."""
     route_key = f"{method} {path}"
-
-    # First, try exact match
     if route_key in scope_mappings:
-        return scope_mappings[route_key]
+        return route_key, scope_mappings[route_key]
 
-    # Then try pattern matching
     for pattern, scopes in scope_mappings.items():
         pattern_method, pattern_path = pattern.split(" ", 1)
 
@@ -581,9 +738,34 @@ def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: 
             normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
 
         if fnmatch.fnmatch(path, normalized_pattern):
-            return scopes
+            return pattern, scopes
+    return None
 
-    return []
+
+def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
+    """
+    Look up the required scopes for a method and path in a scope-mappings dict.
+
+    For a renamed route, a mapping written for its current path decides. Without one, a mapping
+    written for its old path decides, ahead of a broader mapping such as ``GET /company/*``.
+
+    Args:
+        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+
+    Returns:
+        List of required scopes. Empty list [] means no scopes required (allow access).
+        Routes not present in scope_mappings also return [], allowing access.
+    """
+    found = _first_mapping(scope_mappings, method, path)
+    for old, new in RENAMED_ROUTE_PREFIXES.items():
+        if not _under_prefix(path, new) or (found is not None and _under_prefix(found[0].split(" ", 1)[1], new)):
+            continue
+        legacy = _first_mapping(scope_mappings, method, old + path[len(new) :])
+        if legacy is not None and _under_prefix(legacy[0].split(" ", 1)[1], old):
+            return legacy[1]
+    return found[1] if found is not None else []
 
 
 def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -614,6 +796,10 @@ class RouteScopeCheck:
     # hold per-resource scopes: the endpoint should filter results to these IDs
     # (possibly an empty set) instead of rejecting with 403.
     accessible_resource_ids: Optional[Set[str]] = None
+    # Why a denial happened when it was not a plain scope mismatch, recorded on the decision
+    # trail: ``provider_error`` when the enforcing provider raised (an FGA outage, an unreachable
+    # role database) and the gate failed closed.
+    reason: Optional[str] = None
 
 
 def check_route_scopes(

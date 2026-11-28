@@ -1,0 +1,306 @@
+"""Validation and explicit lifecycle rules for Company tasks."""
+
+import time
+from typing import Any, Dict, List, Optional
+
+
+class CancelledProjectError(ValueError):
+    pass
+
+
+class OpenTaskLimitError(ValueError):
+    """An automatic acceptance would exceed its Routine's limit on open Tasks."""
+
+
+# An accepted Task is open until it is Done or Cancelled.
+OPEN_TASK_STATUSES = ("ready", "in_progress", "in_review")
+
+# The stages in which a Task may change Project. In progress is left out: a queued or running attempt
+# is fenced against the Task's history, and its input was built from the Project it started in.
+# Cancelled work is closed.
+MOVABLE_TASK_STATUSES = ("backlog", "ready", "in_review", "done")
+# Why a Task cannot change Project now. Each is a conflict with the Task's or the Project's state.
+TASK_MOVE_REFUSAL = {
+    "in_progress": "A Task that is In progress cannot change Project. Move it when its run has ended and it is In review",
+    "cancelled": "A cancelled Task cannot change Project",
+    "inactive": "An accepted Task moves only into an active Project",
+    "policy": "A policy accepted this Task for its Project. Return it to Backlog, or accept it yourself, to move it",
+    "automated": "Routine and Task runs cannot move an accepted Task; a person decides",
+    "goal": "Only the person who accepted this Task may move it into a Goal's Project while it is Ready: its run "
+    "would act for that Goal under their acceptance. Ask them, or return it to Backlog first",
+}
+
+
+# In progress is entered only by starting a run; review and completion need an earlier attempt.
+TASK_TRANSITIONS = {
+    "backlog": {"ready", "in_review", "done", "cancelled"},
+    "ready": {"backlog", "in_progress", "in_review", "done", "cancelled"},
+    "in_progress": {"backlog", "ready", "in_review", "done", "cancelled"},
+    "in_review": {"backlog", "ready", "in_progress", "done", "cancelled"},
+    "done": {"backlog", "ready", "in_review", "cancelled"},
+    "cancelled": {"backlog", "ready", "in_review", "done"},
+}
+
+
+def validate_task_fields(fields: Dict[str, Any]) -> None:
+    """Identity, acceptance and lifecycle are never descriptive edits."""
+    unknown = set(fields) - {"title", "brief", "project_id", "evidence", "executor_type", "executor_id"}
+    if unknown:
+        raise ValueError(f"Unsupported task fields: {sorted(unknown)}")
+    if fields.get("executor_type") is not None and fields["executor_type"] not in {
+        "agent",
+        "team",
+        "workflow",
+    }:
+        raise ValueError("Invalid proposed executor type")
+    if fields.get("executor_id") is not None and (
+        not isinstance(fields["executor_id"], str) or not fields["executor_id"].strip()
+    ):
+        raise ValueError("Invalid proposed executor id")
+    if fields.get("evidence") is not None and not isinstance(fields["evidence"], list):
+        raise ValueError("evidence must be a list or None")
+    if "title" in fields and (not isinstance(fields["title"], str) or not fields["title"].strip()):
+        raise ValueError("title must be a non-empty string")
+    if fields.get("brief") is not None and not isinstance(fields["brief"], str):
+        raise ValueError("brief must be a string or None")
+    if fields.get("project_id") is not None and (
+        not isinstance(fields["project_id"], str) or not fields["project_id"].strip()
+    ):
+        raise ValueError("project_id must be a non-empty string or None")
+
+
+# What a Task's context list may reference: a wiki page, a page of a Goal, another Task, a file a Task wrote.
+TASK_CONTEXT_KINDS = ("wiki", "goal", "task", "file")
+MAX_TASK_CONTEXT_ENTRIES = 50
+
+
+def task_context_after(
+    existing: Dict[str, Any], add: Optional[List[Dict[str, Any]]] = None, remove: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """A Task's context list after entries are removed by id and others added. Callers persist atomically.
+
+    The list changes at any status before Done or Cancelled. A reference the list already holds is not
+    added twice. An id the list does not hold is an error, so a caller never believes it removed something.
+    """
+    if existing["status"] in {"done", "cancelled"}:
+        raise ValueError(f"The context of a {existing['status']} Task cannot change")
+    context = list(existing.get("context") or [])
+    for entry_id in remove or []:
+        kept = [entry for entry in context if entry.get("id") != entry_id]
+        if len(kept) == len(context):
+            raise LookupError(f"Context entry {entry_id} not found on this Task")
+        context = kept
+    held = {(entry.get("kind"), entry.get("ref")) for entry in context}
+    for entry in add or []:
+        if (entry["kind"], entry["ref"]) not in held:
+            held.add((entry["kind"], entry["ref"]))
+            context.append(entry)
+    # Only an addition is refused for the size, so a list can always be made shorter.
+    if add and len(context) > MAX_TASK_CONTEXT_ENTRIES:
+        raise ValueError(f"A Task's context holds at most {MAX_TASK_CONTEXT_ENTRIES} entries")
+    return context
+
+
+def task_transition_blocker(task: Dict[str, Any], target: str, run_holding: bool = False) -> Optional[str]:
+    """Name the error a move to target raises, or None when the Task allows it."""
+    attempted = any("attempt" in entry for entry in task.get("transitions") or [])
+    if target == "in_progress":
+        if task["status"] not in {"ready", "in_progress", "in_review"} or not task.get("executor_id"):
+            return "Only accepted work can be started"
+        if task.get("executor_type") not in {"agent", "team", "workflow"}:
+            return "Select a registered agent, team or workflow executor"
+        if task["status"] == "in_review" and not attempted:
+            return "A revision requires a previous Task attempt"
+        return None
+    if target not in TASK_TRANSITIONS.get(task["status"], set()):
+        return f"Invalid task transition from {task['status']} to {target}"
+    # An executing or paused run holds the Task in progress until it is cancelled.
+    if run_holding:
+        return f"Cancel the run with POST /company/runs/{task['job_id']}/cancel to leave In progress"
+    # Review and completion reached from anywhere but the step before them need an earlier attempt.
+    previous = {"in_review": "in_progress", "done": "in_review"}
+    if target in previous and task["status"] != previous[target] and not attempted:
+        return ("Review" if target == "in_review" else "Completion") + " requires a previous Task attempt"
+    return None
+
+
+def task_transition_fields(
+    existing: Dict[str, Any],
+    target: str,
+    reason: str,
+    accepted_by: Optional[str] = None,
+    executor_type: Optional[str] = None,
+    executor_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build lifecycle fields after validating a transition; callers persist atomically."""
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("A transition requires a non-empty reason")
+    if target not in TASK_TRANSITIONS.get(existing["status"], set()):
+        raise ValueError(f"Invalid task transition from {existing['status']} to {target}")
+    # In progress is entered only by starting a run, which applies its own rules.
+    blocker = None if target == "in_progress" else task_transition_blocker(existing, target)
+    if blocker is not None:
+        raise ValueError(blocker)
+    now = int(time.time())
+    fields: Dict[str, Any] = {"status": target, "updated_at": now}
+    if target == "ready":
+        if (
+            executor_type not in {"agent", "team", "workflow"}
+            or not isinstance(executor_id, str)
+            or not executor_id.strip()
+        ):
+            raise ValueError("Ready requires an executor type and id")
+        fields.update(executor_type=executor_type, executor_id=executor_id, accepted_by=accepted_by, accepted_at=now)
+    elif executor_type is not None or executor_id is not None:
+        raise ValueError("Only Ready can set an executor")
+    if target == "backlog":
+        fields.update(executor_type=None, executor_id=None, accepted_by=None, accepted_at=None)
+    fields["transitions"] = [
+        *(existing.get("transitions") or []),
+        {"from": existing["status"], "target": target, "reason": reason, "user_id": accepted_by, "created_at": now},
+    ]
+    ended = (existing.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+    if target == "ready" and existing["status"] == "in_progress" and ended:
+        # The return answers a run that failed or was cancelled, so its reason is a reply to that run.
+        # The same move on a queued attempt withdraws it, and the reason of that is a note.
+        fields["transitions"][-1]["ended_run"] = existing.get("job_id")
+    if target == "ready":
+        from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
+
+        fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
+        # A person asked for this Task to be added, not done, and it waited for their confirmation.
+        # Accepted now, it is held until someone starts it, like a Task that was added accepted.
+        if existing["status"] == "backlog" and (existing.get("metadata") or {}).get("start_on_request"):
+            fields["transitions"][-1]["start_on_request"] = True
+    return fields
+
+
+# The stages in which a Task whose last run failed or was cancelled is found. A run's end moves the Task
+# to review. A Task stored before that, and one a run could not move, is still In progress.
+FAILED_RUN_TASK_STATUSES = ("in_progress", "in_review")
+
+_RUN_END_REASONS = {
+    "COMPLETED": "Execution completed; human review required",
+    "CANCELLED": "Run cancelled; a person retries the Task, sends it back or closes it",
+}
+
+
+def task_run_end_fields(existing: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """The lifecycle fields of a Task whose run has ended; callers persist them with the result.
+
+    Every ended run moves the Task to review, whatever its outcome, so a Task is In progress only
+    while something is queued or running for it. The result says whether the run completed, failed
+    or was cancelled.
+    """
+    reason = _RUN_END_REASONS.get(
+        str(result.get("status")), "Run failed; a person retries the Task, sends it back or closes it"
+    )
+    fields = task_transition_fields(existing, "in_review", reason)
+    if result.get("status") != "COMPLETED":
+        # This review follows a run that did not finish. What people replied to the Task before that
+        # run still waits for an attempt that acts on it.
+        fields["transitions"][-1]["ended_run"] = existing.get("job_id")
+    return fields
+
+
+def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep persisted caller claims out of API and tool results."""
+    from agno.run.authorization import AUTHORIZATION_KEY
+
+    return {
+        **task,
+        "transitions": [
+            {k: v for k, v in entry.items() if k != AUTHORIZATION_KEY} for entry in task.get("transitions", [])
+        ],
+    }
+
+
+# What each Task status means to a person reading it.
+TASK_STATUS_MEANING = {
+    "backlog": "proposed, not accepted",
+    "ready": "accepted, not started",
+    "in_progress": "started",
+    "in_review": "finished, waiting for review",
+    "done": "done",
+    "cancelled": "cancelled",
+}
+
+
+def task_next_attempt(task: Dict[str, Any]) -> int:
+    """A new run takes the attempt after the highest one recorded on the Task."""
+    return max((entry["attempt"] for entry in task.get("transitions") or [] if "attempt" in entry), default=0) + 1
+
+
+def task_run_id(task_id: str, attempt: int) -> str:
+    """The same Task attempt always names the same ordinary queued run."""
+    from uuid import NAMESPACE_URL, uuid5
+
+    return str(uuid5(NAMESPACE_URL, f"agno:company:task:{task_id}:attempt:{attempt}"))
+
+
+def task_run_fields(
+    existing: Dict[str, Any],
+    attempt: int,
+    user_id: Optional[str],
+    run_db_id: Optional[str] = None,
+    session_user_id: Optional[str] = None,
+    requested_from: Optional[Dict[str, Any]] = None,
+    context_sent: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Reserve execution in the Task lifecycle, retaining the session across attempts.
+
+    requested_from names the conversation that asked for this attempt (session, run and team ids).
+    context_sent lists the context entries the attempt's input carried, each with the version sent.
+    """
+    from uuid import NAMESPACE_URL, uuid5
+
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise ValueError("attempt must be a positive integer")
+    blocker = task_transition_blocker(existing, "in_progress")
+    if blocker is not None:
+        raise ValueError(blocker)
+    history = existing.get("transitions") or []
+    if attempt != task_next_attempt(existing):
+        raise ValueError("Start the next Task attempt, or retry the original attempt")
+    now = int(time.time())
+    return {
+        "session_id": existing.get("session_id") or str(uuid5(NAMESPACE_URL, f"agno:company:task:{existing['id']}")),
+        "job_id": task_run_id(existing["id"], attempt),
+        "status": "in_progress",
+        "updated_at": now,
+        "result": None,
+        "transitions": [
+            *history,
+            {
+                "from": existing["status"],
+                "target": "in_progress",
+                "reason": "Task execution requested",
+                "user_id": user_id,
+                "started_by": user_id,
+                "session_user_id": session_user_id if session_user_id is not None else existing.get("user_id"),
+                "created_at": now,
+                "attempt": attempt,
+                "run_db_id": run_db_id,
+                **({"requested_from": _requested_from(requested_from)} if requested_from else {}),
+                **({"context_sent": context_sent} if context_sent else {}),
+            },
+        ],
+    }
+
+
+def _requested_from(value: Dict[str, Any]) -> Dict[str, str]:
+    """Keep only the conversation identifiers, as strings, so the Task history stays small and safe."""
+    return {key: value[key] for key in ("session_id", "run_id", "team_id") if isinstance(value.get(key), str)}
+
+
+def _acceptance_count(histories, routine_id, policy):
+    # Each row is one work record; repeated acceptance spends its budget once.
+    return sum(
+        any(
+            entry.get("target") in {"ready", "done"}
+            and (entry.get("auto_accept") or {}).get("routine_id") == routine_id
+            and entry["auto_accept"].get("policy") == policy
+            for entry in (history or [])
+        )
+        for history in histories
+    )

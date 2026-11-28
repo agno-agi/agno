@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
 from agno.db.schemas.service_accounts import ServiceAccount
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.service_accounts.schema import (
     ServiceAccountCreate,
     ServiceAccountCreateResponse,
@@ -95,7 +96,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
         return admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
-    def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
+    async def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
         """Reject unknown scopes, gate privileged scopes behind the explicit flag, and
         enforce the subset rule: a caller with scopes can only grant scopes it holds."""
         admin_scope = _get_admin_scope(request)
@@ -140,10 +141,70 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
-        effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
-        if effective_admin_scope in caller_scopes:
-            return
-        scopes_not_held = [scope for scope in scopes if not _caller_holds_scope(caller_scopes, scope, admin_scope)]
+        from agno.os.auth import (
+            caller_scopes_are_authoritative,
+            planes_beside_token_scopes,
+            scopes_left_for_the_provider,
+        )
+
+        if caller_scopes_are_authoritative(request):
+            effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
+            if effective_admin_scope in caller_scopes:
+                return
+            scopes = [scope for scope in scopes if not _caller_holds_scope(caller_scopes, scope, admin_scope)]
+            if not scopes:
+                return
+            # With another plane beside the token's scopes, a scope the token does not carry may
+            # still be held through it (a stored role), so only those scopes go on to the
+            # provider below. A service account is measured by its own scopes alone.
+            if not planes_beside_token_scopes(request):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Cannot grant scope(s) you do not hold: {', '.join(scopes)}",
+                )
+
+        # What reaches here is measured through the provider. Where token scopes count, that is
+        # only the scopes the token does not carry.
+        # Under a managed-roles / ReBAC / custom plane the token's `scopes` claim is
+        # NOT the caller's authority (the provider ignores it), yet a minted PAT is
+        # always enforced by scope-math and bypasses that plane. Measuring the subset
+        # rule against the claim would let a limited caller (e.g. one holding only a
+        # `service_accounts:write` role, with an ignored `agent_os:admin` in the token)
+        # mint a more powerful, durable credential. So measure the caller's REAL
+        # authority through the provider (their roles/relationships): each requested
+        # scope must be one the provider would grant this caller, decided exactly as
+        # the resource gate would. Minting a PAT for scopes the caller genuinely holds
+        # under the plane (the supported service-account flow) still works.
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz._scope_policy import scope_to_resource_action
+        from agno.os.authz.provider import AuthorizationContext
+
+        provider = resolve_authorization_provider(request)
+        principal_id = getattr(request.state, "user_id", None)
+        caller_claims = getattr(request.state, "claims", None) or {}
+
+        async def _caller_holds_via_provider(scope: str) -> bool:
+            try:
+                resource, action = scope_to_resource_action(scope)
+            except ValueError:
+                return False  # unmappable scope -> not held (fail closed)
+            if resource == "*":
+                resource_type, resource_id = "*", "*"  # agent_os:admin
+            else:
+                resource_type, _, resource_id = resource.partition("/")
+            return await provider.acheck(
+                AuthorizationContext(
+                    principal_id=principal_id,
+                    scopes=scopes_left_for_the_provider(request, caller_scopes),
+                    claims=caller_claims,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    action=action,
+                    admin_scope=admin_scope,
+                )
+            )
+
+        scopes_not_held = [scope for scope in scopes if not await _caller_holds_via_provider(scope)]
         if scopes_not_held:
             raise HTTPException(
                 status_code=403,
@@ -159,7 +220,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         """Mint a service account token. The plaintext token is returned exactly once."""
         requested_scopes = body.scope_strings()
         scopes = requested_scopes if requested_scopes is not None else list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
-        _validate_requested_scopes(request, body, scopes)
+        await _validate_requested_scopes(request, body, scopes)
 
         existing = await _db_call("get_service_account_by_name", body.name)
         if existing is not None:
@@ -205,6 +266,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/service-accounts", response_model=PaginatedResponse[ServiceAccountResponse])
     async def list_service_accounts(
+        request: Request,
         include_revoked: bool = Query(True),
         limit: int = Query(20, ge=1, le=100),
         page: int = Query(1, ge=1),
@@ -220,6 +282,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
+            user_id=get_scoped_user_id(request),
         )
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
@@ -243,9 +306,13 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         Takes effect immediately on this worker (the local verification cache entry is
         evicted) and within the cache TTL on other workers.
         """
-        existing = await _db_call("get_service_account", service_account_id)
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await _db_call("get_service_account", service_account_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Service account '{service_account_id}' not found")
+        # The scoped read also returns unowned workspace-level accounts, which no single caller may revoke.
+        if scoped_user_id is not None and existing.get("user_id") is None:
+            raise HTTPException(status_code=403, detail="Cannot revoke a workspace-level service account")
         if existing.get("revoked_at") is None:
             updated = await _db_call("update_service_account", service_account_id, revoked_at=int(time.time()))
             if updated is None:

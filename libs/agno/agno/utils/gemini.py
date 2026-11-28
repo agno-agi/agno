@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from agno.media import Image
 from agno.utils.log import log_error, log_warning
+from agno.utils.media import resolve_image_mime_type
 
 try:
     from google.genai.types import (
@@ -153,17 +154,21 @@ def has_self_reference(schema: Dict, target_ref: str) -> bool:
 
 
 def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
+    # The result goes to Part.from_bytes, which takes the raw bytes; a base64 string would only be
+    # decoded straight back, holding two more copies of the image in memory on the way.
     # Case 1: Image is a URL
-    # Download the image from the URL and add it as base64 encoded data
+    # Download the image from the URL and pass its bytes
     if image.url is not None:
         content_bytes = image.get_content_bytes()  # type: ignore
         if content_bytes is not None:
             try:
-                import base64
-
                 image_data = {
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(content_bytes).decode("utf-8"),
+                    "mime_type": resolve_image_mime_type(
+                        mime_type=image.mime_type,
+                        image_format=image.format,
+                        image_bytes=content_bytes,
+                    ),
+                    "data": content_bytes,
                 }
                 return image_data
             except Exception as e:
@@ -184,7 +189,12 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 log_error(f"Image file {image_path} does not exist.")
                 raise
             return {
-                "mime_type": "image/jpeg",
+                "mime_type": resolve_image_mime_type(
+                    mime_type=image.mime_type,
+                    image_format=image.format,
+                    file_path=image_path,
+                    image_bytes=content_bytes,
+                ),
                 "data": content_bytes,
             }
         except Exception as e:
@@ -192,11 +202,15 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             return None
 
     # Case 3: Image is a bytes object
-    # Add it as base64 encoded data
     elif image.content is not None and isinstance(image.content, bytes):
-        import base64
-
-        image_data = {"mime_type": "image/jpeg", "data": base64.b64encode(image.content).decode("utf-8")}
+        image_data = {
+            "mime_type": resolve_image_mime_type(
+                mime_type=image.mime_type,
+                image_format=image.format,
+                image_bytes=image.content,
+            ),
+            "data": image.content,
+        }
         return image_data
     else:
         log_warning(f"Unknown image type: {type(image)}")

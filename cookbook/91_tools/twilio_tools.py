@@ -41,7 +41,7 @@ agent = Agent(
         - getting call details
         """
     ],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         TwilioTools(
             enable_send_sms=True,
@@ -55,7 +55,7 @@ agent = Agent(
 # Example 2: Enable all Twilio functions
 agent_all = Agent(
     name="Twilio Agent All",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[TwilioTools(all=True)],
     markdown=True,
 )
@@ -63,7 +63,7 @@ agent_all = Agent(
 # Example 3: Enable only SMS functionality
 sms_agent = Agent(
     name="SMS Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         TwilioTools(
             enable_send_sms=True,

@@ -8,7 +8,7 @@ Requirements:
     pip install langgraph langchain-openai
 
 Usage:
-    .venvs/demo/bin/python cookbook/frameworks/langgraph_agentos.py
+    .venvs/demo/bin/python cookbook/frameworks/langgraph/langgraph_agentos.py
 
 Then call the API:
     # Streaming

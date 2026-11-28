@@ -1,14 +1,30 @@
 # Test Log: 07_security
 
-Last updated: 2026-07-24
+Last updated: 2026-11-24
+
+Added `multiple_verification_keys.py` for several comma-separated keys in
+`JWT_VERIFICATION_KEY`. Ran it and `asymmetric_keys.py` with the branch's `.venv`, with
+`AgentOS.serve()` stubbed so each file builds its app, runs its smoke and returns. Both exit 0.
+
+Earlier (2026-09-24):
+
+After the low-severity authorization fixes, re-ran `asymmetric_keys.py`, `basic_scopes.py`,
+`excluded_routes.py`, `per_resource_scopes.py`, `service_accounts.py`, `test_scopes.py`,
+`user_isolation.py` and `user_isolation_knowledge.py` with `.venvs/demo` against the branch's
+`libs/agno`, with `AgentOS.serve()` stubbed so each file builds its app and returns. All exit 0.
+`test_scopes.py` prints "RBAC enforcement smoke passed" and `user_isolation_knowledge.py` prints
+"Per-user knowledge ownership smoke passed"; the 403 and 404 lines in the second are the refusals
+it checks for.
+
+Earlier (2026-08-07):
 
 Server verification used `.venvs/demo` with the pinned worktree library on
-`PYTHONPATH`. The eight local server examples (`basic_scopes.py`,
+`PYTHONPATH`. The ten local server examples (`basic_scopes.py`,
 `asymmetric_keys.py`, `per_resource_scopes.py`, `custom_scope_mappings.py`,
-`cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`, and
-`service_accounts.py`) were started through `AgentOS.serve()`: all returned
-200 from `/health` and 401 from an unauthenticated `/config` request before
-clean termination.
+`excluded_routes.py`, `cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`,
+`user_isolation_knowledge.py`, and `service_accounts.py`) were started through
+`AgentOS.serve()`: all returned 200 from `/health` and 401 from an
+unauthenticated `/config` request before clean termination.
 
 ### basic_scopes.py
 
@@ -38,6 +54,21 @@ key, and verified it in AgentOS with only the public key.
 
 ---
 
+### multiple_verification_keys.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Generated three RS256 key pairs, put two public keys in
+`JWT_VERIFICATION_KEY` separated by a comma, and built an AgentOS with
+`authorization=True`. Signed a token with each private key and called `GET /agents`.
+
+**Result:** The first and second issuers' tokens returned 200. The token signed by the
+key AgentOS was not given returned 401.
+
+---
+
 ### per_resource_scopes.py
 
 **Status:** PASS
@@ -64,6 +95,22 @@ wildcard token exposed both agents plus the registered team and workflow.
 
 **Result:** `app:read` received 200 from `/config`; a token with only
 `agents:read` received 403.
+
+---
+
+### excluded_routes.py
+
+**Status:** PASS
+
+**Test mode:** SMOKE
+
+**Description:** Configured `AuthorizationConfig.excluded_route_paths` with
+`/public/*` pattern, then verified custom and default exclusions work while
+protected routes still require JWT.
+
+**Result:** Custom exclusion (`/public/status`) returned 200 without auth.
+Default exclusion (`/health`) still worked. Protected route (`/agents`)
+returned 401 without auth and 200 with a valid token.
 
 ---
 
@@ -110,6 +157,24 @@ exactly its own session, while the admin response included both.
 
 ---
 
+### user_isolation_knowledge.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Seeded two shared content rows and one row per JWT subject
+while `user_isolation=True`, then drove the knowledge routes as a non-admin and
+as an admin.
+
+**Result:** The non-admin listing held its own row plus both shared rows.
+`PATCH` and `DELETE` on a shared row returned 403, `DELETE` on the other
+subject's row returned 404, and the bulk delete cleared only the caller's own
+row. The admin deleted a shared row and the other subject's row with 200 each,
+leaving the same two rows behind across three consecutive runs.
+
+---
+
 ### service_accounts.py
 
 **Status:** PASS
@@ -138,7 +203,7 @@ it with a 204 response.
 WorkOS configuration with `permissions` scopes and explicit audience
 verification, and inspected the mounted OpenAPI paths.
 
-**Result:** The app constructed successfully with 70 routes; `/health`,
+**Result:** The app constructed successfully with 69 routes; `/health`,
 `/config`, and `/agents` were mounted. A live provider run still requires
 `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and the `workos` package.
 

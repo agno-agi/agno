@@ -61,7 +61,7 @@ region_name = "us-west-2"  # Your AWS region
 # Create an agent that can research and send personalized email updates
 agent = Agent(
     name="Research Newsletter Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="""You are an AI research specialist who creates and sends personalized email 
     newsletters about the latest developments in artificial intelligence and technology.""",
     instructions=[

@@ -16,7 +16,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     markdown=True,
 )

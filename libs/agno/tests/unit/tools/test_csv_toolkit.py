@@ -1,8 +1,102 @@
+import csv
 import json
+from io import StringIO
 
 import pytest
 
 from agno.tools.csv_toolkit import CsvTools
+
+
+@pytest.mark.parametrize(
+    ("columns", "rows"),
+    [
+        (["company", "note"], [["Acme, Inc.", "line one\nline two"], ['Say "hello"', "München"]]),
+        (["company,name", 'note"text'], [["Acme", "plain text"]]),
+        (["note"], [["comma,value"], ['"quoted"'], ["line one\nline two"], ["line one\rline two"]]),
+    ],
+    ids=["field-delimiters", "header-delimiters", "single-column"],
+)
+def test_query_csv_file_preserves_csv_fields(tmp_path, columns, rows):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "records.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(columns)
+        writer.writerows(rows)
+    tools = CsvTools(csvs=[csv_path])
+
+    result = tools.query_csv_file("records", "SELECT * FROM records")
+
+    assert list(csv.reader(StringIO(result, newline=""))) == [columns, *rows]
+
+
+def test_query_csv_file_separates_rows_with_newlines(tmp_path):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "records.csv"
+    csv_path.write_text("name,total\nfirst,30\nsecond,40\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    result = tools.query_csv_file("records", "SELECT * FROM records ORDER BY total")
+
+    assert result == "name,total\nfirst,30\nsecond,40"
+
+
+@pytest.mark.parametrize("empty_result", [False, True])
+def test_query_csv_file_preserves_scalar_values_and_empty_results(tmp_path, empty_result):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "records.csv"
+    csv_path.write_text("value\n1\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+    query = "SELECT 1 AS number, TRUE AS active, NULL AS missing FROM records"
+    if empty_result:
+        query += " WHERE FALSE"
+
+    result = tools.query_csv_file("records", query)
+
+    expected = [["number", "active", "missing"]]
+    if not empty_result:
+        expected.append(["1", "True", "None"])
+    assert list(csv.reader(StringIO(result, newline=""))) == expected
+
+
+@pytest.mark.parametrize(
+    ("constructor_limit", "requested_limit", "expected_row_count"),
+    [
+        (None, 0, 0),
+        (1, 0, 0),
+        (0, 0, 0),
+        (1, None, 1),
+        (0, None, 0),
+        (None, None, 3),
+        (0, 2, 2),
+        (None, -1, 2),
+    ],
+    ids=[
+        "explicit-zero-unbounded-default",
+        "explicit-zero-positive-default",
+        "explicit-zero-zero-default",
+        "none-uses-positive-default",
+        "none-uses-zero-default",
+        "none-with-unbounded-default",
+        "positive-overrides-zero-default",
+        "negative-preserves-slice",
+    ],
+)
+def test_read_csv_file_respects_explicit_zero_and_row_limit_fallback(
+    tmp_path, constructor_limit, requested_limit, expected_row_count
+):
+    csv_path = tmp_path / "people.csv"
+    csv_path.write_text("name,age\nAlice,30\nBob,40\nCara,50\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path], row_limit=constructor_limit, enable_query_csv_file=False)
+
+    rows = json.loads(tools.read_csv_file("people", row_limit=requested_limit))
+
+    all_rows = [
+        {"name": "Alice", "age": "30"},
+        {"name": "Bob", "age": "40"},
+        {"name": "Cara", "age": "50"},
+    ]
+    assert rows == all_rows[:expected_row_count]
 
 
 def test_read_csv_file_preserves_non_ascii_content(tmp_path):

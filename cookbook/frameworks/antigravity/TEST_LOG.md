@@ -80,6 +80,6 @@
 
 ---
 
-Note: the `AntigravityTools` toolkit example lives at `cookbook/91_tools/antigravity_tools.py` and is tracked in that folder's TEST_LOG.
+Note: the `AntigravityTools` toolkit example lives at `cookbook/91_tools/antigravity/antigravity_tools.py` and is tracked in that folder's TEST_LOG.
 
 ---

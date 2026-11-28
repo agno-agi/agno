@@ -20,16 +20,16 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Union, cast
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
-from agno.run.agent import BaseAgentRunEvent
-from agno.run.team import TeamRunEvent
 from agno.run.workflow import WorkflowRunEvent
 
 if TYPE_CHECKING:
-    from slack_sdk.web.async_chat_stream import AsyncChatStream
-
+    from agno.os.interfaces.slack.stream import SlackStream
     from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
     from agno.run.base import BaseRunOutputEvent
     from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+
+STOPPED_TEXT = "_Stopped._"
+WORKFLOW_PAUSED_TEXT = "_Run paused — please resolve it in AgentOS. The result shows there, not in this thread._"
 
 
 # =============================================================================
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 # Event handlers return True on terminal events to break the stream loop
 _EventHandler = Callable[
-    ["BaseRunOutputEvent", StreamState, "AsyncChatStream"],
+    ["BaseRunOutputEvent", StreamState, "SlackStream"],
     Awaitable[bool],
 ]
 
@@ -53,6 +53,13 @@ def _normalize_event(event: str) -> str:
     return event.removeprefix("Team")
 
 
+def _is_member_event(chunk: BaseRunOutputEvent, state: StreamState) -> bool:
+    """A member's event (no team_id) or a nested Team's (parent_run_id); only the leader's own event ends the run."""
+    if state.entity_type != "team":
+        return False
+    return getattr(chunk, "team_id", None) is None or getattr(chunk, "parent_run_id", None) is not None
+
+
 @dataclass
 class _ToolRef:
     """Reference to a tool call for task card tracking."""
@@ -60,6 +67,7 @@ class _ToolRef:
     tid: str | None  # Slack task card ID (None when tool_call_id is missing)
     label: str  # Display title, e.g. "Researcher: web_search"
     errored: bool
+    denied: bool = False  # The user denied this call on an approval card
 
 
 def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
@@ -71,11 +79,11 @@ def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback
     label = f"{member}: {tool_name}" if member else tool_name
     tid = task_id(member, call_id) if call_id else None  # type: ignore[arg-type]
     errored = bool(tool.tool_call_error) if tool else False
-    return _ToolRef(tid=tid, label=label, errored=errored)
+    return _ToolRef(tid=tid, label=label, errored=errored, denied=call_id in state.denied_tool_call_ids)
 
 
 async def _emit_task(
-    stream: AsyncChatStream,
+    stream: SlackStream,
     card_id: str,
     title: str,
     status: str,
@@ -85,19 +93,14 @@ async def _emit_task(
     """Send a task card update to the Slack stream."""
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
-        # Slack rejects plain strings in task_card output slots — requires rich_text
-        # even though slack_sdk types output as Optional[str]. Truncate to 200 chars.
-        chunk["output"] = {
-            "type": "rich_text",
-            "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": output[:200]}]}],
-        }
+        chunk["output"] = output[:200]  # Slack truncates longer task output
     await stream.append(markdown_text="", chunks=[chunk])
 
 
 async def _wf_task(
     chunk: BaseRunOutputEvent,
     state: StreamState,
-    stream: AsyncChatStream,
+    stream: SlackStream,
     prefix: str,
     label: str = "",
     *,
@@ -167,7 +170,7 @@ def _make_wf_handler(
     different parameters (e.g., ParallelStarted, ConditionCompleted, etc.).
     """
 
-    async def handler(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    async def handler(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
         await _wf_task(chunk, state, stream, prefix, label, started=started, name_attr=name_attr)
         return False
 
@@ -179,14 +182,14 @@ def _make_wf_handler(
 # =============================================================================
 
 
-async def _on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     key = f"reasoning_{state.reasoning_round}"
     state.track_task(key, "Reasoning")
     await _emit_task(stream, key, "Reasoning", "in_progress")
     return False
 
 
-async def _on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     key = f"reasoning_{state.reasoning_round}"
     state.complete_task(key)
     state.reasoning_round += 1
@@ -194,7 +197,7 @@ async def _on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState,
     return False
 
 
-async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     # Fallback when SDK chunks omit tool_call_id so cards still render
     ref = _extract_tool_ref(chunk, state, fallback_id=str(len(state.task_cards)))
     if ref.tid:
@@ -203,12 +206,17 @@ async def _on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState, s
     return False
 
 
-async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     ref = _extract_tool_ref(chunk, state)
     if ref.tid:
         # Backfill card when Completed arrives without a prior Started event
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
+        if ref.denied:
+            # A denied call did not fail: its card closes as complete
+            state.complete_task(ref.tid)
+            await _emit_task(stream, ref.tid, f"{ref.label}: denied", "complete")
+            return False
         if ref.errored:
             state.error_task(ref.tid)
         else:
@@ -217,58 +225,80 @@ async def _on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState,
     return False
 
 
-async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
     error_msg = getattr(chunk, "error", None) or "Tool call failed"
     state.error_count += 1
     if ref.tid:
         if ref.tid not in state.task_cards:
             state.track_task(ref.tid, ref.label)
+        if ref.denied:
+            state.complete_task(ref.tid)
+            await _emit_task(stream, ref.tid, f"{ref.label}: denied", "complete")
+            return False
         state.error_task(ref.tid)
         await _emit_task(stream, ref.tid, ref.label, "error", output=str(error_msg))
     return False
 
 
-async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # In team mode, member agents stream their own RunContentEvent (which extends
-    # BaseAgentRunEvent) before the leader synthesizes a TeamRunContent (which
-    # extends BaseTeamRunEvent). Showing both would duplicate content.
-    if state.entity_type == "team" and isinstance(chunk, BaseAgentRunEvent):
+async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    # In team mode, members (agents and nested Teams) stream their own content before
+    # the leader synthesizes its TeamRunContent. Showing both would duplicate content.
+    if _is_member_event(chunk, state):
         return False
     content = getattr(chunk, "content", None)
     if content is not None:
+        state.content_streamed = True
+        # The final answer replaces the draft an output model was given
+        state.intermediate_buffer = ""
         state.append_content(content)
     return False
 
 
-async def _on_run_intermediate_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_run_intermediate_content(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     # Teams emit intermediate content from each member as they finish. Showing
     # these would interleave partial outputs in the stream. The team leader
     # emits a single consolidated RunContent at the end — that's what we show.
+    # An Agent with an output model streams its draft here; it is shown only if no RunContent follows.
     if state.entity_type != "team":
         content = getattr(chunk, "content", None)
         if content is not None:
-            state.append_content(content)
+            state.append_intermediate(content)
     return False
 
 
-async def _on_memory_update_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_memory_update_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     state.track_task("memory_update", "Updating memory")
     await _emit_task(stream, "memory_update", "Updating memory", "in_progress")
     return False
 
 
-async def _on_memory_update_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_memory_update_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     state.complete_task("memory_update")
     await _emit_task(stream, "memory_update", "Updating memory", "complete")
     return False
 
 
-async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    if _is_member_event(chunk, state):
+        return False
+    # A continuation replays stored events without content, so its answer is only on RunCompleted
+    content = str(getattr(chunk, "content", None) or "")
+    if state.paused_content and content.startswith(state.paused_content):
+        content = content[len(state.paused_content) :].lstrip()
+    if state.entity_type in ("agent", "team") and content and not state.content_streamed:
+        state.intermediate_buffer = ""
+        state.append_content(content)
+    else:
+        draft = state.take_intermediate()
+        if draft:
+            state.append_content(draft)
     return False  # Finalization handled by caller after stream ends
 
 
-async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    if _is_member_event(chunk, state):
+        return False
     state.error_count += 1
     error_msg = getattr(chunk, "content", None) or "An error occurred"
     state.append_error(error_msg)
@@ -276,17 +306,27 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
     return True
 
 
-async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # For Teams: only stop on TeamRunPausedEvent (has team_id), not member RunPausedEvent.
+async def _on_run_cancelled(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    if _is_member_event(chunk, state):
+        return False
+    state.append_content(f"\n{STOPPED_TEXT}")
+    state.terminal_status = "cancelled"
+    return True
+
+
+async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    # A workflow step's agent pausing pauses the workflow
+    if state.entity_type == "workflow":
+        return await _on_workflow_paused(chunk, state, stream)
+    # For Teams: only stop on the Team's own TeamRunPausedEvent, not a member's or a nested Team's.
     # HITL card must carry Team's run_id — aget_run_output(member_run_id) fails at approval.
-    if state.entity_type == "team":
-        if getattr(chunk, "team_id", None) is None:
-            return False
+    if _is_member_event(chunk, state):
+        return False
 
     state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
-    state.terminal_status = "in_progress"
+    state.terminal_status = "paused"
 
-    if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
+    if not state.has_content() and not state.content_streamed and not state.task_cards:
         await stream.append(markdown_text="_Reviewing request…_")
 
     # Don't break early — let generator drain naturally to avoid GeneratorExit.
@@ -299,7 +339,7 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
 # =============================================================================
 
 
-async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     # StepOutput is workflow-only (agents/teams never emit it).
     # Capture but don't stream — WorkflowCompleted uses this as fallback.
     content = getattr(chunk, "content", None)
@@ -308,7 +348,7 @@ async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream:
     return False
 
 
-async def _on_workflow_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_workflow_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
     run_id = getattr(chunk, "run_id", None) or "run"
     key = f"wf_run_{run_id}"
@@ -317,7 +357,7 @@ async def _on_workflow_started(chunk: BaseRunOutputEvent, state: StreamState, st
     return False
 
 
-async def _on_workflow_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_workflow_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     run_id = getattr(chunk, "run_id", None) or "run"
     wf_name = getattr(chunk, "workflow_name", None) or state.entity_name or "Workflow"
     key = f"wf_run_{run_id}"
@@ -331,7 +371,7 @@ async def _on_workflow_completed(chunk: BaseRunOutputEvent, state: StreamState, 
     return False
 
 
-async def _on_workflow_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_workflow_error(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     state.error_count += 1
     error_msg = getattr(chunk, "error", None) or getattr(chunk, "content", None) or "Workflow failed"
     state.append_error(error_msg)
@@ -339,7 +379,15 @@ async def _on_workflow_error(chunk: BaseRunOutputEvent, state: StreamState, stre
     return True
 
 
-async def _on_step_error(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_workflow_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
+    # Slack has no approval cards for workflow steps yet, so the user is sent to AgentOS
+    if state.terminal_status != "workflow_paused":
+        state.append_content(f"\n{WORKFLOW_PAUSED_TEXT}")
+        state.terminal_status = "workflow_paused"
+    return False
+
+
+async def _on_step_error(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "step"
     sid = getattr(chunk, "step_id", None) or step_name
     key = f"wf_step_{sid}"
@@ -356,7 +404,7 @@ async def _on_step_error(chunk: BaseRunOutputEvent, state: StreamState, stream: 
 # =============================================================================
 
 
-async def _on_loop_execution_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_loop_execution_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     loop_key = getattr(chunk, "step_id", None) or step_name
     max_iter = getattr(chunk, "max_iterations", None)
@@ -367,7 +415,7 @@ async def _on_loop_execution_started(chunk: BaseRunOutputEvent, state: StreamSta
     return False
 
 
-async def _on_loop_iteration_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_loop_iteration_started(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
     iteration = getattr(chunk, "iteration", 0)
     max_iter = getattr(chunk, "max_iterations", None)
@@ -378,7 +426,7 @@ async def _on_loop_iteration_started(chunk: BaseRunOutputEvent, state: StreamSta
     return False
 
 
-async def _on_loop_iteration_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_loop_iteration_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     loop_key = getattr(chunk, "step_id", None) or getattr(chunk, "step_name", None) or "loop"
     iteration = getattr(chunk, "iteration", 0)
     key = f"wf_loop_{loop_key}_iter_{iteration}"
@@ -387,7 +435,7 @@ async def _on_loop_iteration_completed(chunk: BaseRunOutputEvent, state: StreamS
     return False
 
 
-async def _on_loop_execution_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def _on_loop_execution_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     loop_key = getattr(chunk, "step_id", None) or step_name
     key = f"wf_loop_{loop_key}"
@@ -417,10 +465,9 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
-    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
-    # HITL pause — router posts approval card separately since appendStream rejects Block Kit
+    RunEvent.run_cancelled.value: _on_run_cancelled,
+    # HITL pause — the executor posts the approval card separately since appendStream rejects Block Kit
     RunEvent.run_paused.value: _on_run_paused,
-    TeamRunEvent.run_paused.value: _on_run_paused,
     # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
     # -------------------------------------------------------------------------
@@ -428,7 +475,13 @@ HANDLERS: Dict[str, _EventHandler] = {
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
-    WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
+    WorkflowRunEvent.workflow_cancelled.value: _on_run_cancelled,
+    WorkflowRunEvent.workflow_paused.value: _on_workflow_paused,
+    WorkflowRunEvent.step_paused.value: _on_workflow_paused,
+    WorkflowRunEvent.step_executor_paused.value: _on_workflow_paused,
+    WorkflowRunEvent.step_output_review.value: _on_workflow_paused,
+    WorkflowRunEvent.condition_paused.value: _on_workflow_paused,
+    WorkflowRunEvent.router_paused.value: _on_workflow_paused,
     # -------------------------------------------------------------------------
     # Workflow Step Events
     # -------------------------------------------------------------------------
@@ -462,7 +515,7 @@ HANDLERS: Dict[str, _EventHandler] = {
 }
 
 
-async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: SlackStream) -> bool:
     """
     Process a streaming event and update Slack accordingly.
 
@@ -470,7 +523,7 @@ async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamSta
         ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
         chunk: Stream chunk containing event data
         state: StreamState tracking session state
-        stream: Slack chat_stream for sending updates
+        stream: SlackStream for sending updates
 
     Returns:
         True if this is a terminal event and the stream loop should break.
