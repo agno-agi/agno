@@ -27,6 +27,7 @@ from agno.environments.environment import (
     _validated_agent,
 )
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.run.agent import RunOutput
 from agno.scorer import FingerprintError, MismatchError, Score
 from agno.utils.log import log_warning
@@ -827,7 +828,10 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
             setattr(agent, field_name, _cache_off_copy(value))
     fallback_config = getattr(agent, "fallback_config", None)
     if fallback_config is not None:
-        config_copy = copy.copy(fallback_config)
+        # replace(), not copy.copy(): a shallow copy would share the caller's sticky-fallback state
+        config_copy = (
+            replace(fallback_config) if isinstance(fallback_config, FallbackConfig) else copy.copy(fallback_config)
+        )
         for list_name in ("on_error", "on_rate_limit", "on_context_overflow"):
             entries = getattr(config_copy, list_name, None)
             if entries:

@@ -22,7 +22,7 @@ Practical examples for building agents with Agno, organized by feature area.
 | 14 | [14_advanced](./14_advanced/) | Caching, compression, events, retries, concurrency | 19 |
 | 15 | [15_dependencies](./15_dependencies/) | Dependency injection in tools and context | 3 |
 | 16 | [16_skills](./16_skills/) | Agent skills with scripts and reference docs | 1 |
-| 17 | [17_fallback_models](./17_fallback_models/) | Fallback models when the primary fails | 4 |
+| 17 | [17_fallback_models](./17_fallback_models/) | Fallback models when the primary fails | 5 |
 | 18 | [18_checkpointing](./18_checkpointing/) | Checkpointing and crash recovery | 3 |
 | 19 | [19_regenerate](./19_regenerate/) | Redo the last response of a run | 1 |
 | 20 | [20_time_travel](./20_time_travel/) | Rewind a run and resume from an earlier point | 2 |
