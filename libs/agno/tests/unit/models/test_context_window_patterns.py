@@ -101,6 +101,32 @@ class TestAnthropicContextWindowPatterns:
 
 
 # =============================================================================
+# Bedrock context window patterns
+# =============================================================================
+
+
+class TestBedrockContextWindowPatterns:
+    """Bedrock says "Input is too long", with an "is" the generic "input too long" pattern lacks."""
+
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "Input is too long for requested model.",
+            "An error occurred (ValidationException) when calling the Converse operation: "
+            "Input is too long for requested model.",
+            # AwsBedrock raises with the text of the whole error response.
+            "{'Error': {'Message': 'Input is too long for requested model.', 'Code': 'ValidationException'}, "
+            "'ResponseMetadata': {'HTTPStatusCode': 400}}",
+        ],
+        ids=["bedrock_message", "bedrock_client_error", "bedrock_error_response"],
+    )
+    def test_classify_bedrock_context_window_errors(self, error_message: str):
+        classified = ModelProviderError.classify(ModelProviderError(message=error_message, status_code=400))
+
+        assert isinstance(classified, ContextWindowExceededError)
+
+
+# =============================================================================
 # Existing patterns (regression tests)
 # =============================================================================
 

@@ -16,10 +16,39 @@ from agno.models.message import Message
 _RESULT_ID_PATTERN = re.compile(r'<result id="([^"]+)"')
 _MAX_SURVIVING_IDS = 100
 # provider_data keys a provider continues a conversation from instead of the messages sent:
-# OpenAI Responses chains on response_id, GeminiInteractions on interaction_id. Left on a kept
-# assistant message, either makes the provider send only what follows it, so the server replays
-# the folded turns and the summary in front of it is never sent.
+# OpenAI Responses chains on response_id, GeminiInteractions on interaction_id. Left on an
+# assistant message that was produced before the fold, either makes the provider send only what
+# follows it, so the server replays the folded turns and the summary in front of it is never sent.
 _CHAINING_KEYS = ("response_id", "interaction_id")
+
+
+def _produced_after(message: Message, record: Optional[CompactionRecord]) -> bool:
+    """Whether an assistant message was produced by a request made after this fold.
+
+    Such a request was built from the fold: the provider's stored conversation behind it is the
+    summary and the kept messages, not the folded turns. Continuing from it is safe, and it is
+    what lets the provider cache the conversation again. A record is stamped when its fold starts
+    and a message when its request starts, so a message produced after the fold is stamped later.
+    In the same second it counts as produced before: that costs one request sent in full, where
+    the other mistake would bring the folded turns back.
+    """
+    if record is None or not record.created_at or not message.created_at:
+        return False
+    return message.created_at > record.created_at
+
+
+def without_chaining(message: Message) -> Message:
+    """The message, or a copy without the keys its provider continues a conversation from.
+
+    The rest of provider_data survives: a function_call without its paired reasoning item is a
+    provider error. The message given is never changed.
+    """
+    if message.role != "assistant" or message.provider_data is None:
+        return message
+    if not any(key in message.provider_data for key in _CHAINING_KEYS):
+        return message
+    trimmed = {key: value for key, value in message.provider_data.items() if key not in _CHAINING_KEYS}
+    return message.model_copy(update={"provider_data": trimmed or None})
 
 
 def surviving_result_ids(folded: List[Message]) -> List[str]:
@@ -76,10 +105,13 @@ def build_view(
     Leading system/developer messages pass verbatim. When the record's boundary resolves in this
     list, the summary is injected and everything before the boundary is omitted — a
     summary is never injected unless its cut applies, so an unresolvable boundary fails open to
-    the list as given. With strip_provider_chaining, assistant copies drop the chaining keys from
-    provider_data (reasoning items and other payload survive: a function_call without its paired
-    reasoning item is a provider error) so server-side chaining cannot silently rebuild the full
-    history behind the view's back.
+    the list as given. With strip_provider_chaining, copies of the assistant messages produced before
+    the fold drop the chaining keys from provider_data (reasoning items and other payload survive:
+    a function_call without its paired reasoning item is a provider error) so server-side chaining
+    cannot silently rebuild the full history behind the view's back. Assistant messages produced
+    after the fold keep theirs: the provider's conversation behind them starts at the summary, so
+    the conversation is continued, and cached, from there. When the boundary does not resolve,
+    every assistant message is taken as produced before the fold.
     """
     lead = leading_system_count(messages)
 
@@ -100,13 +132,7 @@ def build_view(
         # never appears twice in one view.
         if boundary_index is not None and is_injected_compaction_message(message):
             continue
-        if (
-            strip_provider_chaining
-            and message.role == "assistant"
-            and message.provider_data is not None
-            and any(key in message.provider_data for key in _CHAINING_KEYS)
-        ):
-            trimmed = {key: value for key, value in message.provider_data.items() if key not in _CHAINING_KEYS}
-            message = message.model_copy(update={"provider_data": trimmed or None})
+        if strip_provider_chaining and not (boundary_index is not None and _produced_after(message, record)):
+            message = without_chaining(message)
         view.append(message)
     return view

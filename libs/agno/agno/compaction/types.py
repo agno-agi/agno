@@ -25,7 +25,7 @@ class CompactionStatus(str, Enum):
 
     # The fold happened.
     COMPACTED = "compacted"
-    # Compaction is not configured on this agent.
+    # Compaction is not configured on this agent or team.
     NOT_ENABLED = "not_enabled"
     # The session has no stored history yet.
     NO_HISTORY = "no_history"
@@ -43,7 +43,7 @@ class CompactionStatus(str, Enum):
 
 @dataclass
 class CompactionResult:
-    """The outcome of an explicit ``agent.compact()`` call.
+    """The outcome of an explicit ``Agent.compact()`` or ``Team.compact()`` call.
 
     Returned instead of a bare record so a caller - an API route, a UI - can tell a decline
     apart from a failure, and show the reason without parsing a log line.

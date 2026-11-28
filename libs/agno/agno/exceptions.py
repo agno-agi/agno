@@ -145,6 +145,8 @@ class ModelProviderError(AgnoError):
         "content_too_large",
         "request too large",
         "input too long",
+        # Bedrock: "Input is too long for requested model."
+        "input is too long",
         "prompt is too long",
         "prompt too long",
         "exceeds the model",
