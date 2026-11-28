@@ -9925,6 +9925,7 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         expected_status: Optional[str] = None,
         moved_by: Optional[str] = None,
+        goal_id: Optional[str] = None,
         **fields: Any,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
@@ -9958,7 +9959,7 @@ class SqliteDb(BaseDb):
                 .first()
             )
             if current is not None and fields.get("project_id") is not None:
-                fields.update(require_move(sess, goals, projects, current, fields["project_id"], moved_by))
+                fields.update(require_move(sess, goals, projects, current, fields["project_id"], moved_by, goal_id))
             result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 
