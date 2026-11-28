@@ -818,6 +818,9 @@ class WorkflowRunOutput:
     # Kind of pause currently active: "step" or "executor". None when not paused.
     pause_kind: Optional[Union[PauseKind, str]] = None
 
+    # Run-scoped data passed to steps, retained for continuation after a pause.
+    additional_data: Optional[Dict[str, Any]] = None
+
     @property
     def is_paused(self) -> bool:
         """Check if the workflow is paused waiting for step confirmation or router selection"""

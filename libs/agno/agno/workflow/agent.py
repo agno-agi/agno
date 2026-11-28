@@ -139,6 +139,7 @@ Guidelines:
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,  # Use original user input
+                additional_data=execution_input.additional_data,
                 session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
@@ -262,6 +263,7 @@ Guidelines:
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,  # Use original user input
+                additional_data=execution_input.additional_data,
                 session_id=session_from_db.session_id,
                 workflow_id=workflow.id,
                 workflow_name=workflow.name,
