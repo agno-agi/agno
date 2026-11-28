@@ -462,7 +462,7 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
     # The lead holds the platform tools itself, in this order.
     tools = list(os.manager.tools)
     assert tools[0] is attached
-    runner, agentos, diagnostics, *rest = tools[1:]
+    runner, agentos, schedule_control, diagnostics, *rest = tools[1:]
     assert isinstance(runner, StudioRunnerTools)
     assert runner.include_all_components and runner.self_dispatch == "once"
     assert set(runner.functions) == {
@@ -476,6 +476,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         "check_background_run",
     }
     assert isinstance(agentos, AgentOSTools) and set(agentos.functions) == {"get_run_activity", "list_schedules"}
+    assert set(schedule_control.functions) == {"pause_schedule", "resume_schedule", "delete_schedule"}
+    assert schedule_control.requires_confirmation_tools == ["delete_schedule"]
     assert diagnostics.name == "manager_diagnostics" and set(diagnostics.functions) == {"run_diagnostics"}
     if access_docs:
         docs = rest.pop(0)

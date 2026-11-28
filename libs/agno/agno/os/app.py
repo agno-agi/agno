@@ -813,6 +813,11 @@ class AgentOS:
         self._routine_api_read: Any = None
         self._routine_api_update: Any = None
         self._routine_api_resume: Any = None
+        self._routine_api_pause: Any = None
+        self._routine_api_delete: Any = None
+        self._schedule_api_disable: Any = None
+        self._schedule_api_enable: Any = None
+        self._schedule_api_delete: Any = None
         if self.company is not None:
             from agno.company.execution import _mount_executors
             from agno.company.mini_agent import _build_mini_agent

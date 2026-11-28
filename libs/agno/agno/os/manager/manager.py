@@ -312,6 +312,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.finished_work import FinishedWorkBoundary
+    from agno.os.manager.schedule_control import ScheduleControlTools
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -401,6 +402,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         *config.tools,
         runner,
         AgentOSTools(db=db, include_tools=["get_run_activity", "list_schedules"], add_instructions=False),
+        ScheduleControlTools(agent_os),
         _diagnostics_tool(agent_os, config.required_env),
     ]
     instructions: List[str] = [MANAGER_INSTRUCTIONS]

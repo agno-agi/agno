@@ -935,6 +935,29 @@ def _format_schedule_run(run: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _schedule_manager(schedule: Dict[str, Any]) -> Dict[str, Any]:
+    """Who manages a schedule, who owns it, and what an administrator can do to it."""
+    from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
+
+    owner = schedule.get("user_id")
+    if schedule.get("id") == COMPANY_AUTOMATION_SCHEDULE_ID:
+        # The built-in hourly schedule of Company. It is never deleted.
+        return {"managed_by": "company_automation", "owner": owner, "an_administrator_can": ["pause", "resume"]}
+    if schedule.get("managed_by") != "company":
+        return {"managed_by": "person", "owner": owner, "an_administrator_can": ["pause", "resume", "delete"]}
+    goal_id = ((schedule.get("payload") or {}).get("metadata") or {}).get("goal_id")
+    if not goal_id:
+        # A Company schedule that names no Goal cannot run.
+        return {"managed_by": "company", "owner": owner, "an_administrator_can": ["pause", "delete"]}
+    return {
+        "managed_by": "company_routine",
+        "owner": owner,
+        "goal_id": goal_id,
+        "routine": str(schedule.get("name") or "").removeprefix(goal_id + "."),
+        "an_administrator_can": ["pause", "resume", "delete"],
+    }
+
+
 def _format_schedules(
     schedules: List[Dict[str, Any]], total: int, last_runs: Dict[str, Optional[Dict[str, Any]]]
 ) -> str:
@@ -949,9 +972,11 @@ def _format_schedules(
                 "cron_expr": schedule.get("cron_expr"),
                 "timezone": schedule.get("timezone"),
                 "enabled": schedule.get("enabled"),
+                "disabled_reason": schedule.get("disabled_reason"),
                 "endpoint": schedule.get("endpoint"),
                 "next_run_at": _epoch_to_iso(schedule.get("next_run_at")),
                 "last_run": _format_schedule_run(last_run) if last_run else None,
+                **_schedule_manager(schedule),
             }
         )
     payload: Dict[str, Any] = {"schedules": rows, "count": len(rows), "total": total}
