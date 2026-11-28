@@ -610,14 +610,18 @@ class DockerSandbox(Sandbox):
                 stop_on_failure=False,
             )
             if result.exit_code < 0 and not result.stderr and not result.timed_out:
-                # The request died from a signal and left no message.
-                note = await self._memory_note(handle)
-                if note:
-                    return ExecResult(
-                        exit_code=result.exit_code,
-                        stdout=result.stdout,
-                        stderr=f"the runtime request was killed (signal {-result.exit_code}); {note}",
-                    )
+                # The request died from a signal and left no message: say so, and what Docker knows.
+                # Without Docker's record the sandbox's own limit is not shown to be the cause; a host
+                # out of memory, or anything else that kills processes, ends a request the same way.
+                note = await self._memory_note(handle) or (
+                    "Docker has recorded no out-of-memory kill in this sandbox, so the sandbox's own memory "
+                    "limit is not shown to be the cause"
+                )
+                return ExecResult(
+                    exit_code=result.exit_code,
+                    stdout=result.stdout,
+                    stderr=f"the runtime request was killed (signal {-result.exit_code}); {note}",
+                )
             return result
         import httpx
 
