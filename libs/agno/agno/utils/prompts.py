@@ -55,12 +55,11 @@ def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> 
                     for def_name, def_properties in json_schema_defs.items():
                         # Handle both regular object definitions and enums
                         if "enum" in def_properties:
-                            # This is an enum definition
-                            response_model_properties["$defs"][def_name] = {
-                                "type": "string",
-                                "enum": def_properties["enum"],
-                                "description": def_properties.get("description", ""),
-                            }
+                            # Pydantic sets no type for an enum whose values mix JSON types
+                            enum_def = {"type": def_properties["type"]} if "type" in def_properties else {}
+                            enum_def["enum"] = def_properties["enum"]
+                            enum_def["description"] = def_properties.get("description", "")
+                            response_model_properties["$defs"][def_name] = enum_def
                         else:
                             # This is a regular object definition
                             def_fields = def_properties.get("properties")

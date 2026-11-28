@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-import json
 import re
 import string
 from collections import ChainMap
@@ -50,6 +49,7 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
+from agno.utils.prompts import get_json_output_prompt
 from agno.utils.team import (
     get_member_id,
 )
@@ -419,7 +419,7 @@ def _build_trailing_sections(
             and not team.use_json_mode
         )
     ):
-        content += f"{_get_json_output_prompt(team, output_schema)}"
+        content += f"{get_json_output_prompt(output_schema)}"
 
     return content
 
@@ -1654,7 +1654,6 @@ def _get_messages_for_parser_model(
     run_context: Optional[RunContext] = None,
 ) -> List[Message]:
     """Get the messages for the parser model."""
-    from agno.utils.prompts import get_json_output_prompt
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -1681,7 +1680,6 @@ def _get_messages_for_parser_model_stream(
     run_context: Optional[RunContext] = None,
 ) -> List[Message]:
     """Get the messages for the parser model."""
-    from agno.utils.prompts import get_json_output_prompt
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -1768,74 +1766,3 @@ def _format_message_with_state_variables(
     except Exception as e:
         log_warning(f"Template substitution failed: {str(e)}")
         return message
-
-
-def _get_json_output_prompt(
-    team: "Team", output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
-) -> str:
-    """Return the JSON output prompt for the Agent.
-
-    This is added to the system prompt when the output_schema is set and structured_outputs is False.
-    """
-
-    json_output_prompt = "Provide your output as a JSON containing the following fields:"
-    if output_schema is not None:
-        if isinstance(output_schema, str):
-            json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{output_schema}"
-            json_output_prompt += "\n</json_fields>"
-        elif isinstance(output_schema, list):
-            json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
-            json_output_prompt += "\n</json_fields>"
-        elif isinstance(output_schema, dict):
-            json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
-            json_output_prompt += "\n</json_fields>"
-        elif isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
-            json_schema = output_schema.model_json_schema()
-            if json_schema is not None:
-                response_model_properties = {}
-                json_schema_properties = json_schema.get("properties")
-                if json_schema_properties is not None:
-                    for field_name, field_properties in json_schema_properties.items():
-                        formatted_field_properties = {
-                            prop_name: prop_value
-                            for prop_name, prop_value in field_properties.items()
-                            if prop_name != "title"
-                        }
-                        response_model_properties[field_name] = formatted_field_properties
-                json_schema_defs = json_schema.get("$defs")
-                if json_schema_defs is not None:
-                    response_model_properties["$defs"] = {}
-                    for def_name, def_properties in json_schema_defs.items():
-                        def_fields = def_properties.get("properties")
-                        formatted_def_properties = {}
-                        if def_fields is not None:
-                            for field_name, field_properties in def_fields.items():
-                                formatted_field_properties = {
-                                    prop_name: prop_value
-                                    for prop_name, prop_value in field_properties.items()
-                                    if prop_name != "title"
-                                }
-                                formatted_def_properties[field_name] = formatted_field_properties
-                        if len(formatted_def_properties) > 0:
-                            response_model_properties["$defs"][def_name] = formatted_def_properties
-
-                if len(response_model_properties) > 0:
-                    json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'], ensure_ascii=False)}"
-                    json_output_prompt += "\n</json_fields>"
-                    json_output_prompt += "\n\nHere are the properties for each field:"
-                    json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2, ensure_ascii=False)}"
-                    json_output_prompt += "\n</json_field_properties>"
-        else:
-            log_warning(f"Could not build json schema for {output_schema}")
-    else:
-        json_output_prompt += "Provide the output as JSON."
-
-    json_output_prompt += "\nStart your response with `{` and end it with `}`."
-    json_output_prompt += "\nYour output will be passed to json.loads() to convert it to a Python object."
-    json_output_prompt += "\nMake sure it only contains valid JSON."
-    return json_output_prompt
