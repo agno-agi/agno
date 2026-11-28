@@ -1,4 +1,7 @@
+import base64
 import json
+
+import pytest
 
 from agno.media import Image
 from agno.models.message import Message
@@ -126,3 +129,29 @@ def test_mixed_list_input_content_string_is_json_for_team():
     assert isinstance(data, list)
     assert isinstance(data[0], dict)
     assert isinstance(data[1], dict)
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+
+@pytest.mark.parametrize("input_cls", [RunInput, TeamRunInput])
+def test_message_input_with_image_bytes_is_json(input_cls):
+    run_input = input_cls(
+        input_content=Message(role="user", content="Describe this", images=[Image(content=PNG_BYTES)])
+    )
+
+    data = json.loads(run_input.input_content_string())
+    assert data["content"] == "Describe this"
+    assert data["images"][0]["content"] == base64.b64encode(PNG_BYTES).decode("utf-8")
+
+    stored = json.loads(json.dumps(run_input.to_dict()))
+    assert stored["input_content"]["images"][0]["content"] == base64.b64encode(PNG_BYTES).decode("utf-8")
+
+
+@pytest.mark.parametrize("input_cls", [RunInput, TeamRunInput])
+def test_message_input_matches_single_item_list(input_cls):
+    message = Message(role="user", content="Describe this", images=[Image(content=PNG_BYTES)])
+
+    single = json.loads(input_cls(input_content=message).input_content_string())
+    listed = json.loads(input_cls(input_content=[message]).input_content_string())
+    assert single == listed[0]

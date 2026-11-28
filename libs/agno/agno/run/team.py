@@ -48,10 +48,11 @@ class TeamRunInput:
 
         if isinstance(self.input_content, (str)):
             return self.input_content
-        elif isinstance(self.input_content, BaseModel):
-            return self.input_content.model_dump_json(exclude_none=True)
+        # Message is a BaseModel, so it must be matched first to serialize media via to_dict()
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
+        elif isinstance(self.input_content, BaseModel):
+            return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, list):
             try:
                 return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
@@ -67,10 +68,10 @@ class TeamRunInput:
         if self.input_content is not None:
             if isinstance(self.input_content, (str)):
                 result["input_content"] = self.input_content
-            elif isinstance(self.input_content, BaseModel):
-                result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
+            elif isinstance(self.input_content, BaseModel):
+                result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, list):
                 serialized_items: List[Any] = []
                 for item in self.input_content:
