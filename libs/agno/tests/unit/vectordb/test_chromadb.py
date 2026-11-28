@@ -1533,3 +1533,149 @@ async def test_async_upsert_runs_batch_on_worker_thread(chroma_db, sample_docume
             "_batch_operation ran on the asyncio main thread; the synchronous ChromaDB "
             "batch must be offloaded so the event loop stays responsive during async_upsert"
         )
+
+
+# =============================================================================
+# Tests for ChromaDB Multi-Key Filters (Issue #11905)
+# =============================================================================
+
+
+def test_convert_filters_empty(chroma_db):
+    """Test converting empty filters dictionary."""
+    assert chroma_db._convert_filters({}) == {}
+
+
+def test_convert_filters_single_key(chroma_db):
+    """Test converting single key-value filter."""
+    assert chroma_db._convert_filters({"cuisine": "Thai"}) == {"cuisine": {"$eq": "Thai"}}
+    assert chroma_db._convert_filters({"tags": ["spicy", "coconut"]}) == {"tags": {"$in": ["spicy", "coconut"]}}
+    assert chroma_db._convert_filters({"score": {"$gte": 90}}) == {"score": {"$gte": 90}}
+
+
+def test_convert_filters_multiple_keys(chroma_db):
+    """Test converting multiple key-value filters into a single $and operator."""
+    result = chroma_db._convert_filters({"cuisine": "Thai", "type": "soup"})
+    assert result == {
+        "$and": [
+            {"cuisine": {"$eq": "Thai"}},
+            {"type": {"$eq": "soup"}},
+        ]
+    }
+
+
+def test_convert_filters_mixed_operators_and_values(chroma_db):
+    """Test converting multiple filters with mixed primitive, list, and operator values."""
+    result = chroma_db._convert_filters(
+        {
+            "category": "recipe",
+            "tags": ["thai", "soup"],
+            "rating": {"$gte": 4.5},
+        }
+    )
+    assert result == {
+        "$and": [
+            {"category": {"$eq": "recipe"}},
+            {"tags": {"$in": ["thai", "soup"]}},
+            {"rating": {"$gte": 4.5}},
+        ]
+    }
+
+
+def test_convert_filters_preserves_existing_logical_operators(chroma_db):
+    """Test that pre-existing $and / $or operators are preserved and not double-wrapped."""
+    predefined_and = {
+        "$and": [
+            {"cuisine": {"$eq": "Thai"}},
+            {"type": {"$eq": "soup"}},
+        ]
+    }
+    assert chroma_db._convert_filters(predefined_and) == predefined_and
+
+    predefined_or = {
+        "$or": [
+            {"cuisine": {"$eq": "Thai"}},
+            {"cuisine": {"$eq": "Italian"}},
+        ]
+    }
+    assert chroma_db._convert_filters(predefined_or) == predefined_or
+
+    # Simple conditions within $and / $or are normalized
+    nested_simple = {"$and": [{"cuisine": "Thai"}, {"type": "soup"}]}
+    assert chroma_db._convert_filters(nested_simple) == {
+        "$and": [
+            {"cuisine": {"$eq": "Thai"}},
+            {"type": {"$eq": "soup"}},
+        ]
+    }
+
+
+def test_search_with_multi_key_filters(chroma_db):
+    """Test searching with multiple metadata key filters against a real Chroma collection."""
+    docs = [
+        Document(
+            content="Tom Kha Gai is a Thai coconut soup with chicken",
+            meta_data={"cuisine": "Thai", "type": "soup", "rating": 5},
+            name="tom_kha",
+        ),
+        Document(
+            content="Pad Thai is a Thai stir-fried rice noodle dish",
+            meta_data={"cuisine": "Thai", "type": "noodles", "rating": 4},
+            name="pad_thai",
+        ),
+        Document(
+            content="Minestrone is a hearty Italian vegetable soup",
+            meta_data={"cuisine": "Italian", "type": "soup", "rating": 4},
+            name="minestrone",
+        ),
+    ]
+    chroma_db.insert(content_hash="multi_key_test_hash", documents=docs)
+
+    # Search with two metadata filter keys (should not raise ValueError)
+    results = chroma_db.search("soup dish", limit=5, filters={"cuisine": "Thai", "type": "soup"})
+    assert len(results) == 1
+    assert results[0].name == "tom_kha"
+
+    # Search with multiple keys matching nothing
+    empty_results = chroma_db.search("soup dish", limit=5, filters={"cuisine": "Italian", "type": "noodles"})
+    assert len(empty_results) == 0
+
+    # Search with pre-existing $or filter
+    or_results = chroma_db.search(
+        "noodle soup dish",
+        limit=5,
+        filters={"$or": [{"type": {"$eq": "noodles"}}, {"cuisine": {"$eq": "Italian"}}]},
+    )
+    assert len(or_results) == 2
+    matched_names = {d.name for d in or_results}
+    assert matched_names == {"pad_thai", "minestrone"}
+
+
+def test_delete_by_metadata_multiple_keys(chroma_db):
+    """Test deleting documents matching multiple metadata keys."""
+    docs = [
+        Document(
+            content="Tom Kha Gai is Thai soup",
+            meta_data={"cuisine": "Thai", "type": "soup"},
+            name="tom_kha",
+        ),
+        Document(
+            content="Green curry is Thai curry",
+            meta_data={"cuisine": "Thai", "type": "curry"},
+            name="green_curry",
+        ),
+        Document(
+            content="Minestrone is Italian soup",
+            meta_data={"cuisine": "Italian", "type": "soup"},
+            name="minestrone",
+        ),
+    ]
+    chroma_db.insert(content_hash="delete_multi_hash", documents=docs)
+    assert chroma_db.get_count() == 3
+
+    # Delete matching both cuisine and type
+    result = chroma_db.delete_by_metadata({"cuisine": "Thai", "type": "soup"})
+    assert result is True
+    assert chroma_db.get_count() == 2
+    assert chroma_db.name_exists("tom_kha") is False
+    assert chroma_db.name_exists("green_curry") is True
+    assert chroma_db.name_exists("minestrone") is True

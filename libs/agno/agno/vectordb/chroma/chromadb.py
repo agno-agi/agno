@@ -1400,26 +1400,48 @@ class ChromaDb(VectorDb):
         """Convert simple filters to ChromaDB's filter format.
 
         Handles conversion of simple key-value filters to ChromaDB's operator format
-        when needed.
+        when needed. Multiple conditions are combined using $and as required by ChromaDB.
         """
         if not filters:
             return {}
+
+        # If filters has a logical operator ($and, $or) at top-level
+        if len(filters) == 1 and ("$and" in filters or "$or" in filters):
+            op = "$and" if "$and" in filters else "$or"
+            sub_clauses = filters[op]
+            if isinstance(sub_clauses, list):
+                converted_clauses = []
+                for clause in sub_clauses:
+                    if isinstance(clause, dict):
+                        converted_clauses.append(self._convert_filters(clause))
+                    else:
+                        converted_clauses.append(clause)
+                return {op: converted_clauses}
+            return filters
 
         # If filters already use ChromaDB operators ($eq, $ne, etc.), return as is
         if any(key.startswith("$") for key in filters.keys()):
             return filters
 
         # Convert simple key-value pairs to ChromaDB's format
-        converted = {}
+        conditions: List[Dict[str, Any]] = []
         for key, value in filters.items():
-            if isinstance(value, (list, tuple)):
+            if isinstance(value, dict) and any(k.startswith("$") for k in value.keys()):
+                conditions.append({key: value})
+            elif isinstance(value, (list, tuple)):
                 # Convert lists to $in operator
-                converted[key] = {"$in": list(value)}
+                conditions.append({key: {"$in": list(value)}})
             else:
                 # Convert simple equality to $eq
-                converted[key] = {"$eq": value}
+                conditions.append({key: {"$eq": value}})
 
-        return converted
+        if not conditions:
+            return {}
+
+        if len(conditions) == 1:
+            return conditions[0]
+
+        return {"$and": conditions}
 
     async def async_search(
         self,
@@ -1547,10 +1569,7 @@ class ChromaDb(VectorDb):
             return False
 
         try:
-            # Build where clause for metadata filtering
-            where_clause = {}
-            for key, value in metadata.items():
-                where_clause[key] = {"$eq": value}
+            where_clause = self._convert_filters(metadata)
 
             return self._delete_where_across(self._all_owner_collections(), where_clause, f"metadata '{metadata}'")
         except Exception:
