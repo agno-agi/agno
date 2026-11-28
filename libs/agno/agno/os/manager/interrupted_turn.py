@@ -82,7 +82,8 @@ def _one_line(text: str) -> str:
 
 
 def _started(run_context: Any, run_id: Any) -> List[str]:
-    """The Tasks and background runs the conversation's state records as added or acted on by that turn."""
+    """The Tasks and background runs a tool of that turn returned a result for: the turn added,
+    started, acted on or only read each one. The state does not record which."""
     named = []
     for entry in _entries(run_context):
         if entry.get("receipt_in") != run_id:
@@ -108,11 +109,11 @@ def _note(run_context: Any, runs: List[Any]) -> Optional[str]:
         )
         started = _started(run_context, run.run_id)
         work = (
-            "Recorded as added or started by it before it was cut: "
+            "Recorded as added, started or read by it before it was cut: "
             + "; ".join(started)
             + '. Their state now is under "Work started from this conversation".'
             if started
-            else "No Task or background run is recorded as added or started by it."
+            else "No Task or background run is recorded as added, started or read by it."
         )
         lines.append(f"- Sent{when}: {said}\n  {work}")
     if not lines:
@@ -125,8 +126,8 @@ def _note(run_context: Any, runs: List[Any]) -> Optional[str]:
         + "\n".join(lines)
         + "\nAnything else that turn was doing when it was cut, such as an agent it was waiting for, stopped with "
         "the server and is not recorded. Start your reply by telling the person that this message was cut off by "
-        "a restart, what it asked for and what is recorded as started. Do not ask them what it was. Do not do it "
-        "again unless they ask you to here: offer to."
+        "a restart, what it asked for and what is recorded as added, started or read by it. Do not ask them what "
+        "it was. Do not do it again unless they ask you to here: offer to."
     )
 
 

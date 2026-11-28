@@ -249,7 +249,7 @@ def test_the_next_turn_is_told_what_was_cut_and_the_cut_turn_is_stored_as_failed
     assert "A message " + CUT in note
     # One line, and the person's text cannot close the quotes around it.
     assert "\"Research the 'reminder' rules and wait\"" in note
-    assert "No Task or background run is recorded as added or started by it." in note
+    assert "No Task or background run is recorded as added, started or read by it." in note
     assert "Nothing was run again." in note and "Do not ask them what it was." in note
     first, second = stored(chat)
     assert (first.status, first.content) == (RunStatus.error, INTERRUPTED_REPLY)
@@ -264,7 +264,7 @@ def test_the_note_names_the_task_the_cut_turn_added(chat, mode):  # noqa: F811
     cut(chat, "Add the Task, then research", mode, calls=[("add_company_task", {**ADD, "start": False})])
     (task,), _ = chat.db.get_tasks(limit=10)
     note = say(chat, "Did that go through?", mode)
-    assert f"Recorded as added or started by it before it was cut: Task {task['id']}." in note
+    assert f"Recorded as added, started or read by it before it was cut: Task {task['id']}." in note
     # The work block under it gives the Task's state now.
     assert f'- Task "Draft the notes" (id {task["id"]}' in note
     assert chat.db.get_tasks(limit=10)[1] == 1
