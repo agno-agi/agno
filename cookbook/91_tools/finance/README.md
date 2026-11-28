@@ -64,6 +64,7 @@ Providers live in `agno.tools.finance.providers` and are re-exported from `agno.
 | `04_analyst_mode.py` | `all=True`: statements, insider trades, earnings, filings for a deep dive |
 | `05_async.py` | `agent.arun()` fanned out over three tickers; async tool variants used automatically |
 | `06_custom_provider.py` | Bring your own provider (an internal price table) and register it by id |
+| `07_technical_indicators.py` | Function tools next to `FinanceTools()`: RSI, MACD and a candlestick scan computed with TA-Lib from provider bars |
 
 ## Configuration
 
